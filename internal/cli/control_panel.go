@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ychiu1211/dsmctl/internal/application"
+	"github.com/ychiu1211/dsmctl/internal/domain/controlpanel"
 )
 
 func newControlPanelCommand(opts *options) *cobra.Command {
@@ -25,11 +26,70 @@ func newControlPanelCommand(opts *options) *cobra.Command {
 }
 
 func newControlPanelTimeCommand(opts *options) *cobra.Command {
-	command := &cobra.Command{Use: "time", Short: "Inspect regional time and NTP configuration"}
+	command := &cobra.Command{Use: "time", Short: "Inspect and manage regional time and NTP configuration"}
 	command.AddCommand(
 		newControlPanelTimeStateCommand(opts),
 		newControlPanelTimeCapabilitiesCommand(opts),
+		newControlPanelTimePlanCommand(opts),
+		newControlPanelTimeApplyCommand(opts),
 	)
+	return command
+}
+
+func newControlPanelTimePlanCommand(opts *options) *cobra.Command {
+	var inputPath, outputPath string
+	command := &cobra.Command{
+		Use:   "plan",
+		Short: "Validate a time zone, display format, or NTP patch and emit an approval plan as JSON",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var request controlpanel.TimeChange
+			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
+				return fmt.Errorf("read time change: %w", err)
+			}
+			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			plan, err := service.PlanControlPanelTimeChange(cmd.Context(), opts.nas, request)
+			if err != nil {
+				return err
+			}
+			return encodeJSONOutput(cmd, outputPath, plan)
+		},
+	}
+	command.Flags().StringVarP(&inputPath, "file", "f", "-", "time change JSON file, or - for stdin")
+	command.Flags().StringVarP(&outputPath, "output", "o", "-", "plan JSON file, or - for stdout")
+	return command
+}
+
+func newControlPanelTimeApplyCommand(opts *options) *cobra.Command {
+	var inputPath, approvalHash string
+	command := &cobra.Command{
+		Use:   "apply",
+		Short: "Apply a time plan after hash and stale-state validation",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var plan application.ControlPanelTimePlan
+			if err := decodeJSONInput(cmd, inputPath, &plan); err != nil {
+				return fmt.Errorf("read time plan: %w", err)
+			}
+			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.ApplyControlPanelTimePlan(cmd.Context(), plan, approvalHash)
+			if err != nil {
+				return err
+			}
+			return encodeIndentedJSON(cmd.OutOrStdout(), result)
+		},
+	}
+	command.Flags().StringVarP(&inputPath, "file", "f", "-", "time plan JSON file, or - for stdin")
+	command.Flags().StringVar(&approvalHash, "approve", "", "exact SHA-256 hash printed by time plan")
+	_ = command.MarkFlagRequired("approve")
 	return command
 }
 

@@ -23,9 +23,43 @@ legacy v1 decoder. V1 does not provide the display-format fields, so they are
 omitted instead of synthesized. A missing API makes only this module
 unsupported; it does not disable storage, SAN, account, or share features.
 
-No time or NTP mutation is exposed. A future module-specific change contract
-must define clock-change risk, stale-state protection, postcondition checks,
-and NTP reachability behavior before `set` can be enabled.
+Guarded time changes use the same hash-bound plan/apply flow as the other
+modules. A patch owns only its non-null fields, with one set-replace
+exception: `ntp_servers`, when present, is the complete ordered replacement
+list. The plan records and hashes the complete current module state; apply
+rejects a changed state, merges the patch into a freshly read full
+configuration so unspecified fields are never reset, and verifies every
+requested field afterward.
+
+Example request:
+
+```json
+{
+  "time_zone": "Berlin",
+  "synchronization_mode": "ntp",
+  "ntp_servers": ["time.google.com", "pool.ntp.org"]
+}
+```
+
+```console
+dsmctl control-panel time plan --nas office --file time-change.json --output time-change.plan.json
+dsmctl control-panel time apply --file time-change.plan.json --approve <hash-from-plan>
+```
+
+Only `SYNO.Core.Region.NTP` v3 has primary `set` evidence, so the set backend
+is v3-only; older targets report `set: false` and planning fails closed.
+Wall-clock values are never written: `synchronization_mode` accepts only
+`ntp`, switching to manual mode is rejected, and a NAS currently in manual
+mode accepts a change only when the same patch enables NTP with at least one
+server. Time zones must equal the current configuration or resolve in the
+embedded IANA database, display formats must use DSM's token grammar such as
+`Y-m-d` and `H:i`, and NTP servers are validated for syntax only — neither a
+plan nor an apply result ever claims reachability or synchronization
+convergence. Time zone changes, enabling NTP, and removing configured servers
+are high risk; format-only, append-only, and reorder-only changes are medium.
+
+MCP exposes the same contract through `plan_control_panel_time_change` and
+`apply_control_panel_time_plan`.
 
 ## SMB and NFS File Services
 

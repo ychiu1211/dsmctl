@@ -107,6 +107,10 @@ func (c *Client) Compatibility(ctx context.Context) (CompatibilityReport, error)
 	if selectionErr != nil && !compatibility.IsUnsupported(selectionErr) {
 		return CompatibilityReport{}, selectionErr
 	}
+	controlPanelTimeSetSelection, selectionErr := controlpaneltime.SelectSet(c.target)
+	if selectionErr != nil && !compatibility.IsUnsupported(selectionErr) {
+		return CompatibilityReport{}, selectionErr
+	}
 	fileServiceSelectors := []func(compatibility.Target) (compatibility.Selection, error){
 		fileservices.SelectSMBRead,
 		fileservices.SelectSMBSet,
@@ -142,7 +146,7 @@ func (c *Client) Compatibility(ctx context.Context) (CompatibilityReport, error)
 	selections = append(selections, quotaSelections...)
 	selections = append(selections, appPrivilegeSelections...)
 	selections = append(selections, shareMutationSelections...)
-	selections = append(selections, controlPanelTimeSelection)
+	selections = append(selections, controlPanelTimeSelection, controlPanelTimeSetSelection)
 	selections = append(selections, fileServiceSelections...)
 	selections = append(selections, sanSelections...)
 	selections = append(selections, sanMutationSelections...)
@@ -263,6 +267,9 @@ func (c *Client) updateDerivedCapabilitiesLocked() {
 	}
 	if _, err := controlpaneltime.Select(c.target); err == nil {
 		c.target.AddCapability(controlpaneltime.CapabilityName)
+	}
+	if selection, err := controlpaneltime.SelectSet(c.target); err == nil && selection.Supported {
+		c.target.AddCapability(controlpaneltime.SetCapabilityName)
 	}
 	for _, operation := range []struct {
 		selectOperation func(compatibility.Target) (compatibility.Selection, error)

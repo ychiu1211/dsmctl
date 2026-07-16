@@ -3,6 +3,7 @@ package synology
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/ychiu1211/dsmctl/internal/domain/controlpanel"
 	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
@@ -12,6 +13,8 @@ import (
 
 type ControlPanelTimeState = controlpanel.TimeState
 type ControlPanelTimeCapabilities = controlpanel.TimeCapabilities
+type ControlPanelTimeChange = controlpanel.TimeChange
+type ControlPanelTimeMutationResult = controlpaneltime.MutationResult
 type SMBState = controlpanel.SMBState
 type NFSState = controlpanel.NFSState
 type FileServiceCapabilities = controlpanel.FileServiceCapabilities
@@ -45,19 +48,80 @@ func (c *Client) ControlPanelTimeCapabilities(ctx context.Context) (ControlPanel
 	if err := c.prepareCompatibilityTargetLocked(ctx, controlpaneltime.APINames()...); err != nil {
 		return ControlPanelTimeCapabilities{}, CompatibilityReport{}, fmt.Errorf("prepare Control Panel time capabilities target: %w", err)
 	}
-	selection, err := controlpaneltime.Select(c.target)
+	readSelection, err := controlpaneltime.Select(c.target)
 	if err != nil && !compatibility.IsUnsupported(err) {
 		return ControlPanelTimeCapabilities{}, CompatibilityReport{}, fmt.Errorf("select Control Panel time backend: %w", err)
 	}
-	if selection.Supported {
+	setSelection, err := controlpaneltime.SelectSet(c.target)
+	if err != nil && !compatibility.IsUnsupported(err) {
+		return ControlPanelTimeCapabilities{}, CompatibilityReport{}, fmt.Errorf("select Control Panel time set backend: %w", err)
+	}
+	if readSelection.Supported {
 		c.target.AddCapability(controlpaneltime.CapabilityName)
+	}
+	if setSelection.Supported {
+		c.target.AddCapability(controlpaneltime.SetCapabilityName)
 	}
 	capabilities := ControlPanelTimeCapabilities{
 		Module: controlpanel.ModuleTime,
-		Read:   selection.Supported,
-		Set:    false,
+		Read:   readSelection.Supported,
+		Set:    setSelection.Supported,
 	}
-	return capabilities, c.target.Report(selection), nil
+	return capabilities, c.target.Report(readSelection, setSelection), nil
+}
+
+// ApplyControlPanelTimeChange merges the patch into a freshly read complete
+// configuration and submits it as one set request, so a field the caller did
+// not specify can never be silently reset. Manual synchronization and
+// wall-clock values are rejected before any DSM write.
+func (c *Client) ApplyControlPanelTimeChange(ctx context.Context, change ControlPanelTimeChange) (ControlPanelTimeMutationResult, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.prepareCompatibilityTargetLocked(ctx, controlpaneltime.APINames()...); err != nil {
+		return ControlPanelTimeMutationResult{}, fmt.Errorf("prepare Control Panel time mutation target: %w", err)
+	}
+	current, _, err := controlpaneltime.Execute(ctx, c.target, lockedExecutor{client: c})
+	if err != nil {
+		return ControlPanelTimeMutationResult{}, fmt.Errorf("refresh time configuration before apply: %w", err)
+	}
+	desired := mergeControlPanelTimeChange(current, change)
+	if desired.SynchronizationMode != controlpanel.TimeSynchronizationNTP {
+		return ControlPanelTimeMutationResult{}, fmt.Errorf("time mutation requires NTP synchronization; manual mode owns the wall clock and is excluded")
+	}
+	if len(desired.NTPServers) == 0 {
+		return ControlPanelTimeMutationResult{}, fmt.Errorf("time mutation requires at least one NTP server")
+	}
+	result, _, err := controlpaneltime.ExecuteSet(ctx, c.target, lockedExecutor{client: c}, desired)
+	if err != nil {
+		return ControlPanelTimeMutationResult{}, fmt.Errorf("apply time configuration: %w", err)
+	}
+	return result, nil
+}
+
+func mergeControlPanelTimeChange(current ControlPanelTimeState, change ControlPanelTimeChange) ControlPanelTimeState {
+	desired := current
+	desired.NTPServers = append([]string(nil), current.NTPServers...)
+	if change.TimeZone != nil {
+		desired.TimeZone = strings.TrimSpace(*change.TimeZone)
+	}
+	if change.DateFormat != nil {
+		desired.DateFormat = strings.TrimSpace(*change.DateFormat)
+	}
+	if change.TimeFormat != nil {
+		desired.TimeFormat = strings.TrimSpace(*change.TimeFormat)
+	}
+	if change.SynchronizationMode != nil {
+		desired.SynchronizationMode = *change.SynchronizationMode
+	}
+	if change.NTPServers != nil {
+		servers := make([]string, 0, len(*change.NTPServers))
+		for _, server := range *change.NTPServers {
+			servers = append(servers, strings.TrimSpace(server))
+		}
+		desired.NTPServers = servers
+	}
+	return desired
 }
 
 func (c *Client) SMBState(ctx context.Context) (SMBState, error) {

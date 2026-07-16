@@ -68,6 +68,24 @@ type getControlPanelTimeCapabilitiesOutput struct {
 	Report       synology.CompatibilityReport          `json:"report" jsonschema:"Discovered API and selected time-module backend"`
 }
 
+type planControlPanelTimeChangeInput struct {
+	NAS     string                  `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request controlpanel.TimeChange `json:"request" jsonschema:"Patch-only time zone, display format, or NTP intent"`
+}
+
+type planControlPanelTimeChangeOutput struct {
+	Plan application.ControlPanelTimePlan `json:"plan" jsonschema:"Validated plan bound to the complete observed time state and approval hash"`
+}
+
+type applyControlPanelTimePlanInput struct {
+	Plan         application.ControlPanelTimePlan `json:"plan" jsonschema:"Unmodified plan returned by plan_control_panel_time_change"`
+	ApprovalHash string                           `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved time plan"`
+}
+
+type applyControlPanelTimePlanOutput struct {
+	Result application.ControlPanelTimeApplyResult `json:"result" jsonschema:"Time mutation result after stale-state and postcondition checks"`
+}
+
 type getFileServicesInput struct {
 	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
 }
@@ -301,7 +319,7 @@ func New(service *application.Service, version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_control_panel_time_capabilities",
 		Title:       "Get Control Panel time capabilities",
-		Description: "Report whether the focused time and NTP module can be read and which DSM API version-specific backend was selected. Mutations are not exposed.",
+		Description: "Report whether the focused time and NTP module can be read and changed, plus the DSM API version-specific backend selected for each operation.",
 		Annotations: readOnlyAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getControlPanelTimeInput) (*mcp.CallToolResult, getControlPanelTimeCapabilitiesOutput, error) {
 		result, err := service.GetControlPanelTimeCapabilities(ctx, input.NAS)
@@ -322,6 +340,32 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getControlPanelTimeStateOutput{}, err
 		}
 		return nil, getControlPanelTimeStateOutput{NAS: result.NAS, Time: result.Time}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_control_panel_time_change",
+		Title:       "Plan a Control Panel time change",
+		Description: "Validate a patch-only time zone, display format, or NTP request and return an approval plan bound to the complete observed module state. Manual synchronization mode and wall-clock changes are rejected, and ntp_servers always replaces the whole ordered list. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planControlPanelTimeChangeInput) (*mcp.CallToolResult, planControlPanelTimeChangeOutput, error) {
+		plan, err := service.PlanControlPanelTimeChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planControlPanelTimeChangeOutput{}, err
+		}
+		return nil, planControlPanelTimeChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_control_panel_time_plan",
+		Title:       "Apply an approved Control Panel time plan",
+		Description: "Apply an unmodified time plan only while its approval hash and the complete observed time state still match, then verify the normalized configuration. NTP servers are validated for syntax only; a verified configuration never implies reachability or synchronization convergence.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyControlPanelTimePlanInput) (*mcp.CallToolResult, applyControlPanelTimePlanOutput, error) {
+		result, err := service.ApplyControlPanelTimePlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applyControlPanelTimePlanOutput{}, err
+		}
+		return nil, applyControlPanelTimePlanOutput{Result: result}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

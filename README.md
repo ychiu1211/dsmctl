@@ -90,6 +90,9 @@ dsmctl share apply --file create-share.plan.json --approve <hash-from-plan>
 
 dsmctl control-panel file-services plan --nas office --file smb-change.json --output smb-change.plan.json
 dsmctl control-panel file-services apply --file smb-change.plan.json --approve <hash-from-plan>
+
+dsmctl control-panel time plan --nas office --file time-change.json --output time-change.plan.json
+dsmctl control-panel time apply --file time-change.plan.json --approve <hash-from-plan>
 ```
 
 User passwords are never included in requests or plans. A user create/change refers to an apply-time environment variable such as `"credential_ref":"env:DSMCTL_NEW_USER_PASSWORD"`. Request formats and examples are in [account and share management](docs/account-share-management.md).
@@ -153,8 +156,10 @@ Available tools:
 - `get_san_state`: return normalized iSCSI targets, LUNs, and their stable-ID mapping graph using bulk reads.
 - `plan_san_change`: validate a target, LUN, or mapping intent and return a state-bound approval plan without mutating DSM.
 - `apply_san_plan`: apply an approved, unchanged SAN plan and verify stable-ID and mapping-graph postconditions.
-- `get_control_panel_time_capabilities`: report support and the selected backend for the focused time/NTP module.
+- `get_control_panel_time_capabilities`: report read and guarded set support plus the selected backend for the focused time/NTP module.
 - `get_control_panel_time_state`: return normalized time zone, display formats, synchronization mode, and NTP servers.
+- `plan_control_panel_time_change`: validate a patch-only time zone, display format, or NTP request and return a full-state-bound approval plan; manual mode and wall-clock changes are rejected.
+- `apply_control_panel_time_plan`: apply an approved, unchanged time plan and verify the configuration without claiming NTP reachability.
 - `get_file_service_capabilities`: report independent SMB/NFS read and guarded setting backends.
 - `get_smb_state`: return normalized global SMB service, workgroup, protocol, encryption, and signing settings.
 - `get_nfs_state`: return normalized global NFS service, protocol, and NFSv4 domain settings.
@@ -170,7 +175,7 @@ Available tools:
 - `apply_share_plan`: apply an approved, unchanged shared-folder plan and verify the postcondition.
 - `explain_effective_access`: explain one principal's share or application access with direct/group evidence and conservative indeterminate results for custom rules.
 
-Storage-pool create, add-disk expansion, and delete, plus volume create, expansion, and delete, require independently selected backends and guarded plan/apply; storage-pool RAID migration remains fail-closed. Local user/group CRUD, memberships, per-user/group quotas, explicit application access, shared-folder CRUD, normalized `none`/`read`/`write`/`deny` share permissions, and guarded SAN target/LUN/mapping lifecycles are also available only through plan/apply. SAN deletes refuse active sessions or mappings, mappings never cascade-delete endpoints, and LUN capacity is checked against the selected backing volume. Encrypted shares, WORM, custom Windows ACLs, IP-specific application rules, and SAN snapshots/clones remain out of scope.
+Storage-pool create, add-disk expansion, and delete, plus volume create, expansion, and delete, require independently selected backends and guarded plan/apply; storage-pool RAID migration remains fail-closed. Local user/group CRUD, memberships, per-user/group quotas, explicit application access, shared-folder CRUD, normalized `none`/`read`/`write`/`deny` share permissions, and guarded SAN target/LUN/mapping lifecycles are also available only through plan/apply. SAN deletes refuse active sessions or mappings, mappings never cascade-delete endpoints, and LUN capacity is checked against the selected backing volume. Guarded time-module changes never write wall-clock values or switch to manual synchronization, and NTP servers are validated for syntax without any reachability claim. Encrypted shares, WORM, custom Windows ACLs, IP-specific application rules, and SAN snapshots/clones remain out of scope.
 
 Account expansion is opt-in because DSM exposes quota and application rules per principal. For large systems, filter `get_account_state` or `account inventory` with `principal_type` plus `principal` instead of reading every local principal. Membership expansion scales with local groups rather than users.
 

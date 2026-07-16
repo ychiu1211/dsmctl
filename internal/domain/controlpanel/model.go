@@ -36,10 +36,23 @@ type TimeState struct {
 }
 
 // TimeCapabilities reports the independently selectable operations currently
-// available for the time module. Mutation flags remain false until a separate
-// safety contract is implemented.
+// available for the time module.
 type TimeCapabilities struct {
 	Module ModuleName `json:"module" jsonschema:"Stable Control Panel module name"`
 	Read   bool       `json:"read" jsonschema:"Whether time and NTP configuration can be read"`
 	Set    bool       `json:"set" jsonschema:"Whether guarded time and NTP configuration changes are available"`
+}
+
+// TimeChange is the patch-only intent for a guarded time-module mutation. A
+// nil field keeps the currently configured DSM value. NTPServers is the one
+// exception to field-level patching: when present it is the complete ordered
+// replacement server list and is never merged element-wise or inferred.
+// Wall-clock values are not part of this contract, so SynchronizationMode
+// accepts only NTP; switching to manual mode is rejected.
+type TimeChange struct {
+	TimeZone            *string                  `json:"time_zone,omitempty" jsonschema:"Desired DSM time zone identifier; omit to keep the current zone"`
+	DateFormat          *string                  `json:"date_format,omitempty" jsonschema:"Desired DSM date display format such as Y-m-d; omit to keep the current format"`
+	TimeFormat          *string                  `json:"time_format,omitempty" jsonschema:"Desired DSM time display format such as H:i; omit to keep the current format"`
+	SynchronizationMode *TimeSynchronizationMode `json:"synchronization_mode,omitempty" jsonschema:"Desired synchronization mode; only ntp is accepted because manual mode owns the wall clock"`
+	NTPServers          *[]string                `json:"ntp_servers,omitempty" jsonschema:"Complete ordered replacement NTP server list; omit to keep the current servers"`
 }

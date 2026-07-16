@@ -36,7 +36,7 @@ flowchart LR
 | WI-008 | P2 | `proposed` | E | product decisions | Encrypted-share keys, WORM, and custom Windows ACL safeguards. |
 | WI-009 | P2 | `proposed` | D | — | Credential status/removal and trusted-device rotation. |
 | WI-010 | P1 | `proposed` | E | ongoing | Structured DSM errors, observability, CI matrix, packaging, and release policy. |
-| [WI-011](work-items/WI-011-control-panel-time-mutation.md) | P2 | `in_progress` | C | WI-006 | Guarded time zone, display format, and NTP changes. |
+| [WI-011](work-items/WI-011-control-panel-time-mutation.md) | P2 | `done` | C | WI-006 | Guarded time zone, display format, and NTP changes. |
 | [WI-012](work-items/WI-012-file-services-smb-nfs.md) | P1 | `done` | C | WI-006 | Guarded global SMB and NFS state and settings. |
 
 Parallel groups indicate likely file overlap. Items in different groups may run

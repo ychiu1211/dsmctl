@@ -149,6 +149,8 @@ dsmctl san plan [--nas <name>] --file <request.json> [--output <plan.json>]
 dsmctl san apply --file <plan.json> --approve <sha256>
 dsmctl control-panel time capabilities [--nas <name>] [--json]
 dsmctl control-panel time state [--nas <name>] [--json]
+dsmctl control-panel time plan [--nas <name>] --file <request.json> [--output <plan.json>]
+dsmctl control-panel time apply --file <plan.json> --approve <sha256>
 dsmctl control-panel file-services capabilities [--nas <name>] [--json]
 dsmctl control-panel file-services smb state [--nas <name>] [--json]
 dsmctl control-panel file-services nfs state [--nas <name>] [--json]
@@ -181,6 +183,8 @@ plan_san_change { nas?: string, request: SANChangeRequest }
 apply_san_plan { plan: SANPlan, approval_hash: string }
 get_control_panel_time_capabilities { nas?: string }
 get_control_panel_time_state { nas?: string }
+plan_control_panel_time_change { nas?: string, request: TimeChange }
+apply_control_panel_time_plan { plan: ControlPanelTimePlan, approval_hash: string }
 get_file_service_capabilities { nas?: string }
 get_smb_state { nas?: string }
 get_nfs_state { nas?: string }
