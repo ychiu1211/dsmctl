@@ -132,6 +132,64 @@ func (s *SecureStore) SaveTrustedDevice(ctx context.Context, profileName string,
 	return nil
 }
 
+// HasPassword reports whether a password for the profile exists in the OS
+// credential store. The stored value is never returned.
+func (s *SecureStore) HasPassword(ctx context.Context, profileName string) (bool, error) {
+	return s.probe(ctx, profileName, passwordKey(profileName), "password")
+}
+
+// HasTrustedDevice reports whether a trusted-device credential exists for
+// the profile. Device name and ID are both authentication material and are
+// never returned.
+func (s *SecureStore) HasTrustedDevice(ctx context.Context, profileName string) (bool, error) {
+	return s.probe(ctx, profileName, trustedDeviceKey(profileName), "trusted device")
+}
+
+// DeletePassword removes the stored password and reports whether an entry
+// existed. Deleting a missing entry is not an error.
+func (s *SecureStore) DeletePassword(ctx context.Context, profileName string) (bool, error) {
+	return s.remove(ctx, profileName, passwordKey(profileName), "password")
+}
+
+// DeleteTrustedDevice removes the stored trusted-device credential and
+// reports whether an entry existed.
+func (s *SecureStore) DeleteTrustedDevice(ctx context.Context, profileName string) (bool, error) {
+	return s.remove(ctx, profileName, trustedDeviceKey(profileName), "trusted device")
+}
+
+// PasswordEnvironment returns the environment variable name that would be
+// consulted as the password fallback for this profile and whether it is
+// currently set to a non-empty value. The value itself is never returned.
+func (s *SecureStore) PasswordEnvironment(profileName string, profile config.Profile) (string, bool) {
+	return s.environment.Status(profileName, profile)
+}
+
+func (s *SecureStore) probe(ctx context.Context, profileName, key, kind string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if _, err := s.keyring.Get(keyringService, key); err != nil {
+		if errors.Is(err, keyring.ErrNotFound) {
+			return false, nil
+		}
+		return false, fmt.Errorf("probe %s for NAS %q in OS credential store: %w", kind, profileName, err)
+	}
+	return true, nil
+}
+
+func (s *SecureStore) remove(ctx context.Context, profileName, key, kind string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if err := s.keyring.Delete(keyringService, key); err != nil {
+		if errors.Is(err, keyring.ErrNotFound) {
+			return false, nil
+		}
+		return false, fmt.Errorf("delete %s for NAS %q from OS credential store: %w", kind, profileName, err)
+	}
+	return true, nil
+}
+
 func passwordKey(profileName string) string {
 	return "password/" + profileName
 }

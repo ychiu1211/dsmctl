@@ -15,6 +15,7 @@ type Service struct {
 	config           *config.Config
 	manager          *runtime.Manager
 	secretReferences credentials.ReferenceResolver
+	credentialStore  CredentialStore
 }
 
 type SystemInfoResult struct {

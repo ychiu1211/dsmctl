@@ -54,6 +54,46 @@ func TestManagerMaintainsIndependentClientsPerNAS(t *testing.T) {
 	}
 }
 
+func TestSessionInfoReportsStateWithoutResolvingCredentials(t *testing.T) {
+	server := newDSMServer(t, "DS923+", "office-sid")
+	defer server.Close()
+
+	cfg := config.New()
+	cfg.DefaultNAS = "office"
+	cfg.NAS["office"] = config.Profile{URL: server.URL, Username: "user"}
+	resolutions := 0
+	manager := NewManager(cfg, resolverFunc(func(context.Context, string, config.Profile) (string, error) {
+		resolutions++
+		return "password", nil
+	}))
+
+	if info := manager.SessionInfo("office"); info != (SessionInfo{}) {
+		t.Fatalf("SessionInfo before Client() = %#v", info)
+	}
+	if resolutions != 0 {
+		t.Fatalf("SessionInfo resolved credentials %d times", resolutions)
+	}
+	_, client, err := manager.Client(context.Background(), "office")
+	if err != nil {
+		t.Fatalf("Client() error = %v", err)
+	}
+	if info := manager.SessionInfo("office"); !info.ClientCached || info.SessionHeld {
+		t.Fatalf("SessionInfo after Client() = %#v", info)
+	}
+	if _, err := client.SystemInfo(context.Background()); err != nil {
+		t.Fatalf("SystemInfo() error = %v", err)
+	}
+	if info := manager.SessionInfo("office"); !info.ClientCached || !info.SessionHeld {
+		t.Fatalf("SessionInfo after login = %#v", info)
+	}
+	if err := manager.Close(context.Background()); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if info := manager.SessionInfo("office"); info != (SessionInfo{}) {
+		t.Fatalf("SessionInfo after Close() = %#v", info)
+	}
+}
+
 func newDSMServer(t *testing.T, model, sid string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

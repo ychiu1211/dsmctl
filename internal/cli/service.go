@@ -19,5 +19,5 @@ func loadService(configPath string, otpProvider runtime.OTPProvider) (*applicati
 		runtime.WithDeviceStore(secrets),
 		runtime.WithOTPProvider(otpProvider),
 	)
-	return application.NewService(cfg, manager), nil
+	return application.NewService(cfg, manager, application.WithCredentialStore(secrets)), nil
 }

@@ -13,10 +13,30 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/runtime"
 )
 
+type fakeCredentialStore struct{}
+
+func (fakeCredentialStore) HasPassword(context.Context, string) (bool, error) { return false, nil }
+
+func (fakeCredentialStore) HasTrustedDevice(context.Context, string) (bool, error) {
+	return false, nil
+}
+
+func (fakeCredentialStore) DeletePassword(context.Context, string) (bool, error) {
+	return false, nil
+}
+
+func (fakeCredentialStore) DeleteTrustedDevice(context.Context, string) (bool, error) {
+	return false, nil
+}
+
+func (fakeCredentialStore) PasswordEnvironment(profileName string, _ config.Profile) (string, bool) {
+	return credentials.DefaultEnvironmentVariable(profileName), false
+}
+
 func TestNewRegistersToolSchemas(t *testing.T) {
 	cfg := config.New()
 	manager := runtime.NewManager(cfg, credentials.NewEnvironment())
-	service := application.NewService(cfg, manager)
+	service := application.NewService(cfg, manager, application.WithCredentialStore(fakeCredentialStore{}))
 	server := New(service, "test")
 	if server == nil {
 		t.Fatal("New() returned nil")
@@ -42,11 +62,12 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools() error = %v", err)
 	}
-	if len(tools.Tools) != 29 {
-		t.Fatalf("ListTools() returned %d tools, want 29", len(tools.Tools))
+	if len(tools.Tools) != 30 {
+		t.Fatalf("ListTools() returned %d tools, want 30", len(tools.Tools))
 	}
 	readOnlyTools := map[string]bool{
 		"explain_effective_access":            false,
+		"get_auth_status":                     false,
 		"get_account_capabilities":            false,
 		"get_account_state":                   false,
 		"get_control_panel_time_capabilities": false,
@@ -107,5 +128,12 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 	}
 	if result.IsError {
 		t.Fatalf("CallTool(list_nas) returned tool error: %#v", result.Content)
+	}
+	authStatus, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: "get_auth_status", Arguments: map[string]any{}})
+	if err != nil {
+		t.Fatalf("CallTool(get_auth_status) error = %v", err)
+	}
+	if authStatus.IsError {
+		t.Fatalf("CallTool(get_auth_status) returned tool error: %#v", authStatus.Content)
 	}
 }

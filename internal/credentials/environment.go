@@ -35,6 +35,18 @@ func DefaultEnvironmentVariable(profileName string) string {
 	return builder.String()
 }
 
+// Status returns the variable name Password would consult for this profile
+// and whether it is currently set to a non-empty value. The value itself is
+// never returned.
+func (e *Environment) Status(profileName string, profile config.Profile) (string, bool) {
+	name := profile.PasswordEnv
+	if name == "" {
+		name = DefaultEnvironmentVariable(profileName)
+	}
+	value, ok := e.lookup(name)
+	return name, ok && value != ""
+}
+
 func (e *Environment) Password(ctx context.Context, profileName string, profile config.Profile) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err

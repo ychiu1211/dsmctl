@@ -28,7 +28,7 @@ func main() {
 	}
 	secrets := credentials.NewSecureStore()
 	manager := runtime.NewManager(cfg, secrets, runtime.WithDeviceStore(secrets))
-	service := application.NewService(cfg, manager)
+	service := application.NewService(cfg, manager, application.WithCredentialStore(secrets))
 	server := mcpserver.New(service, buildinfo.Version)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)

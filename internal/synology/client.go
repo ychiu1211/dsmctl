@@ -412,6 +412,15 @@ func (c *Client) requestLocked(ctx context.Context, apiPath string, params url.V
 	return result.Data, nil
 }
 
+// HasSession reports whether this client currently holds a DSM session ID
+// from an earlier login. It never contacts the NAS, so the session may have
+// expired server-side.
+func (c *Client) HasSession() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.sid != ""
+}
+
 func (c *Client) Close(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()

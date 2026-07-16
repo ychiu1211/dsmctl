@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"text/tabwriter"
@@ -115,9 +116,10 @@ func newNASUseCommand(opts *options) *cobra.Command {
 }
 
 func newNASRemoveCommand(opts *options) *cobra.Command {
-	return &cobra.Command{
+	var keepCredentials bool
+	command := &cobra.Command{
 		Use:   "remove <name>",
-		Short: "Remove a NAS profile",
+		Short: "Remove a NAS profile and its stored credentials",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			store := config.NewStore(opts.configPath)
@@ -145,7 +147,22 @@ func newNASRemoveCommand(opts *options) *cobra.Command {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Removed NAS %q.\n", name)
+			if keepCredentials {
+				return nil
+			}
+			secrets := credentials.NewSecureStore()
+			passwordRemoved, passwordErr := secrets.DeletePassword(cmd.Context(), name)
+			deviceRemoved, deviceErr := secrets.DeleteTrustedDevice(cmd.Context(), name)
+			if cleanupErr := errors.Join(passwordErr, deviceErr); cleanupErr != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not clean the OS credential store for NAS %q; run 'dsmctl auth logout --nas %s' to retry: %v\n", name, name, cleanupErr)
+				return nil
+			}
+			if passwordRemoved || deviceRemoved {
+				fmt.Fprintf(cmd.OutOrStdout(), "Removed stored credentials for NAS %q from the OS credential store.\n", name)
+			}
 			return nil
 		},
 	}
+	command.Flags().BoolVar(&keepCredentials, "keep-credentials", false, "keep the stored password and trusted device in the OS credential store")
+	return command
 }

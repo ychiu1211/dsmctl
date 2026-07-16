@@ -135,9 +135,12 @@ CLI:
 dsmctl nas add <name>
 dsmctl nas list
 dsmctl nas use <name>
-dsmctl nas remove <name>
+dsmctl nas remove <name> [--keep-credentials]
 dsmctl nas capabilities [--nas <name>] [--json]
 dsmctl auth login [--nas <name>]
+dsmctl auth status [--nas <name>] [--json]
+dsmctl auth logout [--nas <name>] [--password] [--trusted-device]
+dsmctl auth rotate-device [--nas <name>]
 dsmctl system info [--nas <name>] [--json]
 dsmctl storage capabilities [--nas <name>] [--json]
 dsmctl storage inventory [--nas <name>] [--json]
@@ -171,6 +174,7 @@ MCP:
 
 ```text
 list_nas
+get_auth_status { nas?: string }
 get_system_info { nas?: string }
 get_capabilities { nas?: string }
 get_storage_capabilities { nas?: string }

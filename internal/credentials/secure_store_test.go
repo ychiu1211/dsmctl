@@ -100,6 +100,102 @@ func TestSecureStoreRoundTripsTrustedDevice(t *testing.T) {
 	}
 }
 
+type errorKeyring struct{}
+
+func (errorKeyring) Get(string, string) (string, error) {
+	return "", errors.New("keychain is locked")
+}
+
+func (errorKeyring) Set(string, string, string) error {
+	return errors.New("keychain is locked")
+}
+
+func (errorKeyring) Delete(string, string) error {
+	return errors.New("keychain is locked")
+}
+
+func TestSecureStoreProbesReportPresenceWithoutValues(t *testing.T) {
+	backend := newMemoryKeyring()
+	backend.values[keyringService+":"+passwordKey("office")] = "secret"
+	store := &SecureStore{keyring: backend, environment: &Environment{lookup: func(string) (string, bool) {
+		return "", false
+	}}}
+
+	if has, err := store.HasPassword(context.Background(), "office"); err != nil || !has {
+		t.Fatalf("HasPassword(office) = %v, %v", has, err)
+	}
+	if has, err := store.HasPassword(context.Background(), "lab"); err != nil || has {
+		t.Fatalf("HasPassword(lab) = %v, %v", has, err)
+	}
+	if has, err := store.HasTrustedDevice(context.Background(), "office"); err != nil || has {
+		t.Fatalf("HasTrustedDevice(office) = %v, %v", has, err)
+	}
+
+	broken := &SecureStore{keyring: errorKeyring{}, environment: &Environment{lookup: func(string) (string, bool) {
+		return "", false
+	}}}
+	if _, err := broken.HasPassword(context.Background(), "office"); err == nil {
+		t.Fatal("HasPassword() with broken backend returned nil error")
+	}
+}
+
+func TestSecureStoreDeletesAreIdempotentAndScoped(t *testing.T) {
+	backend := newMemoryKeyring()
+	store := &SecureStore{keyring: backend, environment: &Environment{lookup: func(string) (string, bool) {
+		return "", false
+	}}}
+	if err := store.SavePassword(context.Background(), "office", "secret"); err != nil {
+		t.Fatalf("SavePassword() error = %v", err)
+	}
+	if err := store.SavePassword(context.Background(), "lab", "other"); err != nil {
+		t.Fatalf("SavePassword(lab) error = %v", err)
+	}
+	if err := store.SaveTrustedDevice(context.Background(), "office", TrustedDevice{Name: "dsmctl@host", ID: "device"}); err != nil {
+		t.Fatalf("SaveTrustedDevice() error = %v", err)
+	}
+
+	if removed, err := store.DeletePassword(context.Background(), "office"); err != nil || !removed {
+		t.Fatalf("DeletePassword() = %v, %v", removed, err)
+	}
+	if removed, err := store.DeletePassword(context.Background(), "office"); err != nil || removed {
+		t.Fatalf("repeat DeletePassword() = %v, %v", removed, err)
+	}
+	if has, err := store.HasPassword(context.Background(), "lab"); err != nil || !has {
+		t.Fatalf("other profile password was affected: %v, %v", has, err)
+	}
+	if removed, err := store.DeleteTrustedDevice(context.Background(), "office"); err != nil || !removed {
+		t.Fatalf("DeleteTrustedDevice() = %v, %v", removed, err)
+	}
+	if removed, err := store.DeleteTrustedDevice(context.Background(), "office"); err != nil || removed {
+		t.Fatalf("repeat DeleteTrustedDevice() = %v, %v", removed, err)
+	}
+}
+
+func TestPasswordEnvironmentReportsNameAndState(t *testing.T) {
+	store := &SecureStore{keyring: newMemoryKeyring(), environment: &Environment{lookup: func(name string) (string, bool) {
+		if name == "OFFICE_PASSWORD" {
+			return "value", true
+		}
+		if name == "DSMCTL_PASSWORD_EMPTY" {
+			return "", true
+		}
+		return "", false
+	}}}
+
+	name, set := store.PasswordEnvironment("office", config.Profile{PasswordEnv: "OFFICE_PASSWORD"})
+	if name != "OFFICE_PASSWORD" || !set {
+		t.Fatalf("PasswordEnvironment(explicit) = %q, %v", name, set)
+	}
+	name, set = store.PasswordEnvironment("lab", config.Profile{})
+	if name != "DSMCTL_PASSWORD_LAB" || set {
+		t.Fatalf("PasswordEnvironment(default) = %q, %v", name, set)
+	}
+	name, set = store.PasswordEnvironment("empty", config.Profile{})
+	if name != "DSMCTL_PASSWORD_EMPTY" || set {
+		t.Fatalf("PasswordEnvironment(empty value) = %q, %v", name, set)
+	}
+}
+
 func TestSecureStoreUnavailablePasswordHasActionableError(t *testing.T) {
 	store := &SecureStore{keyring: newMemoryKeyring(), environment: &Environment{lookup: func(string) (string, bool) {
 		return "", false

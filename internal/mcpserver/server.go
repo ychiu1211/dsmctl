@@ -22,6 +22,14 @@ type listNASOutput struct {
 	NAS []config.Summary `json:"nas" jsonschema:"Configured NAS profiles"`
 }
 
+type getAuthStatusInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to report every configured profile"`
+}
+
+type getAuthStatusOutput struct {
+	Statuses []application.AuthStatus `json:"statuses" jsonschema:"Per-NAS credential presence and in-process session status; secret values are never returned"`
+}
+
 type getSystemInfoInput struct {
 	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
 }
@@ -274,6 +282,19 @@ func New(service *application.Service, version string) *mcp.Server {
 		Description: "List configured Synology NAS connection profiles. Passwords are never returned.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, _ listNASInput) (*mcp.CallToolResult, listNASOutput, error) {
 		return nil, listNASOutput{NAS: service.ListNAS()}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_auth_status",
+		Title:       "Get authentication status",
+		Description: "Report, per configured NAS, whether a password and DSM trusted-device credential are stored in the OS credential store, the password environment variable name and whether it is set, and whether this process holds a DSM session. Never returns secret values, never accepts passwords or OTPs, and never contacts the NAS. If authentication material is missing, ask the user to run 'dsmctl auth login' in a terminal.",
+		Annotations: localReadOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getAuthStatusInput) (*mcp.CallToolResult, getAuthStatusOutput, error) {
+		result, err := service.GetAuthStatus(ctx, input.NAS)
+		if err != nil {
+			return nil, getAuthStatusOutput{}, err
+		}
+		return nil, getAuthStatusOutput{Statuses: result.Statuses}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -658,6 +679,17 @@ func readOnlyAnnotations() *mcp.ToolAnnotations {
 		DestructiveHint: boolPointer(false),
 		IdempotentHint:  true,
 		OpenWorldHint:   boolPointer(true),
+	}
+}
+
+// localReadOnlyAnnotations marks a tool that reads only local process and
+// OS-credential-store state and never contacts the NAS.
+func localReadOnlyAnnotations() *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{
+		ReadOnlyHint:    true,
+		DestructiveHint: boolPointer(false),
+		IdempotentHint:  true,
+		OpenWorldHint:   boolPointer(false),
 	}
 }
 

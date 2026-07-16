@@ -156,6 +156,25 @@ func (m *Manager) Client(ctx context.Context, requested string) (string, Client,
 	return name, client, nil
 }
 
+// SessionInfo reports in-process session state for one profile without
+// resolving credentials or contacting DSM. ClientCached means this process
+// created a client for the profile; SessionHeld means that client holds a
+// DSM session ID from an earlier login, which may have expired server-side.
+type SessionInfo struct {
+	ClientCached bool
+	SessionHeld  bool
+}
+
+func (m *Manager) SessionInfo(profileName string) SessionInfo {
+	m.mu.Lock()
+	client, ok := m.clients[profileName]
+	m.mu.Unlock()
+	if !ok {
+		return SessionInfo{}
+	}
+	return SessionInfo{ClientCached: true, SessionHeld: client.HasSession()}
+}
+
 func defaultDeviceName() string {
 	hostname, err := os.Hostname()
 	if err != nil || strings.TrimSpace(hostname) == "" {

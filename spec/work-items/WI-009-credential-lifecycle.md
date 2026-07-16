@@ -1,9 +1,9 @@
 ---
 id: WI-009
 title: Credential status, removal, and trusted-device rotation
-status: in_progress
+status: done
 priority: P2
-owner: "claude-fable-5"
+owner: ""
 depends_on: []
 parallel_group: D
 touches:
@@ -107,4 +107,14 @@ group D.
 
 ## Completion record
 
-- Filled in when the item is done.
+- Completed end to end on 2026-07-17. CLI adds `auth status`, `auth logout`,
+  and `auth rotate-device`; `nas remove` now cleans stored credentials with
+  a `--keep-credentials` opt-out; MCP adds the offline read-only
+  `get_auth_status` tool over the shared application result model.
+- Session introspection uses `synology.Client.HasSession` and
+  `runtime.Manager.SessionInfo`, which never resolve credentials and never
+  contact DSM.
+- Verified with `go test ./... -count=1` and `go vet ./...` using the
+  in-memory keyring fake, plus an offline `dsmctl auth status` run against
+  the local configuration. No live DSM mutation or rotation was performed;
+  `rotate-device` live verification remains manual per the policy above.

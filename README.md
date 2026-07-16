@@ -52,6 +52,16 @@ dsmctl auth login --nas office
 
 The password and DSM trusted-device credential are stored in the operating system's credential store, not in `config.json`. Password and OTP prompts are hidden. If DSM requests an OTP, `dsmctl` exchanges it for a trusted-device ID so later CLI and MCP processes can authenticate without transporting OTP values through an AI client.
 
+Inspect, remove, or rotate stored credentials without revealing any secret value:
+
+```console
+dsmctl auth status
+dsmctl auth logout --nas office
+dsmctl auth rotate-device --nas office
+```
+
+`auth status` is fully offline, `auth logout` removes the stored password and trusted device (narrow it with `--password` or `--trusted-device`), and `auth rotate-device` re-authenticates so DSM issues a fresh trusted-device credential. `nas remove` also cleans the removed profile's credentials unless `--keep-credentials` is passed. Details and cross-process caveats are in [the credential lifecycle guide](docs/credentials.md).
+
 Read system information:
 
 ```console
@@ -146,6 +156,7 @@ dsmctl-mcp --config C:\path\to\config.json
 Available tools:
 
 - `list_nas`: list safe profile metadata; secrets are never returned.
+- `get_auth_status`: report per-NAS credential presence, the password environment variable name and set state, and this process's session state; fully offline and never returns secret values.
 - `get_system_info`: authenticate to a selected profile and return normalized DSM system information.
 - `get_capabilities`: report discovered APIs, DSM release, compatibility quirks, and the backend selected for each operation.
 - `get_storage_capabilities`: report the storage operations currently exposed for a selected NAS and the selected DSM backend.
@@ -201,6 +212,8 @@ go test ./integration -run TestMCPGetSystemInfoLive -v
 - Login parameters use an HTTPS POST form, not URL query parameters.
 - OTP values are short-lived and never persisted.
 - Passwords and trusted-device IDs use Windows Credential Manager, macOS Keychain, or Linux Secret Service.
+- Credential status reports booleans and the environment variable name only; device names, IDs, and password values are never displayed.
+- Credential removal is local: running dsmctl processes keep their in-memory credentials and DSM sessions until they exit, and a set password environment variable still enables non-interactive login.
 - Every NAS profile owns a separate session and trusted-device credential.
 - DSM session errors 106 and 119 trigger one automatic re-login and retry.
 
