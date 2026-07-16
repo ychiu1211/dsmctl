@@ -13,11 +13,12 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
 )
 
 const (
 	authAPI        = "SYNO.API.Auth"
-	systemInfoAPI  = "SYNO.Core.System"
 	maxBodySize    = 8 << 20
 	maxOTPAttempts = 3
 )
@@ -37,12 +38,7 @@ type Options struct {
 	HTTPClient   *http.Client
 }
 
-type APIInfo struct {
-	Path          string `json:"path"`
-	MinVersion    int    `json:"minVersion"`
-	MaxVersion    int    `json:"maxVersion"`
-	RequestFormat string `json:"requestFormat"`
-}
+type APIInfo = compatibility.APIInfo
 
 type Client struct {
 	baseURL      *url.URL
@@ -54,10 +50,11 @@ type Client struct {
 	saveDeviceID DeviceIDSaver
 	httpClient   *http.Client
 
-	mu        sync.Mutex
-	apis      map[string]APIInfo
-	sid       string
-	synoToken string
+	mu         sync.Mutex
+	target     compatibility.Target
+	apiChecked map[string]bool
+	sid        string
+	synoToken  string
 }
 
 type envelope struct {
@@ -96,14 +93,15 @@ func NewClient(options Options) (*Client, error) {
 		otp:          options.OTPProvider,
 		saveDeviceID: options.SaveDeviceID,
 		httpClient:   httpClient,
-		apis:         make(map[string]APIInfo),
+		target:       compatibility.NewTarget(),
+		apiChecked:   make(map[string]bool),
 	}, nil
 }
 
-func (c *Client) ensureAPIsLocked(ctx context.Context, names ...string) error {
+func (c *Client) discoverAPIsLocked(ctx context.Context, names ...string) error {
 	missing := make([]string, 0, len(names))
 	for _, name := range names {
-		if _, ok := c.apis[name]; !ok {
+		if !c.apiChecked[name] {
 			missing = append(missing, name)
 		}
 	}
@@ -126,11 +124,25 @@ func (c *Client) ensureAPIsLocked(ctx context.Context, names ...string) error {
 		return fmt.Errorf("decode Synology API discovery: %w", err)
 	}
 	for _, name := range missing {
+		c.apiChecked[name] = true
 		info, ok := discovered[name]
 		if !ok || info.Path == "" || info.MaxVersion == 0 {
+			continue
+		}
+		c.target.SetAPI(name, info)
+	}
+	c.updateDerivedCapabilitiesLocked()
+	return nil
+}
+
+func (c *Client) ensureAPIsLocked(ctx context.Context, names ...string) error {
+	if err := c.discoverAPIsLocked(ctx, names...); err != nil {
+		return err
+	}
+	for _, name := range names {
+		if _, ok := c.target.API(name); !ok {
 			return fmt.Errorf("Synology API %s is not available on this NAS", name)
 		}
-		c.apis[name] = info
 	}
 	return nil
 }
@@ -142,7 +154,7 @@ func (c *Client) loginLocked(ctx context.Context) error {
 	if err := c.ensureAPIsLocked(ctx, authAPI); err != nil {
 		return err
 	}
-	info := c.apis[authAPI]
+	info, _ := c.target.API(authAPI)
 	version := preferredVersion(info, 6)
 	params := url.Values{
 		"api":     {authAPI},
@@ -241,24 +253,31 @@ func (c *Client) Authenticate(ctx context.Context) error {
 	return c.loginLocked(ctx)
 }
 
-func (c *Client) callLocked(ctx context.Context, api, method string, parameters url.Values) (json.RawMessage, error) {
-	if err := c.ensureAPIsLocked(ctx, api); err != nil {
+func (c *Client) executeLocked(ctx context.Context, call compatibility.Request) (json.RawMessage, error) {
+	if err := c.ensureAPIsLocked(ctx, call.API); err != nil {
 		return nil, err
 	}
 	if err := c.loginLocked(ctx); err != nil {
 		return nil, err
 	}
-	info := c.apis[api]
-	params := cloneValues(parameters)
-	params.Set("api", api)
-	params.Set("version", strconv.Itoa(info.MaxVersion))
-	params.Set("method", method)
+	info, _ := c.target.API(call.API)
+	version := call.Version
+	if version == 0 {
+		version = info.MaxVersion
+	}
+	if !info.Supports(version) {
+		return nil, fmt.Errorf("Synology API %s does not support requested version %d (available %d-%d)", call.API, version, info.MinVersion, info.MaxVersion)
+	}
+	params := cloneValues(call.Parameters)
+	params.Set("api", call.API)
+	params.Set("version", strconv.Itoa(version))
+	params.Set("method", call.Method)
 	params.Set("_sid", c.sid)
 	if c.synoToken != "" {
 		params.Set("SynoToken", c.synoToken)
 	}
 
-	data, err := c.requestLocked(ctx, info.Path, params, api, method)
+	data, err := c.requestLocked(ctx, info.Path, params, call.API, call.Method)
 	if isSessionError(err) {
 		c.sid = ""
 		c.synoToken = ""
@@ -270,7 +289,7 @@ func (c *Client) callLocked(ctx context.Context, api, method string, parameters 
 		if c.synoToken != "" {
 			params.Set("SynoToken", c.synoToken)
 		}
-		return c.requestLocked(ctx, info.Path, params, api, method)
+		return c.requestLocked(ctx, info.Path, params, call.API, call.Method)
 	}
 	return data, err
 }
@@ -330,7 +349,7 @@ func (c *Client) Close(ctx context.Context) error {
 	if err := c.ensureAPIsLocked(ctx, authAPI); err != nil {
 		return err
 	}
-	info := c.apis[authAPI]
+	info, _ := c.target.API(authAPI)
 	params := url.Values{
 		"api":     {authAPI},
 		"version": {strconv.Itoa(info.MaxVersion)},

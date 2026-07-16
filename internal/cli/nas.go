@@ -15,6 +15,7 @@ func newNASCommand(opts *options) *cobra.Command {
 	command := &cobra.Command{Use: "nas", Short: "Manage NAS connection profiles"}
 	command.AddCommand(
 		newNASAddCommand(opts),
+		newNASCapabilitiesCommand(opts),
 		newNASListCommand(opts),
 		newNASUseCommand(opts),
 		newNASRemoveCommand(opts),

@@ -24,6 +24,11 @@ type AuthenticationResult struct {
 	NAS string `json:"nas"`
 }
 
+type CompatibilityResult struct {
+	NAS    string                       `json:"nas" jsonschema:"NAS profile used for the request"`
+	Report synology.CompatibilityReport `json:"report" jsonschema:"Discovered DSM compatibility target and selected operation backends"`
+}
+
 func NewService(cfg *config.Config, manager *runtime.Manager) *Service {
 	return &Service{config: cfg, manager: manager}
 }
@@ -53,6 +58,18 @@ func (s *Service) Authenticate(ctx context.Context, requestedNAS string) (Authen
 		return AuthenticationResult{}, authenticationError(name, err)
 	}
 	return AuthenticationResult{NAS: name}, nil
+}
+
+func (s *Service) GetCompatibility(ctx context.Context, requestedNAS string) (CompatibilityResult, error) {
+	name, client, err := s.manager.Client(ctx, requestedNAS)
+	if err != nil {
+		return CompatibilityResult{}, err
+	}
+	report, err := client.Compatibility(ctx)
+	if err != nil {
+		return CompatibilityResult{}, authenticationError(name, err)
+	}
+	return CompatibilityResult{NAS: name, Report: report}, nil
 }
 
 func authenticationError(name string, err error) error {

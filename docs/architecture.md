@@ -15,10 +15,13 @@ The first release proves one complete path shared by both products:
 
 ```text
 CLI adapter ----+
-                +--> Application service --> Runtime/session manager --> Synology client --> DSM
-MCP adapter ----+                                  |                        |
-                                                   +--> Config              +--> API discovery
-                                                   +--> Credential stores
+                +--> Application service --> Runtime/session manager --> Synology client façade
+MCP adapter ----+                                  |                               |
+                                                   +--> Config                     +--> Compatibility target/router
+                                                   +--> Credential stores                    |
+                                                                                             +--> Operation variant
+                                                                                                      |
+                                                                                                      +--> WebAPI executor --> DSM
 ```
 
 Dependencies only point to the right:
@@ -27,6 +30,22 @@ Dependencies only point to the right:
 - CLI and MCP do not construct raw DSM WebAPI calls.
 - The Synology client has no knowledge of commands, tools, or profile storage.
 - Secret values never enter configuration or display models.
+
+## Version compatibility
+
+Version selection is operation-scoped rather than implemented as monolithic DSM 6, DSM 7, or DSM 8 clients. A target contains the DSM release, discovered WebAPI catalog, derived capabilities, and known transport or API quirks. Each operation registers a small ordered set of variants.
+
+`system.info` currently demonstrates the pattern:
+
+```text
+core-system-v3          SYNO.Core.System v3   priority 30
+core-system-v2          SYNO.Core.System v2   priority 20
+core-system-v1-legacy   SYNO.Core.System v1   priority 10
+```
+
+The highest-priority matching variant is selected. Shared HTTP, session, retry, validation, and normalization behavior stays in the executor and common decoder. A future DSM-specific override uses a higher priority plus both API and DSM-range matchers, without copying unrelated operations.
+
+See [`docs/compatibility.md`](compatibility.md) for rules and extension examples.
 
 ## Authentication flow
 
@@ -69,6 +88,7 @@ dsmctl nas add <name>
 dsmctl nas list
 dsmctl nas use <name>
 dsmctl nas remove <name>
+dsmctl nas capabilities [--nas <name>] [--json]
 dsmctl auth login [--nas <name>]
 dsmctl system info [--nas <name>] [--json]
 ```
@@ -78,15 +98,17 @@ MCP:
 ```text
 list_nas
 get_system_info { nas?: string }
+get_capabilities { nas?: string }
 ```
 
 ## Extension rule
 
-A new management feature normally adds three pieces:
+A new management feature normally adds four pieces:
 
-1. A typed method and response model under `internal/synology`.
-2. A use case under `internal/application`, including validation, idempotency, and safety policy.
-3. Thin CLI and MCP adapters.
+1. A canonical model and operation variants under `internal/synology/operations`.
+2. Capability and version matchers, reusing the common executor and normalizer.
+3. A use case under `internal/application`, including validation, idempotency, and safety policy.
+4. Thin CLI and MCP adapters.
 
 Raw DSM calls are not exposed as MCP tools. Mutating operations will use plan/apply semantics so a CLI user or MCP host can inspect potentially destructive changes before execution.
 
@@ -94,6 +116,5 @@ Raw DSM calls are not exposed as MCP tools. Mutating operations will use plan/ap
 
 - Credential removal, status, and trusted-device rotation commands.
 - DSM error descriptions and structured application errors.
-- Capability reporting and DSM compatibility contract tests.
 - Control Panel read operations, followed by plan/apply mutations.
 - SAN inventory, followed by guarded LUN and target mutations.

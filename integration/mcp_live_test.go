@@ -58,4 +58,31 @@ func TestMCPGetSystemInfoLive(t *testing.T) {
 	if output.NAS != nas || output.System.Model == "" {
 		t.Fatalf("unexpected result: nas=%q model=%q", output.NAS, output.System.Model)
 	}
+
+	capabilities, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "get_capabilities",
+		Arguments: map[string]any{"nas": nas},
+	})
+	if err != nil {
+		t.Fatalf("call get_capabilities: %v", err)
+	}
+	capabilityData, err := json.Marshal(capabilities.StructuredContent)
+	if err != nil {
+		t.Fatalf("encode capability result: %v", err)
+	}
+	var capabilityOutput struct {
+		Report struct {
+			Operations []struct {
+				Operation string `json:"operation"`
+				Supported bool   `json:"supported"`
+				Backend   string `json:"backend"`
+			} `json:"operations"`
+		} `json:"report"`
+	}
+	if err := json.Unmarshal(capabilityData, &capabilityOutput); err != nil {
+		t.Fatalf("decode capability result: %v", err)
+	}
+	if len(capabilityOutput.Report.Operations) == 0 || capabilityOutput.Report.Operations[0].Operation != "system.info" || !capabilityOutput.Report.Operations[0].Supported || capabilityOutput.Report.Operations[0].Backend == "" {
+		t.Fatalf("unexpected capability result: %#v", capabilityOutput.Report.Operations)
+	}
 }

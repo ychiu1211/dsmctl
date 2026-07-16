@@ -1,0 +1,8 @@
+{
+  "hostname": "office",
+  "model": "DS923+",
+  "firmware_ver": "DSM 7.3.2-86009",
+  "ram_size": 4096,
+  "cpu_vendor": "AMD",
+  "cpu_series": "R1600"
+}

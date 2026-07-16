@@ -1,0 +1,9 @@
+{
+  "server_name": "legacy",
+  "model": "DS916+",
+  "version_string": "DSM 6.2.4",
+  "memory_size": "2048",
+  "uptime": "12 days",
+  "timezone": "Taipei",
+  "temperature": "44"
+}

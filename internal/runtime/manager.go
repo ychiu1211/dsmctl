@@ -19,6 +19,7 @@ import (
 type Client interface {
 	Authenticate(ctx context.Context) error
 	SystemInfo(ctx context.Context) (synology.SystemInfo, error)
+	Compatibility(ctx context.Context) (synology.CompatibilityReport, error)
 }
 
 type OTPProvider func(ctx context.Context, profileName string) (string, error)

@@ -11,12 +11,14 @@ The first milestone intentionally implements one complete vertical slice: config
 
 ```text
 CLI ---------+
-             +--> application --> runtime/session manager --> Synology WebAPI client --> DSM
-MCP server --+                           |                         |
-                                         +--> OS credential store +--> API discovery
+             +--> application --> runtime/session manager --> Synology client façade
+MCP server --+                           |                              |
+                                         +--> OS credential store       +--> compatibility router
+                                                                               |
+                                                                               +--> operation variant --> WebAPI executor --> DSM
 ```
 
-CLI and MCP never construct raw DSM requests. Both use the same application, session, credential, and WebAPI packages, so changes to DSM behavior are made once.
+CLI and MCP never construct raw DSM requests or select DSM versions. Each operation chooses a backend from the APIs and versions advertised by the NAS, with narrowly scoped DSM-release overrides when behavior actually differs. See [the compatibility architecture](docs/compatibility.md).
 
 ## Build
 
@@ -51,6 +53,7 @@ Read system information:
 ```console
 dsmctl system info
 dsmctl system info --nas office --json
+dsmctl nas capabilities --nas office
 ```
 
 Manage more than one NAS:
@@ -103,6 +106,7 @@ Available tools:
 
 - `list_nas`: list safe profile metadata; secrets are never returned.
 - `get_system_info`: authenticate to a selected profile and return normalized DSM system information.
+- `get_capabilities`: report discovered APIs, DSM release, compatibility quirks, and the backend selected for each operation.
 
 MCP intentionally has no tool that accepts a password or OTP. If interactive authentication is required, it returns an actionable error asking the user to run `dsmctl auth login --nas <name>` first.
 
@@ -127,8 +131,9 @@ go test ./integration -run TestMCPGetSystemInfoLive -v
 
 A management feature normally adds:
 
-1. A typed operation under `internal/synology`.
-2. A use case and policy under `internal/application`.
-3. Thin CLI and MCP adapters.
+1. A stable result model and one or more variants under `internal/synology/operations/<operation>`.
+2. Capability matchers for the shared backend and only the version-specific overrides that differ.
+3. A use case and policy under `internal/application`.
+4. Thin CLI and MCP adapters.
 
 Raw generic DSM calls are not exposed as MCP tools. Mutating operations will use guarded plan/apply semantics as the project expands into Control Panel and SAN management.

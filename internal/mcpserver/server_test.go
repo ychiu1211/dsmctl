@@ -42,8 +42,8 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools() error = %v", err)
 	}
-	if len(tools.Tools) != 2 {
-		t.Fatalf("ListTools() returned %d tools, want 2", len(tools.Tools))
+	if len(tools.Tools) != 3 {
+		t.Fatalf("ListTools() returned %d tools, want 3", len(tools.Tools))
 	}
 	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: "list_nas", Arguments: map[string]any{}})
 	if err != nil {

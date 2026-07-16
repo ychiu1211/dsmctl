@@ -284,3 +284,52 @@ func TestClientRetriesInvalidOTP(t *testing.T) {
 		t.Fatalf("providerCalls=%d loginCalls=%d", providerCalls, loginCalls)
 	}
 }
+
+func TestClientCompatibilityReportSelectsBackend(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Errorf("ParseForm() error = %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Form.Get("api") + "." + r.Form.Get("method") {
+		case "SYNO.API.Info.query":
+			fmt.Fprint(w, `{"success":true,"data":{"SYNO.API.Auth":{"path":"entry.cgi","minVersion":1,"maxVersion":7},"SYNO.Core.System":{"path":"entry.cgi","minVersion":1,"maxVersion":3,"requestFormat":"JSON"}}}`)
+		case "SYNO.API.Auth.login":
+			fmt.Fprint(w, `{"success":true,"data":{"sid":"compatibility-sid","synotoken":"compatibility-token"}}`)
+		case "SYNO.Core.System.info":
+			if r.Form.Get("version") != "3" {
+				t.Errorf("system info version = %q, want 3", r.Form.Get("version"))
+			}
+			fmt.Fprint(w, `{"success":true,"data":{"model":"DS1621+","firmware_ver":"DSM 7.3.2-86009 Update 1"}}`)
+		case "SYNO.API.Auth.logout":
+			fmt.Fprint(w, `{"success":true,"data":{}}`)
+		default:
+			t.Errorf("unexpected request %s.%s", r.Form.Get("api"), r.Form.Get("method"))
+			fmt.Fprint(w, `{"success":false,"error":{"code":102}}`)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient(Options{
+		BaseURL:    server.URL,
+		Username:   "automation",
+		Password:   "secret",
+		HTTPClient: server.Client(),
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	report, err := client.Compatibility(context.Background())
+	if err != nil {
+		t.Fatalf("Compatibility() error = %v", err)
+	}
+	if report.DSM.Major != 7 || report.DSM.Minor != 3 || report.DSM.Build != 86009 {
+		t.Fatalf("DSM version = %#v", report.DSM)
+	}
+	if len(report.Operations) != 1 || !report.Operations[0].Supported || report.Operations[0].Backend != "core-system-v3" || report.Operations[0].Version != 3 {
+		t.Fatalf("operations = %#v", report.Operations)
+	}
+	if err := client.Close(context.Background()); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+}
