@@ -392,7 +392,7 @@ func New(service *application.Service, version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_storage_capabilities",
 		Title:       "Get storage capabilities",
-		Description: "Report which storage inventory and mutation operations dsmctl currently supports on a selected NAS. The first milestone is read-only.",
+		Description: "Report which storage inventory and guarded mutation operations dsmctl currently supports on a selected NAS and the DSM backend selected for each.",
 		Annotations: readOnlyAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getStorageInput) (*mcp.CallToolResult, getStorageCapabilitiesOutput, error) {
 		result, err := service.GetStorageCapabilities(ctx, input.NAS)
@@ -435,7 +435,7 @@ func New(service *application.Service, version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "apply_storage_plan",
 		Title:       "Apply an approved storage plan",
-		Description: "Validate an unmodified storage approval artifact. No storage write backend is registered yet, so this tool fails closed before contacting DSM.",
+		Description: "Apply an unmodified storage plan only while its approval hash, stable IDs, and topology and safety fingerprints still match; then create, expand, or delete the planned storage pool or volume and verify the postcondition. Storage-pool RAID migration has no backend and fails closed.",
 		Annotations: mutationAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyStoragePlanInput) (*mcp.CallToolResult, applyStoragePlanOutput, error) {
 		result, err := service.ApplyStoragePlan(ctx, input.Plan, input.ApprovalHash)

@@ -57,8 +57,10 @@ application boundary. Pool create owns its complete initial RAID/disk topology;
 pool update is patch-only disk addition. Three independently selected
 `SYNO.Storage.CGI.Pool` v1 variants implement create, add-disk expansion, and
 delete. Plans bind stable DSM IDs, a non-volatile topology fingerprint, and a
-separate disk/pool safety fingerprint. Volume mutation and RAID migration have
-no registered backend and therefore fail closed before any DSM write. See
+separate disk/pool safety fingerprint. Volume create, expansion, and delete use
+independently selected `SYNO.Storage.CGI.Volume` v1 variants behind the same
+guarded plan/apply contract. Storage-pool RAID migration has no registered
+backend and therefore fails closed before any DSM write. See
 [`docs/storage-management.md`](storage-management.md) for schemas and examples.
 
 SAN inventory and mutations use the same operation-scoped design. Target,
@@ -147,6 +149,11 @@ dsmctl san plan [--nas <name>] --file <request.json> [--output <plan.json>]
 dsmctl san apply --file <plan.json> --approve <sha256>
 dsmctl control-panel time capabilities [--nas <name>] [--json]
 dsmctl control-panel time state [--nas <name>] [--json]
+dsmctl control-panel file-services capabilities [--nas <name>] [--json]
+dsmctl control-panel file-services smb state [--nas <name>] [--json]
+dsmctl control-panel file-services nfs state [--nas <name>] [--json]
+dsmctl control-panel file-services plan [--nas <name>] --file <request.json> [--output <plan.json>]
+dsmctl control-panel file-services apply --file <plan.json> --approve <sha256>
 dsmctl account capabilities [--nas <name>] [--json]
 dsmctl account inventory [--nas <name>] [--memberships] [--quotas] [--application-privileges] [--principal-type user|group --principal <name>] [--json]
 dsmctl account plan [--nas <name>] --file <request.json> [--output <plan.json>]
@@ -174,6 +181,11 @@ plan_san_change { nas?: string, request: SANChangeRequest }
 apply_san_plan { plan: SANPlan, approval_hash: string }
 get_control_panel_time_capabilities { nas?: string }
 get_control_panel_time_state { nas?: string }
+get_file_service_capabilities { nas?: string }
+get_smb_state { nas?: string }
+get_nfs_state { nas?: string }
+plan_file_service_change { nas?: string, request: FileServiceChangeRequest }
+apply_file_service_plan { plan: FileServicePlan, approval_hash: string }
 get_account_capabilities { nas?: string }
 get_account_state { nas?: string, include_memberships?: boolean, include_quotas?: boolean, include_application_privileges?: boolean, principal_type?: "user"|"group", principal?: string }
 plan_account_change { nas?: string, request: IdentityChangeRequest }
