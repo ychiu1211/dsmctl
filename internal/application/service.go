@@ -20,6 +20,10 @@ type SystemInfoResult struct {
 	System synology.SystemInfo `json:"system" jsonschema:"System information returned by DSM"`
 }
 
+type AuthenticationResult struct {
+	NAS string `json:"nas"`
+}
+
 func NewService(cfg *config.Config, manager *runtime.Manager) *Service {
 	return &Service{config: cfg, manager: manager}
 }
@@ -35,9 +39,27 @@ func (s *Service) GetSystemInfo(ctx context.Context, requestedNAS string) (Syste
 	}
 	info, err := client.SystemInfo(ctx)
 	if err != nil {
-		return SystemInfoResult{}, fmt.Errorf("NAS %q: %w", name, err)
+		return SystemInfoResult{}, authenticationError(name, err)
 	}
 	return SystemInfoResult{NAS: name, System: info}, nil
+}
+
+func (s *Service) Authenticate(ctx context.Context, requestedNAS string) (AuthenticationResult, error) {
+	name, client, err := s.manager.Client(ctx, requestedNAS)
+	if err != nil {
+		return AuthenticationResult{}, err
+	}
+	if err := client.Authenticate(ctx); err != nil {
+		return AuthenticationResult{}, authenticationError(name, err)
+	}
+	return AuthenticationResult{NAS: name}, nil
+}
+
+func authenticationError(name string, err error) error {
+	if synology.IsOTPRequired(err) {
+		return fmt.Errorf("NAS %q requires a one-time password; run 'dsmctl auth login --nas %s' in an interactive terminal first: %w", name, name, err)
+	}
+	return fmt.Errorf("NAS %q: %w", name, err)
 }
 
 func (s *Service) Close(ctx context.Context) error {

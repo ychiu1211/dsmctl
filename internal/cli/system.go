@@ -25,7 +25,7 @@ func newSystemInfoCommand(opts *options) *cobra.Command {
 		Short: "Show basic system information",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
 			if err != nil {
 				return err
 			}

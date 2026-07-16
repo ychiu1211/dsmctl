@@ -26,7 +26,8 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
-	manager := runtime.NewManager(cfg, credentials.NewEnvironment())
+	secrets := credentials.NewSecureStore()
+	manager := runtime.NewManager(cfg, secrets, runtime.WithDeviceStore(secrets))
 	service := application.NewService(cfg, manager)
 	server := mcpserver.New(service, buildinfo.Version)
 

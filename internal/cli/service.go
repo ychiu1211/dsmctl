@@ -7,11 +7,17 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/runtime"
 )
 
-func loadService(configPath string) (*application.Service, error) {
+func loadService(configPath string, otpProvider runtime.OTPProvider) (*application.Service, error) {
 	cfg, err := config.NewStore(configPath).Load()
 	if err != nil {
 		return nil, err
 	}
-	manager := runtime.NewManager(cfg, credentials.NewEnvironment())
+	secrets := credentials.NewSecureStore()
+	manager := runtime.NewManager(
+		cfg,
+		secrets,
+		runtime.WithDeviceStore(secrets),
+		runtime.WithOTPProvider(otpProvider),
+	)
 	return application.NewService(cfg, manager), nil
 }

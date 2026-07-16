@@ -46,7 +46,7 @@ func newNASAddCommand(opts *options) *cobra.Command {
 			if err := store.Save(cfg); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Saved NAS %q in %s\nSet %s before connecting.\n", name, store.Path(), profile.PasswordEnv)
+			fmt.Fprintf(cmd.OutOrStdout(), "Saved NAS %q in %s\nRun 'dsmctl auth login --nas %s' to authenticate, or set %s for automation.\n", name, store.Path(), name, profile.PasswordEnv)
 			return nil
 		},
 	}

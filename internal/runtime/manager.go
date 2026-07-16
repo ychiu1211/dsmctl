@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,30 +16,63 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/synology"
 )
 
-type SystemInfoClient interface {
+type Client interface {
+	Authenticate(ctx context.Context) error
 	SystemInfo(ctx context.Context) (synology.SystemInfo, error)
+}
+
+type OTPProvider func(ctx context.Context, profileName string) (string, error)
+
+type Option func(*Manager)
+
+func WithDeviceStore(store credentials.DeviceStore) Option {
+	return func(manager *Manager) {
+		manager.devices = store
+	}
+}
+
+func WithOTPProvider(provider OTPProvider) Option {
+	return func(manager *Manager) {
+		manager.otp = provider
+	}
+}
+
+func WithDeviceName(name string) Option {
+	return func(manager *Manager) {
+		if strings.TrimSpace(name) != "" {
+			manager.deviceName = strings.TrimSpace(name)
+		}
+	}
 }
 
 type Manager struct {
 	config      *config.Config
 	credentials credentials.Resolver
+	devices     credentials.DeviceStore
+	otp         OTPProvider
+	deviceName  string
 
 	mu      sync.Mutex
 	clients map[string]*synology.Client
 }
 
-func NewManager(cfg *config.Config, resolver credentials.Resolver) *Manager {
-	return &Manager{
+func NewManager(cfg *config.Config, resolver credentials.Resolver, options ...Option) *Manager {
+	manager := &Manager{
 		config:      cfg,
 		credentials: resolver,
+		deviceName:  defaultDeviceName(),
 		clients:     make(map[string]*synology.Client),
 	}
+	for _, option := range options {
+		option(manager)
+	}
+	return manager
 }
 
 // Client resolves a NAS profile and lazily creates one reusable authenticated
 // client per profile. Separate profiles can therefore hold independent DSM
 // sessions at the same time.
-func (m *Manager) Client(ctx context.Context, requested string) (string, SystemInfoClient, error) {
+func (m *Manager) Client(ctx context.Context, requested string) (string, Client, error) {
 	name, profile, err := m.config.Resolve(requested)
 	if err != nil {
 		return "", nil, err
@@ -54,11 +89,40 @@ func (m *Manager) Client(ctx context.Context, requested string) (string, SystemI
 	if err != nil {
 		return "", nil, err
 	}
+	device := credentials.TrustedDevice{Name: m.deviceName}
+	if m.devices != nil {
+		device, err = m.devices.TrustedDevice(ctx, name)
+		if err != nil {
+			return "", nil, err
+		}
+		if device.Name == "" {
+			device.Name = m.deviceName
+		}
+	}
+	var otp synology.OTPProvider
+	if m.otp != nil {
+		otp = func(ctx context.Context) (string, error) {
+			return m.otp(ctx, name)
+		}
+	}
+	var saveDeviceID synology.DeviceIDSaver
+	if m.devices != nil {
+		saveDeviceID = func(ctx context.Context, deviceID string) error {
+			return m.devices.SaveTrustedDevice(ctx, name, credentials.TrustedDevice{
+				Name: device.Name,
+				ID:   deviceID,
+			})
+		}
+	}
 	client, err := synology.NewClient(synology.Options{
-		BaseURL:    profile.URL,
-		Username:   profile.Username,
-		Password:   password,
-		HTTPClient: httpClient(profile),
+		BaseURL:      profile.URL,
+		Username:     profile.Username,
+		Password:     password,
+		DeviceName:   device.Name,
+		DeviceID:     device.ID,
+		OTPProvider:  otp,
+		SaveDeviceID: saveDeviceID,
+		HTTPClient:   httpClient(profile),
 	})
 	if err != nil {
 		return "", nil, fmt.Errorf("create client for NAS %q: %w", name, err)
@@ -71,6 +135,14 @@ func (m *Manager) Client(ctx context.Context, requested string) (string, SystemI
 	}
 	m.clients[name] = client
 	return name, client, nil
+}
+
+func defaultDeviceName() string {
+	hostname, err := os.Hostname()
+	if err != nil || strings.TrimSpace(hostname) == "" {
+		return "dsmctl"
+	}
+	return "dsmctl@" + strings.TrimSpace(hostname)
 }
 
 func (m *Manager) Close(ctx context.Context) error {

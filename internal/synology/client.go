@@ -16,16 +16,25 @@ import (
 )
 
 const (
-	authAPI       = "SYNO.API.Auth"
-	systemInfoAPI = "SYNO.Core.System"
-	maxBodySize   = 8 << 20
+	authAPI        = "SYNO.API.Auth"
+	systemInfoAPI  = "SYNO.Core.System"
+	maxBodySize    = 8 << 20
+	maxOTPAttempts = 3
 )
 
+type OTPProvider func(ctx context.Context) (string, error)
+
+type DeviceIDSaver func(ctx context.Context, deviceID string) error
+
 type Options struct {
-	BaseURL    string
-	Username   string
-	Password   string
-	HTTPClient *http.Client
+	BaseURL      string
+	Username     string
+	Password     string
+	DeviceName   string
+	DeviceID     string
+	OTPProvider  OTPProvider
+	SaveDeviceID DeviceIDSaver
+	HTTPClient   *http.Client
 }
 
 type APIInfo struct {
@@ -36,10 +45,14 @@ type APIInfo struct {
 }
 
 type Client struct {
-	baseURL    *url.URL
-	username   string
-	password   string
-	httpClient *http.Client
+	baseURL      *url.URL
+	username     string
+	password     string
+	deviceName   string
+	deviceID     string
+	otp          OTPProvider
+	saveDeviceID DeviceIDSaver
+	httpClient   *http.Client
 
 	mu        sync.Mutex
 	apis      map[string]APIInfo
@@ -75,11 +88,15 @@ func NewClient(options Options) (*Client, error) {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
 	return &Client{
-		baseURL:    baseURL,
-		username:   options.Username,
-		password:   options.Password,
-		httpClient: httpClient,
-		apis:       make(map[string]APIInfo),
+		baseURL:      baseURL,
+		username:     options.Username,
+		password:     options.Password,
+		deviceName:   options.DeviceName,
+		deviceID:     options.DeviceID,
+		otp:          options.OTPProvider,
+		saveDeviceID: options.SaveDeviceID,
+		httpClient:   httpClient,
+		apis:         make(map[string]APIInfo),
 	}, nil
 }
 
@@ -126,23 +143,73 @@ func (c *Client) loginLocked(ctx context.Context) error {
 		return err
 	}
 	info := c.apis[authAPI]
+	version := preferredVersion(info, 6)
 	params := url.Values{
-		"api":               {authAPI},
-		"version":           {strconv.Itoa(info.MaxVersion)},
-		"method":            {"login"},
-		"account":           {c.username},
-		"passwd":            {c.password},
-		"session":           {"DSMCTL"},
-		"format":            {"sid"},
-		"enable_syno_token": {"yes"},
+		"api":     {authAPI},
+		"version": {strconv.Itoa(version)},
+		"method":  {"login"},
+		"account": {c.username},
+		"passwd":  {c.password},
+		"session": {"DSMCTL"},
+		"format":  {"sid"},
 	}
+	if version >= 6 {
+		params.Set("enable_syno_token", "yes")
+		if c.deviceID != "" && c.deviceName != "" {
+			params.Set("device_name", c.deviceName)
+			params.Set("device_id", c.deviceID)
+		}
+	}
+
 	data, err := c.requestLocked(ctx, info.Path, params, authAPI, "login")
+	if isOTPChallenge(err) {
+		data, err = c.loginWithOTPLocked(ctx, info.Path, version, params, err)
+	}
 	if err != nil {
 		return fmt.Errorf("log in to DSM: %w", err)
 	}
+	return c.acceptLoginLocked(ctx, data)
+}
+
+func (c *Client) loginWithOTPLocked(ctx context.Context, path string, version int, base url.Values, challenge error) (json.RawMessage, error) {
+	if c.otp == nil {
+		return nil, &OTPRequiredError{Cause: challenge}
+	}
+	var lastErr error
+	for attempt := 0; attempt < maxOTPAttempts; attempt++ {
+		code, err := c.otp(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("obtain one-time password: %w", err)
+		}
+		code = strings.TrimSpace(code)
+		if code == "" {
+			return nil, errors.New("one-time password cannot be empty")
+		}
+		params := cloneValues(base)
+		params.Del("device_id")
+		params.Set("otp_code", code)
+		if version >= 6 && c.deviceName != "" {
+			params.Set("enable_device_token", "yes")
+			params.Set("device_name", c.deviceName)
+		}
+		data, requestErr := c.requestLocked(ctx, path, params, authAPI, "login")
+		if requestErr == nil {
+			return data, nil
+		}
+		lastErr = requestErr
+		if !isInvalidOTP(requestErr) {
+			return nil, requestErr
+		}
+	}
+	return nil, fmt.Errorf("DSM rejected the one-time password after %d attempts: %w", maxOTPAttempts, lastErr)
+}
+
+func (c *Client) acceptLoginLocked(ctx context.Context, data json.RawMessage) error {
 	var result struct {
-		SID       string `json:"sid"`
-		SynoToken string `json:"synotoken"`
+		SID        string `json:"sid"`
+		SynoToken  string `json:"synotoken"`
+		DID        string `json:"did"`
+		DeviceIDV7 string `json:"device_id"`
 	}
 	if err := json.Unmarshal(data, &result); err != nil {
 		return fmt.Errorf("decode DSM login: %w", err)
@@ -152,7 +219,26 @@ func (c *Client) loginLocked(ctx context.Context) error {
 	}
 	c.sid = result.SID
 	c.synoToken = result.SynoToken
+	deviceID := result.DID
+	if deviceID == "" {
+		deviceID = result.DeviceIDV7
+	}
+	if deviceID != "" {
+		c.deviceID = deviceID
+		if c.saveDeviceID != nil {
+			if err := c.saveDeviceID(ctx, deviceID); err != nil {
+				return fmt.Errorf("save DSM trusted device: %w", err)
+			}
+		}
+	}
 	return nil
+}
+
+// Authenticate establishes a DSM session without calling a management API.
+func (c *Client) Authenticate(ctx context.Context) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.loginLocked(ctx)
 }
 
 func (c *Client) callLocked(ctx context.Context, api, method string, parameters url.Values) (json.RawMessage, error) {
@@ -200,6 +286,15 @@ func (c *Client) requestLocked(ctx context.Context, apiPath string, params url.V
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("User-Agent", "dsmctl/0.1")
+	// Some DSM Core APIs only recognize session credentials from the same
+	// locations used by the DSM web UI. Keep request parameters for documented
+	// WebAPI compatibility and also send the equivalent secure cookie/header.
+	if c.sid != "" {
+		request.AddCookie(&http.Cookie{Name: "id", Value: c.sid})
+	}
+	if c.synoToken != "" {
+		request.Header.Set("X-SYNO-TOKEN", c.synoToken)
+	}
 
 	response, err := c.httpClient.Do(request)
 	if err != nil {
@@ -258,4 +353,14 @@ func cloneValues(values url.Values) url.Values {
 		clone[key] = append([]string(nil), items...)
 	}
 	return clone
+}
+
+func preferredVersion(info APIInfo, preferred int) int {
+	if preferred > info.MaxVersion {
+		return info.MaxVersion
+	}
+	if preferred < info.MinVersion {
+		return info.MinVersion
+	}
+	return preferred
 }
