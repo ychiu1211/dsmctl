@@ -1,0 +1,22 @@
+{
+  "offset": 0,
+  "total": 2,
+  "users": [
+    {
+      "uid": 1026,
+      "name": "alice",
+      "description": "Storage administrator",
+      "email": "alice@example.com",
+      "expired": false,
+      "passwd_never_expire": true,
+      "2fa_status": "enabled"
+    },
+    {
+      "uid": "1027",
+      "name": "backup-agent",
+      "expired": true,
+      "passwd_never_expire": false,
+      "2fa_status": 0
+    }
+  ]
+}

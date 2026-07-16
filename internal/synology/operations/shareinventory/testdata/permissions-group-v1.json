@@ -1,0 +1,23 @@
+{
+  "total": 2,
+  "shares": [
+    {
+      "name": "projects",
+      "is_aclmode": true,
+      "is_custom": true,
+      "is_deny": false,
+      "is_mask": false,
+      "is_readonly": true,
+      "is_writable": false
+    },
+    {
+      "name": "archive",
+      "is_aclmode": false,
+      "is_custom": false,
+      "is_deny": false,
+      "is_mask": true,
+      "is_readonly": false,
+      "is_writable": false
+    }
+  ]
+}

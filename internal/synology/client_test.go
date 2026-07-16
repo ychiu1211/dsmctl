@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
 )
 
 func TestClientSystemInfoLoginAndLogout(t *testing.T) {
@@ -326,8 +328,15 @@ func TestClientCompatibilityReportSelectsBackend(t *testing.T) {
 	if report.DSM.Major != 7 || report.DSM.Minor != 3 || report.DSM.Build != 86009 {
 		t.Fatalf("DSM version = %#v", report.DSM)
 	}
-	if len(report.Operations) != 1 || !report.Operations[0].Supported || report.Operations[0].Backend != "core-system-v3" || report.Operations[0].Version != 3 {
-		t.Fatalf("operations = %#v", report.Operations)
+	var systemSelection compatibility.Selection
+	for _, selection := range report.Operations {
+		if selection.Operation == "system.info" {
+			systemSelection = selection
+			break
+		}
+	}
+	if !systemSelection.Supported || systemSelection.Backend != "core-system-v3" || systemSelection.Version != 3 {
+		t.Fatalf("system selection = %#v; operations = %#v", systemSelection, report.Operations)
 	}
 	if err := client.Close(context.Background()); err != nil {
 		t.Fatalf("Close() error = %v", err)

@@ -11,8 +11,9 @@ import (
 )
 
 type Service struct {
-	config  *config.Config
-	manager *runtime.Manager
+	config           *config.Config
+	manager          *runtime.Manager
+	secretReferences credentials.ReferenceResolver
 }
 
 type SystemInfoResult struct {
@@ -40,8 +41,48 @@ type StorageCapabilitiesResult struct {
 	Report       synology.CompatibilityReport `json:"report" jsonschema:"Discovered APIs and selected storage compatibility backend"`
 }
 
-func NewService(cfg *config.Config, manager *runtime.Manager) *Service {
-	return &Service{config: cfg, manager: manager}
+type IdentityStateResult struct {
+	NAS      string                 `json:"nas" jsonschema:"NAS profile used for the request"`
+	Identity synology.IdentityState `json:"identity" jsonschema:"Normalized local user and group inventory"`
+}
+
+type IdentityCapabilitiesResult struct {
+	NAS          string                        `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.IdentityCapabilities `json:"capabilities" jsonschema:"Account and group operations currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport  `json:"report" jsonschema:"Discovered APIs and selected identity compatibility backends"`
+}
+
+type ShareStateResult struct {
+	NAS    string              `json:"nas" jsonschema:"NAS profile used for the request"`
+	Shares synology.ShareState `json:"shares" jsonschema:"Normalized shared-folder inventory and optional permissions"`
+}
+
+type ShareCapabilitiesResult struct {
+	NAS          string                       `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.ShareCapabilities   `json:"capabilities" jsonschema:"Shared-folder operations currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport `json:"report" jsonschema:"Discovered APIs and selected shared-folder compatibility backends"`
+}
+
+type ServiceOption func(*Service)
+
+func WithSecretReferenceResolver(resolver credentials.ReferenceResolver) ServiceOption {
+	return func(service *Service) {
+		if resolver != nil {
+			service.secretReferences = resolver
+		}
+	}
+}
+
+func NewService(cfg *config.Config, manager *runtime.Manager, options ...ServiceOption) *Service {
+	service := &Service{
+		config:           cfg,
+		manager:          manager,
+		secretReferences: credentials.NewEnvironmentReferenceResolver(),
+	}
+	for _, option := range options {
+		option(service)
+	}
+	return service
 }
 
 func (s *Service) ListNAS() []config.Summary {
@@ -105,6 +146,54 @@ func (s *Service) GetStorageCapabilities(ctx context.Context, requestedNAS strin
 		return StorageCapabilitiesResult{}, authenticationError(name, err)
 	}
 	return StorageCapabilitiesResult{NAS: name, Capabilities: capabilities, Report: report}, nil
+}
+
+func (s *Service) GetIdentityState(ctx context.Context, requestedNAS string) (IdentityStateResult, error) {
+	name, client, err := s.manager.Client(ctx, requestedNAS)
+	if err != nil {
+		return IdentityStateResult{}, err
+	}
+	state, err := client.IdentityState(ctx)
+	if err != nil {
+		return IdentityStateResult{}, authenticationError(name, err)
+	}
+	return IdentityStateResult{NAS: name, Identity: state}, nil
+}
+
+func (s *Service) GetIdentityCapabilities(ctx context.Context, requestedNAS string) (IdentityCapabilitiesResult, error) {
+	name, client, err := s.manager.Client(ctx, requestedNAS)
+	if err != nil {
+		return IdentityCapabilitiesResult{}, err
+	}
+	capabilities, report, err := client.IdentityCapabilities(ctx)
+	if err != nil {
+		return IdentityCapabilitiesResult{}, authenticationError(name, err)
+	}
+	return IdentityCapabilitiesResult{NAS: name, Capabilities: capabilities, Report: report}, nil
+}
+
+func (s *Service) GetShareState(ctx context.Context, requestedNAS string, includePermissions bool) (ShareStateResult, error) {
+	name, client, err := s.manager.Client(ctx, requestedNAS)
+	if err != nil {
+		return ShareStateResult{}, err
+	}
+	state, err := client.ShareState(ctx, includePermissions)
+	if err != nil {
+		return ShareStateResult{}, authenticationError(name, err)
+	}
+	return ShareStateResult{NAS: name, Shares: state}, nil
+}
+
+func (s *Service) GetShareCapabilities(ctx context.Context, requestedNAS string) (ShareCapabilitiesResult, error) {
+	name, client, err := s.manager.Client(ctx, requestedNAS)
+	if err != nil {
+		return ShareCapabilitiesResult{}, err
+	}
+	capabilities, report, err := client.ShareCapabilities(ctx)
+	if err != nil {
+		return ShareCapabilitiesResult{}, authenticationError(name, err)
+	}
+	return ShareCapabilitiesResult{NAS: name, Capabilities: capabilities, Report: report}, nil
 }
 
 func authenticationError(name string, err error) error {

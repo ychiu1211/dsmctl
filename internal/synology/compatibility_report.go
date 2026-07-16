@@ -5,6 +5,10 @@ import (
 	"fmt"
 
 	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
+	"github.com/ychiu1211/dsmctl/internal/synology/operations/identityinventory"
+	"github.com/ychiu1211/dsmctl/internal/synology/operations/identitymutation"
+	"github.com/ychiu1211/dsmctl/internal/synology/operations/shareinventory"
+	"github.com/ychiu1211/dsmctl/internal/synology/operations/sharemutation"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/storageinventory"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/systeminfo"
 )
@@ -23,6 +27,10 @@ func (c *Client) Compatibility(ctx context.Context) (CompatibilityReport, error)
 	defer c.mu.Unlock()
 
 	apiNames := append([]string{authAPI}, storageinventory.APINames()...)
+	apiNames = append(apiNames, identityinventory.APINames()...)
+	apiNames = append(apiNames, identitymutation.APINames()...)
+	apiNames = append(apiNames, shareinventory.APINames()...)
+	apiNames = append(apiNames, sharemutation.APINames()...)
 	if err := c.prepareCompatibilityTargetLocked(ctx, apiNames...); err != nil {
 		return CompatibilityReport{}, fmt.Errorf("discover compatibility target: %w", err)
 	}
@@ -35,8 +43,29 @@ func (c *Client) Compatibility(ctx context.Context) (CompatibilityReport, error)
 	if selectionErr != nil && !compatibility.IsUnsupported(selectionErr) {
 		return CompatibilityReport{}, selectionErr
 	}
+	identitySelections, selectionErr := identityinventory.Select(c.target)
+	if selectionErr != nil {
+		return CompatibilityReport{}, selectionErr
+	}
+	shareSelections, selectionErr := shareinventory.Select(c.target)
+	if selectionErr != nil {
+		return CompatibilityReport{}, selectionErr
+	}
+	identityMutationSelections, selectionErr := identitymutation.Select(c.target)
+	if selectionErr != nil {
+		return CompatibilityReport{}, selectionErr
+	}
+	shareMutationSelections, selectionErr := sharemutation.Select(c.target)
+	if selectionErr != nil {
+		return CompatibilityReport{}, selectionErr
+	}
 	c.updateDerivedCapabilitiesLocked()
-	return c.target.Report(systemSelection, storageSelection), nil
+	selections := []compatibility.Selection{systemSelection, storageSelection}
+	selections = append(selections, identitySelections...)
+	selections = append(selections, shareSelections...)
+	selections = append(selections, identityMutationSelections...)
+	selections = append(selections, shareMutationSelections...)
+	return c.target.Report(selections...), nil
 }
 
 // prepareCompatibilityTargetLocked discovers all APIs used by an operation
@@ -69,6 +98,35 @@ func (c *Client) updateDerivedCapabilitiesLocked() {
 	}
 	if _, err := storageinventory.Select(c.target); err == nil {
 		c.target.AddCapability(storageinventory.CapabilityName)
+	}
+	identitySupported := false
+	if selections, err := identityinventory.Select(c.target); err == nil && identityinventory.Supported(selections) {
+		identitySupported = true
+		c.target.AddCapability(identityinventory.CapabilityName)
+	}
+	if selections, err := shareinventory.Select(c.target); err == nil {
+		if shareinventory.InventorySupported(selections) {
+			c.target.AddCapability(shareinventory.InventoryCapabilityName)
+		}
+		if shareinventory.PermissionsSupported(selections) && identitySupported {
+			c.target.AddCapability(shareinventory.PermissionCapabilityName)
+		}
+	}
+	if selections, err := identitymutation.Select(c.target); err == nil {
+		if len(selections) > 0 && selections[0].Supported {
+			c.target.AddCapability(identitymutation.UserCapabilityName)
+		}
+		if len(selections) > 1 && selections[1].Supported {
+			c.target.AddCapability(identitymutation.GroupCapabilityName)
+		}
+	}
+	if selections, err := sharemutation.Select(c.target); err == nil {
+		if len(selections) > 0 && selections[0].Supported {
+			c.target.AddCapability(sharemutation.ShareCapabilityName)
+		}
+		if len(selections) > 1 && selections[1].Supported {
+			c.target.AddCapability(sharemutation.PermissionCapabilityName)
+		}
 	}
 	// Sending session credentials in both documented parameters and the web UI
 	// cookie/header locations is safe across tested DSM versions and fixes Core

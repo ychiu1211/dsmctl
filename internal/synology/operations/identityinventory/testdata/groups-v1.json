@@ -1,0 +1,15 @@
+{
+  "offset": 0,
+  "total": 2,
+  "groups": [
+    {
+      "gid": 65536,
+      "name": "administrators",
+      "description": "System administrators"
+    },
+    {
+      "name": "backup-operators",
+      "description": "Backup service accounts"
+    }
+  ]
+}

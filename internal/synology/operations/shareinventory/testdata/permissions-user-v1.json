@@ -1,0 +1,27 @@
+{
+  "total": 2,
+  "shares": [
+    {
+      "name": "projects",
+      "share_path": "/volume1/projects",
+      "inherit": false,
+      "is_aclmode": true,
+      "is_custom": false,
+      "is_deny": false,
+      "is_mask": false,
+      "is_readonly": false,
+      "is_writable": true
+    },
+    {
+      "name": "archive",
+      "share_path": "/volume2/archive",
+      "inherit": true,
+      "is_aclmode": false,
+      "is_custom": false,
+      "is_deny": true,
+      "is_mask": false,
+      "is_readonly": false,
+      "is_writable": false
+    }
+  ]
+}

@@ -82,7 +82,68 @@ func TestMCPGetSystemInfoLive(t *testing.T) {
 	if err := json.Unmarshal(capabilityData, &capabilityOutput); err != nil {
 		t.Fatalf("decode capability result: %v", err)
 	}
-	if len(capabilityOutput.Report.Operations) == 0 || capabilityOutput.Report.Operations[0].Operation != "system.info" || !capabilityOutput.Report.Operations[0].Supported || capabilityOutput.Report.Operations[0].Backend == "" {
+	var systemSupported bool
+	for _, operation := range capabilityOutput.Report.Operations {
+		if operation.Operation == "system.info" {
+			systemSupported = operation.Supported && operation.Backend != ""
+			break
+		}
+	}
+	if !systemSupported {
 		t.Fatalf("unexpected capability result: %#v", capabilityOutput.Report.Operations)
+	}
+
+	accountState, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "get_account_state",
+		Arguments: map[string]any{"nas": nas},
+	})
+	if err != nil {
+		t.Fatalf("call get_account_state: %v", err)
+	}
+	accountData, err := json.Marshal(accountState.StructuredContent)
+	if err != nil {
+		t.Fatalf("encode account result: %v", err)
+	}
+	var accountOutput struct {
+		Identity struct {
+			Users  []any `json:"users"`
+			Groups []any `json:"groups"`
+		} `json:"identity"`
+	}
+	if err := json.Unmarshal(accountData, &accountOutput); err != nil {
+		t.Fatalf("decode account result: %v", err)
+	}
+	if len(accountOutput.Identity.Users) == 0 || len(accountOutput.Identity.Groups) == 0 {
+		t.Fatalf("unexpected account result: users=%d groups=%d", len(accountOutput.Identity.Users), len(accountOutput.Identity.Groups))
+	}
+
+	shareState, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "get_share_state",
+		Arguments: map[string]any{"nas": nas, "include_permissions": true},
+	})
+	if err != nil {
+		t.Fatalf("call get_share_state: %v", err)
+	}
+	shareData, err := json.Marshal(shareState.StructuredContent)
+	if err != nil {
+		t.Fatalf("encode share result: %v", err)
+	}
+	var shareOutput struct {
+		Shares struct {
+			Shares []struct {
+				Permissions []any `json:"permissions"`
+			} `json:"shares"`
+			PermissionsIncluded bool `json:"permissions_included"`
+		} `json:"shares"`
+	}
+	if err := json.Unmarshal(shareData, &shareOutput); err != nil {
+		t.Fatalf("decode share result: %v", err)
+	}
+	permissionCount := 0
+	for _, folder := range shareOutput.Shares.Shares {
+		permissionCount += len(folder.Permissions)
+	}
+	if len(shareOutput.Shares.Shares) == 0 || !shareOutput.Shares.PermissionsIncluded || permissionCount == 0 {
+		t.Fatalf("unexpected share result: shares=%d permissions_included=%t permissions=%d", len(shareOutput.Shares.Shares), shareOutput.Shares.PermissionsIncluded, permissionCount)
 	}
 }

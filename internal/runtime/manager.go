@@ -22,6 +22,12 @@ type Client interface {
 	Compatibility(ctx context.Context) (synology.CompatibilityReport, error)
 	StorageState(ctx context.Context) (synology.StorageState, error)
 	StorageCapabilities(ctx context.Context) (synology.StorageCapabilities, synology.CompatibilityReport, error)
+	IdentityState(ctx context.Context) (synology.IdentityState, error)
+	IdentityCapabilities(ctx context.Context) (synology.IdentityCapabilities, synology.CompatibilityReport, error)
+	ApplyIdentityChange(ctx context.Context, request synology.IdentityChangeRequest, password string) (synology.IdentityMutationResult, error)
+	ShareState(ctx context.Context, includePermissions bool) (synology.ShareState, error)
+	ShareCapabilities(ctx context.Context) (synology.ShareCapabilities, synology.CompatibilityReport, error)
+	ApplyShareChange(ctx context.Context, request synology.ShareChangeRequest) (synology.ShareMutationResult, error)
 }
 
 type OTPProvider func(ctx context.Context, profileName string) (string, error)

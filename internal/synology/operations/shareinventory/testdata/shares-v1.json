@@ -1,0 +1,32 @@
+{
+  "total": 2,
+  "shares": [
+    {
+      "name": "projects",
+      "uuid": "fixture-projects",
+      "desc": "Team projects",
+      "vol_path": "/volume1",
+      "hidden": false,
+      "encryption": false,
+      "enc_auto_mount": false,
+      "is_aclmode": true,
+      "unite_permission": true,
+      "is_usb_share": false,
+      "support_snapshot": true,
+      "quota_value": "1099511627776",
+      "share_quota_used": "274877906944"
+    },
+    {
+      "name": "archive",
+      "uuid": "fixture-archive",
+      "desc": "Encrypted archive",
+      "vol_path": "/volume2",
+      "hidden": true,
+      "encryption": true,
+      "enc_auto_mount": true,
+      "is_aclmode": false,
+      "unite_permission": false,
+      "support_snapshot": false
+    }
+  ]
+}

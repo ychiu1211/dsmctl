@@ -5,7 +5,7 @@
 - `dsmctl`: a command-line interface for administrators.
 - `dsmctl-mcp`: a stdio MCP server for AI clients.
 
-The first milestone implements one complete connection slice: configure multiple NAS profiles, authenticate with password and DSM two-factor authentication, maintain independent sessions, and read basic system information. The storage milestone adds read-only disk, storage-pool, RAID, volume, capacity, and health inventory through the same CLI/MCP/application stack.
+The first milestone implements one complete connection slice: configure multiple NAS profiles, authenticate with password and DSM two-factor authentication, maintain independent sessions, and read basic system information. Management modules cover read-only storage inventory plus guarded local account/group and shared-folder management through the same CLI/MCP/application stack.
 
 ## Architecture
 
@@ -57,7 +57,24 @@ dsmctl nas capabilities --nas office
 dsmctl storage capabilities --nas office
 dsmctl storage inventory --nas office
 dsmctl storage inventory --nas office --json
+dsmctl account capabilities --nas office
+dsmctl account inventory --nas office --json
+dsmctl share capabilities --nas office
+dsmctl share inventory --nas office
+dsmctl share inventory --nas office --include-permissions --json
 ```
+
+Account and shared-folder writes use a two-step plan/apply contract. Put the desired change in JSON, create a plan bound to the current DSM resource ID/state, review it, then apply that exact plan with its hash:
+
+```console
+dsmctl account plan --nas office --file create-user.json --output create-user.plan.json
+dsmctl account apply --file create-user.plan.json --approve <hash-from-plan>
+
+dsmctl share plan --nas office --file create-share.json --output create-share.plan.json
+dsmctl share apply --file create-share.plan.json --approve <hash-from-plan>
+```
+
+User passwords are never included in requests or plans. A user create/change refers to an apply-time environment variable such as `"credential_ref":"env:DSMCTL_NEW_USER_PASSWORD"`. Request formats and examples are in [account and share management](docs/account-share-management.md).
 
 Manage more than one NAS:
 
@@ -112,8 +129,18 @@ Available tools:
 - `get_capabilities`: report discovered APIs, DSM release, compatibility quirks, and the backend selected for each operation.
 - `get_storage_capabilities`: report the storage operations currently exposed for a selected NAS and the selected DSM backend.
 - `get_storage_state`: return normalized disk, storage-pool, RAID, volume, capacity, and health state without changing the NAS.
+- `get_account_capabilities`: report the local user/group operations currently exposed and their selected DSM backends.
+- `get_account_state`: return normalized local DSM users and groups without password or credential data.
+- `plan_account_change`: validate a user/group change and return a current-state-bound approval plan without mutating DSM.
+- `apply_account_plan`: apply an approved, unchanged account plan and verify the postcondition.
+- `get_share_capabilities`: report shared-folder and permission capabilities plus their selected DSM backends.
+- `get_share_state`: return normalized shared folders; set `include_permissions` only when the user/group permission matrix is required.
+- `plan_share_change`: validate a shared-folder or permission change and return an approval plan without mutating DSM.
+- `apply_share_plan`: apply an approved, unchanged shared-folder plan and verify the postcondition.
 
-Storage support is deliberately read-only at this stage. Pool and volume creation, repair, expansion, and deletion will be added behind versioned manifests and plan/apply safeguards rather than exposed as raw DSM API calls.
+Storage remains deliberately read-only. Local user/group and shared-folder create, update, delete, plus normalized `none`/`read`/`write`/`deny` permissions are available only through plan/apply. Encrypted shares, WORM, custom Windows ACLs, and storage mutations remain out of scope until their key lifecycle and irreversible behavior have dedicated safeguards.
+
+Permission expansion is opt-in because DSM exposes permissions by user and group. `get_share_state {"include_permissions":true}` and the matching CLI flag perform additional read-only calls for every local user and group, then aggregate the results by shared folder.
 
 MCP intentionally has no tool that accepts a password or OTP. If interactive authentication is required, it returns an actionable error asking the user to run `dsmctl auth login --nas <name>` first.
 
@@ -128,6 +155,10 @@ go test ./integration -run TestMCPGetSystemInfoLive -v
 ## Security model
 
 - Passwords, OTP values, DSM device IDs, SIDs, and SynoTokens are never stored in the config file or returned by CLI/MCP display models.
+- Account inventory never returns passwords, hashes, recovery codes, or other authentication material.
+- User create/password updates accept only an `env:NAME` reference; the secret is resolved at apply time and is absent from the request, plan, hash, result, and logs.
+- Every account/share mutation re-reads DSM state before apply. Deletes are bound to the planned UID/GID or shared-folder UUID plus a state fingerprint.
+- Built-in `admin`, `guest`, `root`, `administrators`, `users`, `http`, `home`, and `homes` resources cannot be managed by mutation commands.
 - Login parameters use an HTTPS POST form, not URL query parameters.
 - OTP values are short-lived and never persisted.
 - Passwords and trusted-device IDs use Windows Credential Manager, macOS Keychain, or Linux Secret Service.
@@ -143,4 +174,4 @@ A management feature normally adds:
 3. A use case and policy under `internal/application`.
 4. Thin CLI and MCP adapters.
 
-Raw generic DSM calls are not exposed as MCP tools. Mutating operations will use guarded plan/apply semantics as the project expands into Control Panel and SAN management.
+Raw generic DSM calls are not exposed as MCP tools. Mutating operations use guarded plan/apply semantics as the project expands into Control Panel and SAN management.
