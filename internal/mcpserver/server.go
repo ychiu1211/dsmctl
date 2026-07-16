@@ -8,6 +8,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/application"
 	"github.com/ychiu1211/dsmctl/internal/config"
 	"github.com/ychiu1211/dsmctl/internal/domain/access"
+	"github.com/ychiu1211/dsmctl/internal/domain/controlpanel"
 	"github.com/ychiu1211/dsmctl/internal/domain/identity"
 	"github.com/ychiu1211/dsmctl/internal/domain/san"
 	"github.com/ychiu1211/dsmctl/internal/domain/share"
@@ -65,6 +66,44 @@ type getControlPanelTimeCapabilitiesOutput struct {
 	NAS          string                                `json:"nas" jsonschema:"NAS profile used for the request"`
 	Capabilities synology.ControlPanelTimeCapabilities `json:"capabilities" jsonschema:"Control Panel time module operations currently exposed by dsmctl"`
 	Report       synology.CompatibilityReport          `json:"report" jsonschema:"Discovered API and selected time-module backend"`
+}
+
+type getFileServicesInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getSMBStateOutput struct {
+	NAS string            `json:"nas" jsonschema:"NAS profile used for the request"`
+	SMB synology.SMBState `json:"smb" jsonschema:"Normalized global SMB service configuration"`
+}
+
+type getNFSStateOutput struct {
+	NAS string            `json:"nas" jsonschema:"NAS profile used for the request"`
+	NFS synology.NFSState `json:"nfs" jsonschema:"Normalized global NFS service configuration"`
+}
+
+type getFileServiceCapabilitiesOutput struct {
+	NAS          string                           `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.FileServiceCapabilities `json:"capabilities" jsonschema:"Independently selected SMB and NFS operations"`
+	Report       synology.CompatibilityReport     `json:"report" jsonschema:"Discovered APIs and selected File Services backends"`
+}
+
+type planFileServiceChangeInput struct {
+	NAS     string                                `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request controlpanel.FileServiceChangeRequest `json:"request" jsonschema:"Patch-only SMB or NFS settings intent"`
+}
+
+type planFileServiceChangeOutput struct {
+	Plan application.FileServicePlan `json:"plan" jsonschema:"Validated plan bound to the complete observed module state and approval hash"`
+}
+
+type applyFileServicePlanInput struct {
+	Plan         application.FileServicePlan `json:"plan" jsonschema:"Unmodified plan returned by plan_file_service_change"`
+	ApprovalHash string                      `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved File Services plan"`
+}
+
+type applyFileServicePlanOutput struct {
+	Result application.FileServiceApplyResult `json:"result" jsonschema:"File Services mutation result after stale-state and postcondition checks"`
 }
 
 type getStorageInput struct {
@@ -283,6 +322,71 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getControlPanelTimeStateOutput{}, err
 		}
 		return nil, getControlPanelTimeStateOutput{NAS: result.NAS, Time: result.Time}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_file_service_capabilities",
+		Title:       "Get SMB and NFS capabilities",
+		Description: "Report independently selected SMB and NFS read, base-setting, and advanced-setting DSM backends.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getFileServicesInput) (*mcp.CallToolResult, getFileServiceCapabilitiesOutput, error) {
+		result, err := service.GetFileServiceCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getFileServiceCapabilitiesOutput{}, err
+		}
+		return nil, getFileServiceCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_smb_state",
+		Title:       "Get SMB state",
+		Description: "Read the global SMB service, workgroup, protocol range, transport encryption, and signing policy without changing DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getFileServicesInput) (*mcp.CallToolResult, getSMBStateOutput, error) {
+		result, err := service.GetSMBState(ctx, input.NAS)
+		if err != nil {
+			return nil, getSMBStateOutput{}, err
+		}
+		return nil, getSMBStateOutput{NAS: result.NAS, SMB: result.SMB}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_nfs_state",
+		Title:       "Get NFS state",
+		Description: "Read the global NFS service, highest enabled and supported protocols, and NFSv4 domain without changing DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getFileServicesInput) (*mcp.CallToolResult, getNFSStateOutput, error) {
+		result, err := service.GetNFSState(ctx, input.NAS)
+		if err != nil {
+			return nil, getNFSStateOutput{}, err
+		}
+		return nil, getNFSStateOutput{NAS: result.NAS, NFS: result.NFS}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_file_service_change",
+		Title:       "Plan an SMB or NFS change",
+		Description: "Validate one patch-only SMB or NFS settings request and return a full-state-bound approval plan. NFSv4 domain changes are planned separately from NFS base settings.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planFileServiceChangeInput) (*mcp.CallToolResult, planFileServiceChangeOutput, error) {
+		plan, err := service.PlanFileServiceChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planFileServiceChangeOutput{}, err
+		}
+		return nil, planFileServiceChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_file_service_plan",
+		Title:       "Apply an approved SMB or NFS plan",
+		Description: "Apply an unmodified File Services plan only while its approval hash and complete observed module state still match, then verify the requested postcondition.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyFileServicePlanInput) (*mcp.CallToolResult, applyFileServicePlanOutput, error) {
+		result, err := service.ApplyFileServicePlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applyFileServicePlanOutput{}, err
+		}
+		return nil, applyFileServicePlanOutput{Result: result}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

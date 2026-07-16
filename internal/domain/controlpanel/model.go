@@ -10,6 +10,10 @@ type ModuleName string
 const (
 	// ModuleTime identifies regional time and NTP configuration.
 	ModuleTime ModuleName = "time"
+	// ModuleSMB identifies global Server Message Block service settings.
+	ModuleSMB ModuleName = "smb"
+	// ModuleNFS identifies global Network File System service settings.
+	ModuleNFS ModuleName = "nfs"
 )
 
 // TimeSynchronizationMode describes how DSM maintains system time.

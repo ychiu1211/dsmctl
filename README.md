@@ -5,7 +5,7 @@
 - `dsmctl`: a command-line interface for administrators.
 - `dsmctl-mcp`: a stdio MCP server for AI clients.
 
-The first milestone implements one complete connection slice: configure multiple NAS profiles, authenticate with password and DSM two-factor authentication, maintain independent sessions, and read basic system information. Management modules now cover storage and SAN inventory, guarded storage-pool, volume, and SAN lifecycles, local user/group/share management, effective-access explanation, and a focused read-only Control Panel time module through the same CLI/MCP/application stack.
+The first milestone implements one complete connection slice: configure multiple NAS profiles, authenticate with password and DSM two-factor authentication, maintain independent sessions, and read basic system information. Management modules now cover storage and SAN inventory, guarded storage-pool, volume, and SAN lifecycles, local user/group/share management, effective-access explanation, a focused read-only Control Panel time module, and guarded global SMB/NFS File Services through the same CLI/MCP/application stack.
 
 ## Architecture
 
@@ -66,6 +66,9 @@ dsmctl san inventory --nas office --json
 dsmctl san plan --nas office --file lun-change.json --output lun-change.plan.json
 dsmctl san apply --file lun-change.plan.json --approve <plan-sha256>
 dsmctl control-panel time state --nas office --json
+dsmctl control-panel file-services capabilities --nas office
+dsmctl control-panel file-services smb state --nas office --json
+dsmctl control-panel file-services nfs state --nas office --json
 dsmctl account capabilities --nas office
 dsmctl account inventory --nas office --json
 dsmctl account inventory --nas office --memberships --json
@@ -84,6 +87,9 @@ dsmctl account apply --file create-user.plan.json --approve <hash-from-plan>
 
 dsmctl share plan --nas office --file create-share.json --output create-share.plan.json
 dsmctl share apply --file create-share.plan.json --approve <hash-from-plan>
+
+dsmctl control-panel file-services plan --nas office --file smb-change.json --output smb-change.plan.json
+dsmctl control-panel file-services apply --file smb-change.plan.json --approve <hash-from-plan>
 ```
 
 User passwords are never included in requests or plans. A user create/change refers to an apply-time environment variable such as `"credential_ref":"env:DSMCTL_NEW_USER_PASSWORD"`. Request formats and examples are in [account and share management](docs/account-share-management.md).
@@ -149,6 +155,11 @@ Available tools:
 - `apply_san_plan`: apply an approved, unchanged SAN plan and verify stable-ID and mapping-graph postconditions.
 - `get_control_panel_time_capabilities`: report support and the selected backend for the focused time/NTP module.
 - `get_control_panel_time_state`: return normalized time zone, display formats, synchronization mode, and NTP servers.
+- `get_file_service_capabilities`: report independent SMB/NFS read and guarded setting backends.
+- `get_smb_state`: return normalized global SMB service, workgroup, protocol, encryption, and signing settings.
+- `get_nfs_state`: return normalized global NFS service, protocol, and NFSv4 domain settings.
+- `plan_file_service_change`: validate a patch-only SMB/NFS request and return a full-state-bound approval plan.
+- `apply_file_service_plan`: apply an approved unchanged SMB/NFS plan and verify the postcondition.
 - `get_account_capabilities`: report local user, group, membership, quota, and application privilege operations plus their selected DSM backends.
 - `get_account_state`: return normalized local users and groups; membership, quota, and explicit application privilege expansion is opt-in and may be filtered to one principal.
 - `plan_account_change`: validate a user, group, membership, quota, or application privilege change and return a current-state-bound approval plan without mutating DSM.

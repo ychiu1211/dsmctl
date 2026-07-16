@@ -14,6 +14,7 @@ flowchart LR
   WI004["WI-004 SAN inventory"] --> WI005["WI-005 SAN management"]
   WI001 -. "reuse plan/apply policy" .-> WI005
   WI006["WI-006 Control Panel modules"]
+  WI006 --> WI012["WI-012 SMB/NFS file services"]
   WI007["WI-007 Effective access explanation"]
   WI008["WI-008 Advanced share security"]
   WI009["WI-009 Credential lifecycle"]
@@ -35,6 +36,7 @@ flowchart LR
 | WI-009 | P2 | `proposed` | D | — | Credential status/removal and trusted-device rotation. |
 | WI-010 | P1 | `proposed` | E | ongoing | Structured DSM errors, observability, CI matrix, packaging, and release policy. |
 | [WI-011](work-items/WI-011-control-panel-time-mutation.md) | P2 | `proposed` | C | WI-006 | Guarded time zone, display format, and NTP changes. |
+| [WI-012](work-items/WI-012-file-services-smb-nfs.md) | P1 | `done` | C | WI-006 | Guarded global SMB and NFS state and settings. |
 
 Parallel groups indicate likely file overlap. Items in different groups may run
 at the same time after checking their `touches` lists. Only one agent should

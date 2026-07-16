@@ -17,7 +17,10 @@ func newControlPanelCommand(opts *options) *cobra.Command {
 		Aliases: []string{"controlpanel"},
 		Short:   "Inspect focused DSM Control Panel modules",
 	}
-	command.AddCommand(newControlPanelTimeCommand(opts))
+	command.AddCommand(
+		newControlPanelTimeCommand(opts),
+		newFileServicesCommand(opts),
+	)
 	return command
 }
 

@@ -6,6 +6,7 @@ import (
 
 	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/controlpaneltime"
+	"github.com/ychiu1211/dsmctl/internal/synology/operations/fileservices"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/identityappprivilege"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/identityinventory"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/identitymembership"
@@ -47,6 +48,7 @@ func (c *Client) Compatibility(ctx context.Context) (CompatibilityReport, error)
 	apiNames = append(apiNames, shareinventory.APINames()...)
 	apiNames = append(apiNames, sharemutation.APINames()...)
 	apiNames = append(apiNames, controlpaneltime.APINames()...)
+	apiNames = append(apiNames, fileservices.APINames()...)
 	apiNames = append(apiNames, saninventory.APINames()...)
 	apiNames = append(apiNames, sanmutation.APINames()...)
 	if err := c.prepareCompatibilityTargetLocked(ctx, apiNames...); err != nil {
@@ -105,6 +107,22 @@ func (c *Client) Compatibility(ctx context.Context) (CompatibilityReport, error)
 	if selectionErr != nil && !compatibility.IsUnsupported(selectionErr) {
 		return CompatibilityReport{}, selectionErr
 	}
+	fileServiceSelectors := []func(compatibility.Target) (compatibility.Selection, error){
+		fileservices.SelectSMBRead,
+		fileservices.SelectSMBSet,
+		fileservices.SelectNFSRead,
+		fileservices.SelectNFSSet,
+		fileservices.SelectNFSAdvancedRead,
+		fileservices.SelectNFSAdvancedSet,
+	}
+	fileServiceSelections := make([]compatibility.Selection, 0, len(fileServiceSelectors))
+	for _, selectOperation := range fileServiceSelectors {
+		selection, err := selectOperation(c.target)
+		if err != nil && !compatibility.IsUnsupported(err) {
+			return CompatibilityReport{}, err
+		}
+		fileServiceSelections = append(fileServiceSelections, selection)
+	}
 	sanSelections, selectionErr := saninventory.Select(c.target)
 	if selectionErr != nil {
 		return CompatibilityReport{}, selectionErr
@@ -125,6 +143,7 @@ func (c *Client) Compatibility(ctx context.Context) (CompatibilityReport, error)
 	selections = append(selections, appPrivilegeSelections...)
 	selections = append(selections, shareMutationSelections...)
 	selections = append(selections, controlPanelTimeSelection)
+	selections = append(selections, fileServiceSelections...)
 	selections = append(selections, sanSelections...)
 	selections = append(selections, sanMutationSelections...)
 	return c.target.Report(selections...), nil
@@ -244,6 +263,21 @@ func (c *Client) updateDerivedCapabilitiesLocked() {
 	}
 	if _, err := controlpaneltime.Select(c.target); err == nil {
 		c.target.AddCapability(controlpaneltime.CapabilityName)
+	}
+	for _, operation := range []struct {
+		selectOperation func(compatibility.Target) (compatibility.Selection, error)
+		capability      string
+	}{
+		{fileservices.SelectSMBRead, fileservices.SMBReadCapabilityName},
+		{fileservices.SelectSMBSet, fileservices.SMBSetCapabilityName},
+		{fileservices.SelectNFSRead, fileservices.NFSReadCapabilityName},
+		{fileservices.SelectNFSSet, fileservices.NFSSetCapabilityName},
+		{fileservices.SelectNFSAdvancedRead, fileservices.NFSAdvancedReadCapabilityName},
+		{fileservices.SelectNFSAdvancedSet, fileservices.NFSAdvancedSetCapabilityName},
+	} {
+		if selection, err := operation.selectOperation(c.target); err == nil && selection.Supported {
+			c.target.AddCapability(operation.capability)
+		}
 	}
 	if selections, err := saninventory.Select(c.target); err == nil {
 		c.addSANCapabilitiesLocked(selections)
