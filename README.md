@@ -5,7 +5,7 @@
 - `dsmctl`: a command-line interface for administrators.
 - `dsmctl-mcp`: a stdio MCP server for AI clients.
 
-The first milestone intentionally implements one complete vertical slice: configure multiple NAS profiles, authenticate with password and DSM two-factor authentication, maintain independent sessions, and read basic system information.
+The first milestone implements one complete connection slice: configure multiple NAS profiles, authenticate with password and DSM two-factor authentication, maintain independent sessions, and read basic system information. The storage milestone adds read-only disk, storage-pool, RAID, volume, capacity, and health inventory through the same CLI/MCP/application stack.
 
 ## Architecture
 
@@ -54,6 +54,9 @@ Read system information:
 dsmctl system info
 dsmctl system info --nas office --json
 dsmctl nas capabilities --nas office
+dsmctl storage capabilities --nas office
+dsmctl storage inventory --nas office
+dsmctl storage inventory --nas office --json
 ```
 
 Manage more than one NAS:
@@ -107,6 +110,10 @@ Available tools:
 - `list_nas`: list safe profile metadata; secrets are never returned.
 - `get_system_info`: authenticate to a selected profile and return normalized DSM system information.
 - `get_capabilities`: report discovered APIs, DSM release, compatibility quirks, and the backend selected for each operation.
+- `get_storage_capabilities`: report the storage operations currently exposed for a selected NAS and the selected DSM backend.
+- `get_storage_state`: return normalized disk, storage-pool, RAID, volume, capacity, and health state without changing the NAS.
+
+Storage support is deliberately read-only at this stage. Pool and volume creation, repair, expansion, and deletion will be added behind versioned manifests and plan/apply safeguards rather than exposed as raw DSM API calls.
 
 MCP intentionally has no tool that accepts a password or OTP. If interactive authentication is required, it returns an actionable error asking the user to run `dsmctl auth login --nas <name>` first.
 

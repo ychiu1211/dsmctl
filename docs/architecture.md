@@ -10,6 +10,7 @@ The first release proves one complete path shared by both products:
 4. Authenticate with password, optional OTP, and a DSM trusted-device credential.
 5. Retain an independent session for that NAS.
 6. Read normalized system information through CLI and MCP.
+7. Read a normalized disk, storage-pool, RAID, volume, capacity, and health inventory through the same application service.
 
 ## Dependency direction
 
@@ -44,6 +45,8 @@ core-system-v1-legacy   SYNO.Core.System v1   priority 10
 ```
 
 The highest-priority matching variant is selected. Shared HTTP, session, retry, validation, and normalization behavior stays in the executor and common decoder. A future DSM-specific override uses a higher priority plus both API and DSM-range matchers, without copying unrelated operations.
+
+`storage.inventory` follows the same operation-scoped pattern. Its first backend uses `SYNO.Storage.CGI.Storage` v1 and normalizes the aggregate response into the stable `internal/domain/storage` model. Future DSM-specific field or endpoint differences can add a higher-priority variant without changing the CLI, MCP schemas, or application use case.
 
 See [`docs/compatibility.md`](compatibility.md) for rules and extension examples.
 
@@ -91,6 +94,8 @@ dsmctl nas remove <name>
 dsmctl nas capabilities [--nas <name>] [--json]
 dsmctl auth login [--nas <name>]
 dsmctl system info [--nas <name>] [--json]
+dsmctl storage capabilities [--nas <name>] [--json]
+dsmctl storage inventory [--nas <name>] [--json]
 ```
 
 MCP:
@@ -99,6 +104,8 @@ MCP:
 list_nas
 get_system_info { nas?: string }
 get_capabilities { nas?: string }
+get_storage_capabilities { nas?: string }
+get_storage_state { nas?: string }
 ```
 
 ## Extension rule
@@ -112,9 +119,13 @@ A new management feature normally adds four pieces:
 
 Raw DSM calls are not exposed as MCP tools. Mutating operations will use plan/apply semantics so a CLI user or MCP host can inspect potentially destructive changes before execution.
 
+Storage MCP tools declare read-only, idempotent annotations. These are routing hints for MCP clients, while the actual safety boundary is that the application and Synology layers contain no storage mutation operation in this milestone.
+
 ## Planned follow-ups
 
 - Credential removal, status, and trusted-device rotation commands.
 - DSM error descriptions and structured application errors.
+- Versioned storage manifests plus plan/apply and plan-hash preconditions.
+- Guarded storage-pool and volume creation after write APIs are modeled per DSM version.
 - Control Panel read operations, followed by plan/apply mutations.
 - SAN inventory, followed by guarded LUN and target mutations.

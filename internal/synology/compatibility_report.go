@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
+	"github.com/ychiu1211/dsmctl/internal/synology/operations/storageinventory"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/systeminfo"
 )
 
@@ -21,16 +22,21 @@ func (c *Client) Compatibility(ctx context.Context) (CompatibilityReport, error)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if err := c.prepareCompatibilityTargetLocked(ctx, authAPI); err != nil {
+	apiNames := append([]string{authAPI}, storageinventory.APINames()...)
+	if err := c.prepareCompatibilityTargetLocked(ctx, apiNames...); err != nil {
 		return CompatibilityReport{}, fmt.Errorf("discover compatibility target: %w", err)
 	}
 
-	selection, selectionErr := systeminfo.Select(c.target)
+	systemSelection, selectionErr := systeminfo.Select(c.target)
+	if selectionErr != nil && !compatibility.IsUnsupported(selectionErr) {
+		return CompatibilityReport{}, selectionErr
+	}
+	storageSelection, selectionErr := storageinventory.Select(c.target)
 	if selectionErr != nil && !compatibility.IsUnsupported(selectionErr) {
 		return CompatibilityReport{}, selectionErr
 	}
 	c.updateDerivedCapabilitiesLocked()
-	return c.target.Report(selection), nil
+	return c.target.Report(systemSelection, storageSelection), nil
 }
 
 // prepareCompatibilityTargetLocked discovers all APIs used by an operation
@@ -60,6 +66,9 @@ func (c *Client) updateDerivedCapabilitiesLocked() {
 	}
 	if _, err := systeminfo.Select(c.target); err == nil {
 		c.target.AddCapability(systeminfo.CapabilityName)
+	}
+	if _, err := storageinventory.Select(c.target); err == nil {
+		c.target.AddCapability(storageinventory.CapabilityName)
 	}
 	// Sending session credentials in both documented parameters and the web UI
 	// cookie/header locations is safe across tested DSM versions and fixes Core

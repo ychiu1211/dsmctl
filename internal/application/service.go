@@ -29,6 +29,17 @@ type CompatibilityResult struct {
 	Report synology.CompatibilityReport `json:"report" jsonschema:"Discovered DSM compatibility target and selected operation backends"`
 }
 
+type StorageStateResult struct {
+	NAS     string                `json:"nas" jsonschema:"NAS profile used for the request"`
+	Storage synology.StorageState `json:"storage" jsonschema:"Normalized disk, storage-pool, and volume inventory"`
+}
+
+type StorageCapabilitiesResult struct {
+	NAS          string                       `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.StorageCapabilities `json:"capabilities" jsonschema:"Storage operations currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport `json:"report" jsonschema:"Discovered APIs and selected storage compatibility backend"`
+}
+
 func NewService(cfg *config.Config, manager *runtime.Manager) *Service {
 	return &Service{config: cfg, manager: manager}
 }
@@ -70,6 +81,30 @@ func (s *Service) GetCompatibility(ctx context.Context, requestedNAS string) (Co
 		return CompatibilityResult{}, authenticationError(name, err)
 	}
 	return CompatibilityResult{NAS: name, Report: report}, nil
+}
+
+func (s *Service) GetStorageState(ctx context.Context, requestedNAS string) (StorageStateResult, error) {
+	name, client, err := s.manager.Client(ctx, requestedNAS)
+	if err != nil {
+		return StorageStateResult{}, err
+	}
+	state, err := client.StorageState(ctx)
+	if err != nil {
+		return StorageStateResult{}, authenticationError(name, err)
+	}
+	return StorageStateResult{NAS: name, Storage: state}, nil
+}
+
+func (s *Service) GetStorageCapabilities(ctx context.Context, requestedNAS string) (StorageCapabilitiesResult, error) {
+	name, client, err := s.manager.Client(ctx, requestedNAS)
+	if err != nil {
+		return StorageCapabilitiesResult{}, err
+	}
+	capabilities, report, err := client.StorageCapabilities(ctx)
+	if err != nil {
+		return StorageCapabilitiesResult{}, authenticationError(name, err)
+	}
+	return StorageCapabilitiesResult{NAS: name, Capabilities: capabilities, Report: report}, nil
 }
 
 func authenticationError(name string, err error) error {
