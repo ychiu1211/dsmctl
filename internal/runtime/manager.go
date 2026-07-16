@@ -13,6 +13,7 @@ import (
 
 	"github.com/ychiu1211/dsmctl/internal/config"
 	"github.com/ychiu1211/dsmctl/internal/credentials"
+	"github.com/ychiu1211/dsmctl/internal/domain/identity"
 	"github.com/ychiu1211/dsmctl/internal/synology"
 )
 
@@ -22,7 +23,7 @@ type Client interface {
 	Compatibility(ctx context.Context) (synology.CompatibilityReport, error)
 	StorageState(ctx context.Context) (synology.StorageState, error)
 	StorageCapabilities(ctx context.Context) (synology.StorageCapabilities, synology.CompatibilityReport, error)
-	IdentityState(ctx context.Context) (synology.IdentityState, error)
+	IdentityState(ctx context.Context, queries ...identity.StateQuery) (synology.IdentityState, error)
 	IdentityCapabilities(ctx context.Context) (synology.IdentityCapabilities, synology.CompatibilityReport, error)
 	ApplyIdentityChange(ctx context.Context, request synology.IdentityChangeRequest, password string) (synology.IdentityMutationResult, error)
 	ShareState(ctx context.Context, includePermissions bool) (synology.ShareState, error)

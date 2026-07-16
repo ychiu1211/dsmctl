@@ -70,7 +70,65 @@ Groups use the same `create`, `update`, and `delete` actions:
 }
 ```
 
-Use `new_name` and/or `description` for updates. Group membership is not yet exposed in this slice.
+Use `new_name` and/or `description` for updates.
+
+## Memberships
+
+Membership is a declarative `set` resource. `groups` is the complete desired direct group set for one user, so planning can show exact additions and removals. DSM's mandatory `users` group must always be present:
+
+```json
+{
+  "action": "set",
+  "resource": "membership",
+  "membership": {
+    "user": "automation",
+    "groups": ["users", "nas-operators"]
+  }
+}
+```
+
+Removing a group or adding `administrators` makes the plan high-risk. Built-in users remain protected from mutation.
+
+## User and group quotas
+
+Quota changes are partial: targets listed in `limits` are changed and all unspecified targets are preserved. Values are integer MiB; zero means unlimited. DSM reports whether a target supports a volume or shared-folder quota, and planning rejects targets absent from that principal's quota inventory.
+
+```json
+{
+  "action": "set",
+  "resource": "quota",
+  "quota": {
+    "principal_type": "group",
+    "principal": "nas-operators",
+    "limits": [
+      {"target_type":"share","target":"team-data","quota_mib":10240}
+    ]
+  }
+}
+```
+
+`principal_type` is `user` or `group`; `target_type` is `volume` or `share`.
+
+## Application privileges
+
+Application privilege changes are also partial. Each rule sets an explicit `allow` or `deny`, or uses `inherit` to remove the explicit rule and return to DSM inheritance:
+
+```json
+{
+  "action": "set",
+  "resource": "application_privilege",
+  "application_privilege": {
+    "principal_type": "user",
+    "principal": "automation",
+    "permissions": [
+      {"application_id":"SYNO.SDS.App.FileStation3.Instance","access":"allow"},
+      {"application_id":"SYNO.FTP","access":"deny"}
+    ]
+  }
+}
+```
+
+Inventory reports pre-existing IP-specific rules as `custom`, but plan/apply intentionally accepts only `allow`, `deny`, or `inherit`. Changing a custom rule requires explicit replacement and is always high-risk.
 
 ## Shared folders
 
@@ -131,3 +189,12 @@ dsmctl share apply -f change.plan.json --approve <hash>
 ```
 
 Use `-` for stdin/stdout. JSON decoding rejects unknown fields and trailing values.
+
+Expanded reads are opt-in:
+
+```console
+dsmctl account inventory --nas office --memberships --json
+dsmctl account inventory --nas office --quotas --application-privileges --principal-type user --principal automation --json
+```
+
+Without a principal filter, quota and application privilege reads fan out across all local users and groups.

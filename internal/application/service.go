@@ -6,6 +6,7 @@ import (
 
 	"github.com/ychiu1211/dsmctl/internal/config"
 	"github.com/ychiu1211/dsmctl/internal/credentials"
+	"github.com/ychiu1211/dsmctl/internal/domain/identity"
 	"github.com/ychiu1211/dsmctl/internal/runtime"
 	"github.com/ychiu1211/dsmctl/internal/synology"
 )
@@ -48,7 +49,7 @@ type IdentityStateResult struct {
 
 type IdentityCapabilitiesResult struct {
 	NAS          string                        `json:"nas" jsonschema:"NAS profile used for the request"`
-	Capabilities synology.IdentityCapabilities `json:"capabilities" jsonschema:"Account and group operations currently exposed by dsmctl"`
+	Capabilities synology.IdentityCapabilities `json:"capabilities" jsonschema:"Identity management operations currently exposed by dsmctl"`
 	Report       synology.CompatibilityReport  `json:"report" jsonschema:"Discovered APIs and selected identity compatibility backends"`
 }
 
@@ -149,11 +150,15 @@ func (s *Service) GetStorageCapabilities(ctx context.Context, requestedNAS strin
 }
 
 func (s *Service) GetIdentityState(ctx context.Context, requestedNAS string) (IdentityStateResult, error) {
+	return s.GetIdentityStateWithQuery(ctx, requestedNAS, identity.StateQuery{})
+}
+
+func (s *Service) GetIdentityStateWithQuery(ctx context.Context, requestedNAS string, query identity.StateQuery) (IdentityStateResult, error) {
 	name, client, err := s.manager.Client(ctx, requestedNAS)
 	if err != nil {
 		return IdentityStateResult{}, err
 	}
-	state, err := client.IdentityState(ctx)
+	state, err := client.IdentityState(ctx, query)
 	if err != nil {
 		return IdentityStateResult{}, authenticationError(name, err)
 	}

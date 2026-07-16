@@ -55,6 +55,15 @@ type getAccountInput struct {
 	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
 }
 
+type getAccountStateInput struct {
+	NAS                          string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	IncludeMemberships           bool   `json:"include_memberships,omitempty" jsonschema:"Include user-to-group memberships; adds one read per local group"`
+	IncludeQuotas                bool   `json:"include_quotas,omitempty" jsonschema:"Include quota assignments for the selected principal or all principals"`
+	IncludeApplicationPrivileges bool   `json:"include_application_privileges,omitempty" jsonschema:"Include applications and explicit privilege rules for the selected principal or all principals"`
+	PrincipalType                string `json:"principal_type,omitempty" jsonschema:"Optional principal type filter: user or group"`
+	Principal                    string `json:"principal,omitempty" jsonschema:"Optional principal name filter; principal_type is required"`
+}
+
 type getAccountStateOutput struct {
 	NAS      string                 `json:"nas" jsonschema:"NAS profile used for the request"`
 	Identity synology.IdentityState `json:"identity" jsonschema:"Normalized local user and group inventory"`
@@ -62,13 +71,13 @@ type getAccountStateOutput struct {
 
 type getAccountCapabilitiesOutput struct {
 	NAS          string                        `json:"nas" jsonschema:"NAS profile used for the request"`
-	Capabilities synology.IdentityCapabilities `json:"capabilities" jsonschema:"Account and group operations currently exposed by dsmctl"`
+	Capabilities synology.IdentityCapabilities `json:"capabilities" jsonschema:"Identity management operations currently exposed by dsmctl"`
 	Report       synology.CompatibilityReport  `json:"report" jsonschema:"Discovered APIs and selected identity compatibility backends"`
 }
 
 type planAccountChangeInput struct {
 	NAS     string                 `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
-	Request identity.ChangeRequest `json:"request" jsonschema:"User or group create, update, or delete intent; passwords must use an env:NAME credential reference"`
+	Request identity.ChangeRequest `json:"request" jsonschema:"User, group, membership, quota, or application privilege intent; passwords must use an env:NAME credential reference"`
 }
 
 type planAccountChangeOutput struct {
@@ -183,7 +192,7 @@ func New(service *application.Service, version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_account_capabilities",
 		Title:       "Get account capabilities",
-		Description: "Report which local DSM user and group inventory or mutation operations dsmctl supports on the selected NAS.",
+		Description: "Report supported local DSM user, group, membership, quota, and application privilege operations on the selected NAS.",
 		Annotations: readOnlyAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getAccountInput) (*mcp.CallToolResult, getAccountCapabilitiesOutput, error) {
 		result, err := service.GetIdentityCapabilities(ctx, input.NAS)
@@ -196,7 +205,7 @@ func New(service *application.Service, version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "plan_account_change",
 		Title:       "Plan an account change",
-		Description: "Validate a local DSM user/group create, update, or delete request, read the current state, and return a hash-bound approval plan. This tool never mutates DSM. User passwords are referenced as env:NAME and never embedded in the plan.",
+		Description: "Validate a local DSM user, group, membership, quota, or application privilege request, read the relevant current state, and return a hash-bound approval plan. This tool never mutates DSM. User passwords are referenced as env:NAME and never embedded in the plan.",
 		Annotations: readOnlyAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planAccountChangeInput) (*mcp.CallToolResult, planAccountChangeOutput, error) {
 		plan, err := service.PlanIdentityChange(ctx, input.NAS, input.Request)
@@ -209,7 +218,7 @@ func New(service *application.Service, version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "apply_account_plan",
 		Title:       "Apply an approved account plan",
-		Description: "Apply an unmodified account plan only when its approval hash and observed-state precondition still match, then verify the resulting DSM state. The plan may create, modify, or delete an account or group.",
+		Description: "Apply an unmodified account plan only when its approval hash and observed-state precondition still match, then verify the resulting DSM user, group, membership, quota, or application privilege state.",
 		Annotations: mutationAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyAccountPlanInput) (*mcp.CallToolResult, applyAccountPlanOutput, error) {
 		result, err := service.ApplyIdentityPlan(ctx, input.Plan, input.ApprovalHash)
@@ -222,10 +231,14 @@ func New(service *application.Service, version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_account_state",
 		Title:       "Get account state",
-		Description: "Read normalized local DSM users and groups. Passwords, password hashes, and authentication credentials are never returned.",
+		Description: "Read normalized local DSM users and groups, optionally expanding memberships, quotas, and explicit application privileges. Use a principal filter for quota or privilege reads on large systems. Passwords, password hashes, and authentication credentials are never returned.",
 		Annotations: readOnlyAnnotations(),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getAccountInput) (*mcp.CallToolResult, getAccountStateOutput, error) {
-		result, err := service.GetIdentityState(ctx, input.NAS)
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getAccountStateInput) (*mcp.CallToolResult, getAccountStateOutput, error) {
+		result, err := service.GetIdentityStateWithQuery(ctx, input.NAS, identity.StateQuery{
+			IncludeMemberships: input.IncludeMemberships, IncludeQuotas: input.IncludeQuotas,
+			IncludeApplicationPrivileges: input.IncludeApplicationPrivileges,
+			PrincipalType:                input.PrincipalType, Principal: input.Principal,
+		})
 		if err != nil {
 			return nil, getAccountStateOutput{}, err
 		}

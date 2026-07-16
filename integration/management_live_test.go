@@ -84,6 +84,7 @@ func TestMCPAccountShareMutationsLive(t *testing.T) {
 		Resource: identity.ResourceGroup,
 		Group:    &identity.GroupChange{Name: groupName, Description: &groupDescription},
 	}))
+
 	createdIdentity := liveIdentityState(t, ctx, session, nas)
 	createdGroup, found := liveGroup(createdIdentity, groupName)
 	if !found || createdGroup.ID == "" {
@@ -116,6 +117,58 @@ func TestMCPAccountShareMutationsLive(t *testing.T) {
 			CredentialRef:        "env:" + secretName,
 		},
 	}))
+
+	applyAccount(t, ctx, session, planAccount(t, ctx, session, nas, identity.ChangeRequest{
+		Action: identity.ActionSet, Resource: identity.ResourceMembership,
+		Membership: &identity.MembershipChange{User: userName, Groups: []string{"users", groupName}},
+	}))
+	membershipState := liveIdentityStateExpanded(t, ctx, session, nas, map[string]any{
+		"include_memberships": true, "principal_type": identity.PrincipalUser, "principal": userName,
+	})
+	membership, found := liveMembership(membershipState, userName)
+	if !found || !containsString(membership.Groups, groupName) || !containsString(membership.Groups, "users") {
+		t.Fatalf("membership change was not observed for user %q: %#v", userName, membership)
+	}
+
+	applicationState := liveIdentityStateExpanded(t, ctx, session, nas, map[string]any{
+		"include_application_privileges": true, "principal_type": identity.PrincipalUser, "principal": userName,
+	})
+	applicationID := ""
+	for _, application := range applicationState.Applications {
+		if application.SupportsIP && containsString(application.GrantTypes, "local") {
+			applicationID = application.ID
+			break
+		}
+	}
+	if applicationID == "" {
+		t.Fatal("no local IP-aware application was discovered for privilege testing")
+	}
+	applyAccount(t, ctx, session, planAccount(t, ctx, session, nas, identity.ChangeRequest{
+		Action: identity.ActionSet, Resource: identity.ResourceApplicationPrivilege,
+		ApplicationPrivilege: &identity.ApplicationPrivilegeChange{
+			PrincipalType: identity.PrincipalUser, Principal: userName,
+			Permissions: []identity.ApplicationPermissionChange{{ApplicationID: applicationID, Access: identity.ApplicationAccessDeny}},
+		},
+	}))
+	applicationState = liveIdentityStateExpanded(t, ctx, session, nas, map[string]any{
+		"include_application_privileges": true, "principal_type": identity.PrincipalUser, "principal": userName,
+	})
+	if liveApplicationAccess(applicationState, identity.PrincipalUser, userName, applicationID) != identity.ApplicationAccessDeny {
+		t.Fatalf("deny application privilege was not observed for user %q and application %q", userName, applicationID)
+	}
+	applyAccount(t, ctx, session, planAccount(t, ctx, session, nas, identity.ChangeRequest{
+		Action: identity.ActionSet, Resource: identity.ResourceApplicationPrivilege,
+		ApplicationPrivilege: &identity.ApplicationPrivilegeChange{
+			PrincipalType: identity.PrincipalGroup, Principal: groupName,
+			Permissions: []identity.ApplicationPermissionChange{{ApplicationID: applicationID, Access: identity.ApplicationAccessAllow}},
+		},
+	}))
+	groupApplicationState := liveIdentityStateExpanded(t, ctx, session, nas, map[string]any{
+		"include_application_privileges": true, "principal_type": identity.PrincipalGroup, "principal": groupName,
+	})
+	if liveApplicationAccess(groupApplicationState, identity.PrincipalGroup, groupName, applicationID) != identity.ApplicationAccessAllow {
+		t.Fatalf("allow application privilege was not observed for group %q and application %q", groupName, applicationID)
+	}
 	createdIdentity = liveIdentityState(t, ctx, session, nas)
 	createdUser, found := liveUser(createdIdentity, userName)
 	if !found || createdUser.ID == "" {
@@ -156,6 +209,33 @@ func TestMCPAccountShareMutationsLive(t *testing.T) {
 	}
 	shareUUID := createdShare.UUID
 
+	applyAccount(t, ctx, session, planAccount(t, ctx, session, nas, identity.ChangeRequest{
+		Action: identity.ActionSet, Resource: identity.ResourceQuota,
+		Quota: &identity.QuotaChange{
+			PrincipalType: identity.PrincipalUser, Principal: userName,
+			Limits: []identity.QuotaLimitChange{{TargetType: identity.QuotaTargetShare, Target: shareName, QuotaMiB: 32}},
+		},
+	}))
+	quotaState := liveIdentityStateExpanded(t, ctx, session, nas, map[string]any{
+		"include_quotas": true, "principal_type": identity.PrincipalUser, "principal": userName,
+	})
+	if liveQuota(quotaState, identity.PrincipalUser, userName, identity.QuotaTargetShare, shareName) != 32 {
+		t.Fatalf("32 MiB user quota was not observed on shared folder %q", shareName)
+	}
+	applyAccount(t, ctx, session, planAccount(t, ctx, session, nas, identity.ChangeRequest{
+		Action: identity.ActionSet, Resource: identity.ResourceQuota,
+		Quota: &identity.QuotaChange{
+			PrincipalType: identity.PrincipalGroup, Principal: groupName,
+			Limits: []identity.QuotaLimitChange{{TargetType: identity.QuotaTargetShare, Target: shareName, QuotaMiB: 48}},
+		},
+	}))
+	groupQuotaState := liveIdentityStateExpanded(t, ctx, session, nas, map[string]any{
+		"include_quotas": true, "principal_type": identity.PrincipalGroup, "principal": groupName,
+	})
+	if liveQuota(groupQuotaState, identity.PrincipalGroup, groupName, identity.QuotaTargetShare, shareName) != 48 {
+		t.Fatalf("48 MiB group quota was not observed on shared folder %q", shareName)
+	}
+
 	updatedShareDescription := shareDescription + " updated"
 	updatedQuota := uint64(128)
 	applyShare(t, ctx, session, planShare(t, ctx, session, nas, share.ChangeRequest{
@@ -183,6 +263,41 @@ func TestMCPAccountShareMutationsLive(t *testing.T) {
 	if !found || liveAccess(permissionShare, share.PrincipalUser, userName) != share.AccessWrite {
 		t.Fatalf("write permission was not observed for user %q on %q", userName, shareName)
 	}
+
+	// Exercise the inverse operations while the principal and target still
+	// exist: remove the explicit app rule, quota limit, and optional group.
+	applyAccount(t, ctx, session, planAccount(t, ctx, session, nas, identity.ChangeRequest{
+		Action: identity.ActionSet, Resource: identity.ResourceApplicationPrivilege,
+		ApplicationPrivilege: &identity.ApplicationPrivilegeChange{
+			PrincipalType: identity.PrincipalUser, Principal: userName,
+			Permissions: []identity.ApplicationPermissionChange{{ApplicationID: applicationID, Access: identity.ApplicationAccessInherit}},
+		},
+	}))
+	applyAccount(t, ctx, session, planAccount(t, ctx, session, nas, identity.ChangeRequest{
+		Action: identity.ActionSet, Resource: identity.ResourceApplicationPrivilege,
+		ApplicationPrivilege: &identity.ApplicationPrivilegeChange{
+			PrincipalType: identity.PrincipalGroup, Principal: groupName,
+			Permissions: []identity.ApplicationPermissionChange{{ApplicationID: applicationID, Access: identity.ApplicationAccessInherit}},
+		},
+	}))
+	applyAccount(t, ctx, session, planAccount(t, ctx, session, nas, identity.ChangeRequest{
+		Action: identity.ActionSet, Resource: identity.ResourceQuota,
+		Quota: &identity.QuotaChange{
+			PrincipalType: identity.PrincipalUser, Principal: userName,
+			Limits: []identity.QuotaLimitChange{{TargetType: identity.QuotaTargetShare, Target: shareName, QuotaMiB: 0}},
+		},
+	}))
+	applyAccount(t, ctx, session, planAccount(t, ctx, session, nas, identity.ChangeRequest{
+		Action: identity.ActionSet, Resource: identity.ResourceQuota,
+		Quota: &identity.QuotaChange{
+			PrincipalType: identity.PrincipalGroup, Principal: groupName,
+			Limits: []identity.QuotaLimitChange{{TargetType: identity.QuotaTargetShare, Target: shareName, QuotaMiB: 0}},
+		},
+	}))
+	applyAccount(t, ctx, session, planAccount(t, ctx, session, nas, identity.ChangeRequest{
+		Action: identity.ActionSet, Resource: identity.ResourceMembership,
+		Membership: &identity.MembershipChange{User: userName, Groups: []string{"users"}},
+	}))
 
 	// Cleanup begins only after every create/update/permission assertion passes.
 	// Each delete plan must contain the stable identifier captured after create.
@@ -273,12 +388,66 @@ func applyShare(t *testing.T, ctx context.Context, session *mcp.ClientSession, p
 }
 
 func liveIdentityState(t *testing.T, ctx context.Context, session *mcp.ClientSession, nas string) synology.IdentityState {
+	return liveIdentityStateExpanded(t, ctx, session, nas, nil)
+}
+
+func liveIdentityStateExpanded(t *testing.T, ctx context.Context, session *mcp.ClientSession, nas string, options map[string]any) synology.IdentityState {
 	t.Helper()
 	var output struct {
 		Identity synology.IdentityState `json:"identity"`
 	}
-	callLiveTool(t, ctx, session, "get_account_state", map[string]any{"nas": nas}, &output)
+	arguments := map[string]any{"nas": nas}
+	for key, value := range options {
+		arguments[key] = value
+	}
+	callLiveTool(t, ctx, session, "get_account_state", arguments, &output)
 	return output.Identity
+}
+
+func liveMembership(state synology.IdentityState, user string) (identity.Membership, bool) {
+	for _, membership := range state.Memberships {
+		if membership.User == user {
+			return membership, true
+		}
+	}
+	return identity.Membership{}, false
+}
+
+func liveQuota(state synology.IdentityState, principalType, principal, targetType, target string) int64 {
+	for _, quota := range state.Quotas {
+		if quota.PrincipalType != principalType || quota.Principal != principal {
+			continue
+		}
+		for _, limit := range quota.Limits {
+			if limit.TargetType == targetType && limit.Target == target {
+				return limit.QuotaMiB
+			}
+		}
+	}
+	return -1
+}
+
+func liveApplicationAccess(state synology.IdentityState, principalType, principal, applicationID string) string {
+	for _, assignment := range state.ApplicationPrivileges {
+		if assignment.PrincipalType != principalType || assignment.Principal != principal {
+			continue
+		}
+		for _, permission := range assignment.Permissions {
+			if permission.ApplicationID == applicationID {
+				return permission.Access
+			}
+		}
+	}
+	return identity.ApplicationAccessInherit
+}
+
+func containsString(values []string, desired string) bool {
+	for _, value := range values {
+		if value == desired {
+			return true
+		}
+	}
+	return false
 }
 
 func liveShareState(t *testing.T, ctx context.Context, session *mcp.ClientSession, nas string, permissions bool) synology.ShareState {

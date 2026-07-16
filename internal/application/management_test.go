@@ -76,4 +76,28 @@ func TestPlanHashDetectsRequestOrPreconditionChanges(t *testing.T) {
 	}
 }
 
+func TestIdentityExtendedResourceValidation(t *testing.T) {
+	valid := []identity.ChangeRequest{
+		{Action: identity.ActionSet, Resource: identity.ResourceMembership, Membership: &identity.MembershipChange{User: "alice", Groups: []string{"users", "dev"}}},
+		{Action: identity.ActionSet, Resource: identity.ResourceQuota, Quota: &identity.QuotaChange{PrincipalType: identity.PrincipalUser, Principal: "alice", Limits: []identity.QuotaLimitChange{{TargetType: identity.QuotaTargetVolume, Target: "/volume1", QuotaMiB: 1024}}}},
+		{Action: identity.ActionSet, Resource: identity.ResourceApplicationPrivilege, ApplicationPrivilege: &identity.ApplicationPrivilegeChange{PrincipalType: identity.PrincipalGroup, Principal: "dev", Permissions: []identity.ApplicationPermissionChange{{ApplicationID: "SYNO.Desktop", Access: identity.ApplicationAccessDeny}}}},
+	}
+	for _, request := range valid {
+		if err := validateIdentityRequest(request); err != nil {
+			t.Errorf("validateIdentityRequest(%s) error = %v", request.Resource, err)
+		}
+	}
+
+	invalid := []identity.ChangeRequest{
+		{Action: identity.ActionSet, Resource: identity.ResourceMembership, Membership: &identity.MembershipChange{User: "alice", Groups: []string{"dev"}}},
+		{Action: identity.ActionSet, Resource: identity.ResourceQuota, Quota: &identity.QuotaChange{PrincipalType: identity.PrincipalUser, Principal: "alice", Limits: []identity.QuotaLimitChange{{TargetType: identity.QuotaTargetVolume, Target: "/volume1", QuotaMiB: -1}}}},
+		{Action: identity.ActionSet, Resource: identity.ResourceApplicationPrivilege, ApplicationPrivilege: &identity.ApplicationPrivilegeChange{PrincipalType: identity.PrincipalUser, Principal: "alice", Permissions: []identity.ApplicationPermissionChange{{ApplicationID: "SYNO.Desktop", Access: "custom"}}}},
+	}
+	for _, request := range invalid {
+		if err := validateIdentityRequest(request); err == nil {
+			t.Errorf("validateIdentityRequest(%#v) accepted unsafe input", request)
+		}
+	}
+}
+
 func stringPointer(value string) *string { return &value }

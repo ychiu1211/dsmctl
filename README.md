@@ -5,7 +5,7 @@
 - `dsmctl`: a command-line interface for administrators.
 - `dsmctl-mcp`: a stdio MCP server for AI clients.
 
-The first milestone implements one complete connection slice: configure multiple NAS profiles, authenticate with password and DSM two-factor authentication, maintain independent sessions, and read basic system information. Management modules cover read-only storage inventory plus guarded local account/group and shared-folder management through the same CLI/MCP/application stack.
+The first milestone implements one complete connection slice: configure multiple NAS profiles, authenticate with password and DSM two-factor authentication, maintain independent sessions, and read basic system information. Management modules cover read-only storage inventory plus guarded local user, group, membership, quota, application privilege, and shared-folder management through the same CLI/MCP/application stack.
 
 ## Architecture
 
@@ -59,6 +59,8 @@ dsmctl storage inventory --nas office
 dsmctl storage inventory --nas office --json
 dsmctl account capabilities --nas office
 dsmctl account inventory --nas office --json
+dsmctl account inventory --nas office --memberships --json
+dsmctl account inventory --nas office --quotas --application-privileges --principal-type user --principal automation --json
 dsmctl share capabilities --nas office
 dsmctl share inventory --nas office
 dsmctl share inventory --nas office --include-permissions --json
@@ -129,16 +131,18 @@ Available tools:
 - `get_capabilities`: report discovered APIs, DSM release, compatibility quirks, and the backend selected for each operation.
 - `get_storage_capabilities`: report the storage operations currently exposed for a selected NAS and the selected DSM backend.
 - `get_storage_state`: return normalized disk, storage-pool, RAID, volume, capacity, and health state without changing the NAS.
-- `get_account_capabilities`: report the local user/group operations currently exposed and their selected DSM backends.
-- `get_account_state`: return normalized local DSM users and groups without password or credential data.
-- `plan_account_change`: validate a user/group change and return a current-state-bound approval plan without mutating DSM.
+- `get_account_capabilities`: report local user, group, membership, quota, and application privilege operations plus their selected DSM backends.
+- `get_account_state`: return normalized local users and groups; membership, quota, and explicit application privilege expansion is opt-in and may be filtered to one principal.
+- `plan_account_change`: validate a user, group, membership, quota, or application privilege change and return a current-state-bound approval plan without mutating DSM.
 - `apply_account_plan`: apply an approved, unchanged account plan and verify the postcondition.
 - `get_share_capabilities`: report shared-folder and permission capabilities plus their selected DSM backends.
 - `get_share_state`: return normalized shared folders; set `include_permissions` only when the user/group permission matrix is required.
 - `plan_share_change`: validate a shared-folder or permission change and return an approval plan without mutating DSM.
 - `apply_share_plan`: apply an approved, unchanged shared-folder plan and verify the postcondition.
 
-Storage remains deliberately read-only. Local user/group and shared-folder create, update, delete, plus normalized `none`/`read`/`write`/`deny` permissions are available only through plan/apply. Encrypted shares, WORM, custom Windows ACLs, and storage mutations remain out of scope until their key lifecycle and irreversible behavior have dedicated safeguards.
+Storage remains deliberately read-only. Local user/group CRUD, memberships, per-user/group quotas, explicit application access, shared-folder CRUD, and normalized `none`/`read`/`write`/`deny` share permissions are available only through plan/apply. Encrypted shares, WORM, custom Windows ACLs, IP-specific application rules, and storage mutations remain out of scope until their key lifecycle and irreversible behavior have dedicated safeguards.
+
+Account expansion is opt-in because DSM exposes quota and application rules per principal. For large systems, filter `get_account_state` or `account inventory` with `principal_type` plus `principal` instead of reading every local principal. Membership expansion scales with local groups rather than users.
 
 Permission expansion is opt-in because DSM exposes permissions by user and group. `get_share_state {"include_permissions":true}` and the matching CLI flag perform additional read-only calls for every local user and group, then aggregate the results by shared folder.
 

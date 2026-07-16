@@ -5,8 +5,11 @@ import (
 	"fmt"
 
 	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
+	"github.com/ychiu1211/dsmctl/internal/synology/operations/identityappprivilege"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/identityinventory"
+	"github.com/ychiu1211/dsmctl/internal/synology/operations/identitymembership"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/identitymutation"
+	"github.com/ychiu1211/dsmctl/internal/synology/operations/identityquota"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/shareinventory"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/sharemutation"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/storageinventory"
@@ -29,6 +32,9 @@ func (c *Client) Compatibility(ctx context.Context) (CompatibilityReport, error)
 	apiNames := append([]string{authAPI}, storageinventory.APINames()...)
 	apiNames = append(apiNames, identityinventory.APINames()...)
 	apiNames = append(apiNames, identitymutation.APINames()...)
+	apiNames = append(apiNames, identitymembership.APINames()...)
+	apiNames = append(apiNames, identityquota.APINames()...)
+	apiNames = append(apiNames, identityappprivilege.APINames()...)
 	apiNames = append(apiNames, shareinventory.APINames()...)
 	apiNames = append(apiNames, sharemutation.APINames()...)
 	if err := c.prepareCompatibilityTargetLocked(ctx, apiNames...); err != nil {
@@ -55,6 +61,18 @@ func (c *Client) Compatibility(ctx context.Context) (CompatibilityReport, error)
 	if selectionErr != nil {
 		return CompatibilityReport{}, selectionErr
 	}
+	membershipSelections, selectionErr := identitymembership.Select(c.target)
+	if selectionErr != nil {
+		return CompatibilityReport{}, selectionErr
+	}
+	quotaSelections, selectionErr := identityquota.Select(c.target)
+	if selectionErr != nil {
+		return CompatibilityReport{}, selectionErr
+	}
+	appPrivilegeSelections, selectionErr := identityappprivilege.Select(c.target)
+	if selectionErr != nil {
+		return CompatibilityReport{}, selectionErr
+	}
 	shareMutationSelections, selectionErr := sharemutation.Select(c.target)
 	if selectionErr != nil {
 		return CompatibilityReport{}, selectionErr
@@ -64,6 +82,9 @@ func (c *Client) Compatibility(ctx context.Context) (CompatibilityReport, error)
 	selections = append(selections, identitySelections...)
 	selections = append(selections, shareSelections...)
 	selections = append(selections, identityMutationSelections...)
+	selections = append(selections, membershipSelections...)
+	selections = append(selections, quotaSelections...)
+	selections = append(selections, appPrivilegeSelections...)
 	selections = append(selections, shareMutationSelections...)
 	return c.target.Report(selections...), nil
 }
@@ -118,6 +139,30 @@ func (c *Client) updateDerivedCapabilitiesLocked() {
 		}
 		if len(selections) > 1 && selections[1].Supported {
 			c.target.AddCapability(identitymutation.GroupCapabilityName)
+		}
+	}
+	if selections, err := identitymembership.Select(c.target); err == nil {
+		if selectionSupported(selections, 0) {
+			c.target.AddCapability(identitymembership.ReadCapabilityName)
+		}
+		if selectionSupported(selections, 1) {
+			c.target.AddCapability(identitymembership.SetCapabilityName)
+		}
+	}
+	if selections, err := identityquota.Select(c.target); err == nil {
+		if selectionSupported(selections, 0) {
+			c.target.AddCapability(identityquota.ReadCapabilityName)
+		}
+		if selectionSupported(selections, 1) {
+			c.target.AddCapability(identityquota.SetCapabilityName)
+		}
+	}
+	if selections, err := identityappprivilege.Select(c.target); err == nil {
+		if selectionSupported(selections, 0) && selectionSupported(selections, 1) {
+			c.target.AddCapability(identityappprivilege.ReadCapabilityName)
+		}
+		if selectionSupported(selections, 2) {
+			c.target.AddCapability(identityappprivilege.SetCapabilityName)
 		}
 	}
 	if selections, err := sharemutation.Select(c.target); err == nil {

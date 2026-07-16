@@ -72,7 +72,8 @@ func (s *Service) PlanIdentityChange(ctx context.Context, requestedNAS string, r
 	if err != nil {
 		return IdentityPlan{}, err
 	}
-	state, err := client.IdentityState(ctx)
+	query := identityQueryForRequest(request)
+	state, err := client.IdentityState(ctx, query)
 	if err != nil {
 		return IdentityPlan{}, authenticationError(name, err)
 	}
@@ -80,7 +81,7 @@ func (s *Service) PlanIdentityChange(ctx context.Context, requestedNAS string, r
 	if err != nil {
 		return IdentityPlan{}, err
 	}
-	destructive := request.Action == identity.ActionDelete
+	destructive := identityChangeIsDestructive(state, request)
 	plan := IdentityPlan{
 		APIVersion:   managementAPIVersion,
 		NAS:          name,
@@ -88,7 +89,7 @@ func (s *Service) PlanIdentityChange(ctx context.Context, requestedNAS string, r
 		Precondition: precondition,
 		Destructive:  destructive,
 		Risk:         riskLevel(destructive),
-		Summary:      identitySummary(request),
+		Summary:      identitySummary(state, request),
 	}
 	plan.Hash, err = identityPlanHash(plan)
 	if err != nil {
@@ -126,7 +127,7 @@ func (s *Service) ApplyIdentityPlan(ctx context.Context, plan IdentityPlan, appr
 	if err != nil {
 		return IdentityApplyResult{}, authenticationError(plan.NAS, err)
 	}
-	state, err := client.IdentityState(ctx)
+	state, err := client.IdentityState(ctx, identityQueryForRequest(plan.Request))
 	if err != nil {
 		return IdentityApplyResult{}, fmt.Errorf("verify identity change: %w", err)
 	}
@@ -210,7 +211,8 @@ func (s *Service) ApplySharePlan(ctx context.Context, plan SharePlan, approveHas
 }
 
 func identityPrecondition(state synology.IdentityState, request identity.ChangeRequest) (ChangePrecondition, error) {
-	if request.Resource == identity.ResourceUser {
+	switch request.Resource {
+	case identity.ResourceUser:
 		current, found := findUser(state.Users, request.User.Name)
 		if request.Action == identity.ActionCreate {
 			if found {
@@ -222,18 +224,75 @@ func identityPrecondition(state synology.IdentityState, request identity.ChangeR
 			return ChangePrecondition{}, fmt.Errorf("user %q does not exist", request.User.Name)
 		}
 		return ChangePrecondition{ExpectedExists: true, ResourceID: current.ID, Fingerprint: fingerprint(current)}, nil
-	}
-	current, found := findGroup(state.Groups, request.Group.Name)
-	if request.Action == identity.ActionCreate {
-		if found {
-			return ChangePrecondition{}, fmt.Errorf("group %q already exists", request.Group.Name)
+	case identity.ResourceGroup:
+		current, found := findGroup(state.Groups, request.Group.Name)
+		if request.Action == identity.ActionCreate {
+			if found {
+				return ChangePrecondition{}, fmt.Errorf("group %q already exists", request.Group.Name)
+			}
+			return ChangePrecondition{ExpectedExists: false}, nil
 		}
-		return ChangePrecondition{ExpectedExists: false}, nil
+		if !found {
+			return ChangePrecondition{}, fmt.Errorf("group %q does not exist", request.Group.Name)
+		}
+		return ChangePrecondition{ExpectedExists: true, ResourceID: current.ID, Fingerprint: fingerprint(current)}, nil
+	case identity.ResourceMembership:
+		user, found := findUser(state.Users, request.Membership.User)
+		if !found {
+			return ChangePrecondition{}, fmt.Errorf("user %q does not exist", request.Membership.User)
+		}
+		for _, name := range request.Membership.Groups {
+			if _, found := findGroup(state.Groups, name); !found {
+				return ChangePrecondition{}, fmt.Errorf("group %q does not exist", name)
+			}
+		}
+		membership, found := findMembership(state.Memberships, request.Membership.User)
+		if !found {
+			return ChangePrecondition{}, fmt.Errorf("membership state for user %q was not returned", request.Membership.User)
+		}
+		return ChangePrecondition{ExpectedExists: true, ResourceID: user.ID, Fingerprint: fingerprint(membership)}, nil
+	case identity.ResourceQuota:
+		resourceID, err := identityPrincipalID(state, request.Quota.PrincipalType, request.Quota.Principal)
+		if err != nil {
+			return ChangePrecondition{}, err
+		}
+		assignment, found := findQuotaAssignment(state.Quotas, request.Quota.PrincipalType, request.Quota.Principal)
+		if !found {
+			return ChangePrecondition{}, fmt.Errorf("quota state for %s %q was not returned", request.Quota.PrincipalType, request.Quota.Principal)
+		}
+		observed := make([]identity.QuotaLimit, 0, len(request.Quota.Limits))
+		for _, desired := range request.Quota.Limits {
+			limit, found := findQuotaLimit(assignment, desired.TargetType, desired.Target)
+			if !found {
+				return ChangePrecondition{}, fmt.Errorf("quota target %s %q does not exist or does not support per-principal quotas", desired.TargetType, desired.Target)
+			}
+			observed = append(observed, limit)
+		}
+		sort.Slice(observed, func(i, j int) bool {
+			return observed[i].TargetType+":"+observed[i].Target < observed[j].TargetType+":"+observed[j].Target
+		})
+		return ChangePrecondition{ExpectedExists: true, ResourceID: resourceID, Fingerprint: fingerprint(observed)}, nil
+	case identity.ResourceApplicationPrivilege:
+		resourceID, err := identityPrincipalID(state, request.ApplicationPrivilege.PrincipalType, request.ApplicationPrivilege.Principal)
+		if err != nil {
+			return ChangePrecondition{}, err
+		}
+		assignment, found := findApplicationPrivilegeAssignment(state.ApplicationPrivileges, request.ApplicationPrivilege.PrincipalType, request.ApplicationPrivilege.Principal)
+		if !found {
+			return ChangePrecondition{}, fmt.Errorf("application privilege state for %s %q was not returned", request.ApplicationPrivilege.PrincipalType, request.ApplicationPrivilege.Principal)
+		}
+		observed := make([]identity.ApplicationPermission, 0, len(request.ApplicationPrivilege.Permissions))
+		for _, desired := range request.ApplicationPrivilege.Permissions {
+			if _, found := findApplication(state.Applications, desired.ApplicationID); !found {
+				return ChangePrecondition{}, fmt.Errorf("application %q does not exist", desired.ApplicationID)
+			}
+			observed = append(observed, applicationPermissionFor(assignment, desired.ApplicationID))
+		}
+		sort.Slice(observed, func(i, j int) bool { return observed[i].ApplicationID < observed[j].ApplicationID })
+		return ChangePrecondition{ExpectedExists: true, ResourceID: resourceID, Fingerprint: fingerprint(observed)}, nil
+	default:
+		return ChangePrecondition{}, fmt.Errorf("unsupported identity resource %q", request.Resource)
 	}
-	if !found {
-		return ChangePrecondition{}, fmt.Errorf("group %q does not exist", request.Group.Name)
-	}
-	return ChangePrecondition{ExpectedExists: true, ResourceID: current.ID, Fingerprint: fingerprint(current)}, nil
 }
 
 func sharePrecondition(state synology.ShareState, identities synology.IdentityState, request share.ChangeRequest) (ChangePrecondition, error) {
@@ -274,12 +333,12 @@ func sharePrecondition(state synology.ShareState, identities synology.IdentitySt
 }
 
 func validateIdentityRequest(request identity.ChangeRequest) error {
-	if request.Action != identity.ActionCreate && request.Action != identity.ActionUpdate && request.Action != identity.ActionDelete {
-		return fmt.Errorf("unsupported identity action %q", request.Action)
-	}
 	switch request.Resource {
 	case identity.ResourceUser:
-		if request.User == nil || request.Group != nil {
+		if request.Action != identity.ActionCreate && request.Action != identity.ActionUpdate && request.Action != identity.ActionDelete {
+			return fmt.Errorf("user resource does not support action %q", request.Action)
+		}
+		if request.User == nil || request.Group != nil || request.Membership != nil || request.Quota != nil || request.ApplicationPrivilege != nil {
 			return fmt.Errorf("user resource requires only the user object")
 		}
 		if err := validateManagedName("user", request.User.Name); err != nil {
@@ -309,7 +368,10 @@ func validateIdentityRequest(request identity.ChangeRequest) error {
 			return fmt.Errorf("user update contains no changed fields")
 		}
 	case identity.ResourceGroup:
-		if request.Group == nil || request.User != nil {
+		if request.Action != identity.ActionCreate && request.Action != identity.ActionUpdate && request.Action != identity.ActionDelete {
+			return fmt.Errorf("group resource does not support action %q", request.Action)
+		}
+		if request.Group == nil || request.User != nil || request.Membership != nil || request.Quota != nil || request.ApplicationPrivilege != nil {
 			return fmt.Errorf("group resource requires only the group object")
 		}
 		if err := validateManagedName("group", request.Group.Name); err != nil {
@@ -328,6 +390,94 @@ func validateIdentityRequest(request identity.ChangeRequest) error {
 		}
 		if request.Action == identity.ActionUpdate && request.Group.NewName == nil && request.Group.Description == nil {
 			return fmt.Errorf("group update contains no changed fields")
+		}
+	case identity.ResourceMembership:
+		if request.Action != identity.ActionSet || request.Membership == nil || request.User != nil || request.Group != nil || request.Quota != nil || request.ApplicationPrivilege != nil {
+			return fmt.Errorf("membership resource requires action set and only the membership object")
+		}
+		if err := validateManagedName("user", request.Membership.User); err != nil {
+			return err
+		}
+		if protectedUser(request.Membership.User) {
+			return fmt.Errorf("user %q is reserved and cannot be managed", request.Membership.User)
+		}
+		if len(request.Membership.Groups) == 0 {
+			return fmt.Errorf("membership groups must include at least the mandatory users group")
+		}
+		seen := make(map[string]struct{})
+		includesUsers := false
+		for _, group := range request.Membership.Groups {
+			if err := validateManagedName("group", group); err != nil {
+				return err
+			}
+			key := strings.ToLower(group)
+			if _, duplicate := seen[key]; duplicate {
+				return fmt.Errorf("group %q appears more than once", group)
+			}
+			seen[key] = struct{}{}
+			if strings.EqualFold(group, "users") {
+				includesUsers = true
+			}
+		}
+		if !includesUsers {
+			return fmt.Errorf("membership groups must include the mandatory users group")
+		}
+	case identity.ResourceQuota:
+		if request.Action != identity.ActionSet || request.Quota == nil || request.User != nil || request.Group != nil || request.Membership != nil || request.ApplicationPrivilege != nil {
+			return fmt.Errorf("quota resource requires action set and only the quota object")
+		}
+		if err := validatePrincipal(request.Quota.PrincipalType, request.Quota.Principal); err != nil {
+			return err
+		}
+		if len(request.Quota.Limits) == 0 {
+			return fmt.Errorf("at least one quota limit is required")
+		}
+		seen := make(map[string]struct{})
+		for _, limit := range request.Quota.Limits {
+			if limit.QuotaMiB < 0 {
+				return fmt.Errorf("quota for %q cannot be negative", limit.Target)
+			}
+			switch limit.TargetType {
+			case identity.QuotaTargetVolume:
+				if !strings.HasPrefix(limit.Target, "/volume") {
+					return fmt.Errorf("volume quota target %q must begin with /volume", limit.Target)
+				}
+			case identity.QuotaTargetShare:
+				if err := validateManagedName("shared folder", limit.Target); err != nil {
+					return err
+				}
+			default:
+				return fmt.Errorf("quota target_type must be volume or share")
+			}
+			key := limit.TargetType + ":" + strings.ToLower(limit.Target)
+			if _, duplicate := seen[key]; duplicate {
+				return fmt.Errorf("quota target %q appears more than once", limit.Target)
+			}
+			seen[key] = struct{}{}
+		}
+	case identity.ResourceApplicationPrivilege:
+		if request.Action != identity.ActionSet || request.ApplicationPrivilege == nil || request.User != nil || request.Group != nil || request.Membership != nil || request.Quota != nil {
+			return fmt.Errorf("application_privilege resource requires action set and only the application_privilege object")
+		}
+		if err := validatePrincipal(request.ApplicationPrivilege.PrincipalType, request.ApplicationPrivilege.Principal); err != nil {
+			return err
+		}
+		if len(request.ApplicationPrivilege.Permissions) == 0 {
+			return fmt.Errorf("at least one application permission is required")
+		}
+		seen := make(map[string]struct{})
+		for _, permission := range request.ApplicationPrivilege.Permissions {
+			if strings.TrimSpace(permission.ApplicationID) == "" {
+				return fmt.Errorf("application_id is required")
+			}
+			key := strings.ToLower(permission.ApplicationID)
+			if _, duplicate := seen[key]; duplicate {
+				return fmt.Errorf("application %q appears more than once", permission.ApplicationID)
+			}
+			seen[key] = struct{}{}
+			if permission.Access != identity.ApplicationAccessAllow && permission.Access != identity.ApplicationAccessDeny && permission.Access != identity.ApplicationAccessInherit {
+				return fmt.Errorf("application %q access must be allow, deny, or inherit", permission.ApplicationID)
+			}
 		}
 	default:
 		return fmt.Errorf("unsupported identity resource %q", request.Resource)
@@ -498,21 +648,59 @@ func verifyIdentityPostcondition(state synology.IdentityState, request identity.
 		}
 		return nil
 	}
-	name = groupNameAfter(request)
-	if request.Action == identity.ActionDelete {
-		if _, found := findGroup(state.Groups, request.Group.Name); found {
-			return fmt.Errorf("group %q still exists after delete", request.Group.Name)
+	switch request.Resource {
+	case identity.ResourceGroup:
+		name = groupNameAfter(request)
+		if request.Action == identity.ActionDelete {
+			if _, found := findGroup(state.Groups, request.Group.Name); found {
+				return fmt.Errorf("group %q still exists after delete", request.Group.Name)
+			}
+			return nil
+		}
+		current, found := findGroup(state.Groups, name)
+		if !found {
+			return fmt.Errorf("group %q was not found after %s", name, request.Action)
+		}
+		if request.Group.Description != nil && current.Description != *request.Group.Description {
+			return fmt.Errorf("group %q description was not applied", name)
 		}
 		return nil
+	case identity.ResourceMembership:
+		current, found := findMembership(state.Memberships, request.Membership.User)
+		if !found {
+			return fmt.Errorf("membership state for user %q was not returned after apply", request.Membership.User)
+		}
+		if !sameStringSet(current.Groups, request.Membership.Groups) {
+			return fmt.Errorf("memberships for user %q are %v after apply, want %v", request.Membership.User, current.Groups, request.Membership.Groups)
+		}
+		return nil
+	case identity.ResourceQuota:
+		current, found := findQuotaAssignment(state.Quotas, request.Quota.PrincipalType, request.Quota.Principal)
+		if !found {
+			return fmt.Errorf("quota state for %s %q was not returned after apply", request.Quota.PrincipalType, request.Quota.Principal)
+		}
+		for _, desired := range request.Quota.Limits {
+			actual := quotaLimitFor(current, desired.TargetType, desired.Target)
+			if actual.QuotaMiB != desired.QuotaMiB {
+				return fmt.Errorf("quota for %s %q on %s %q is %d MiB after apply, want %d MiB", request.Quota.PrincipalType, request.Quota.Principal, desired.TargetType, desired.Target, actual.QuotaMiB, desired.QuotaMiB)
+			}
+		}
+		return nil
+	case identity.ResourceApplicationPrivilege:
+		current, found := findApplicationPrivilegeAssignment(state.ApplicationPrivileges, request.ApplicationPrivilege.PrincipalType, request.ApplicationPrivilege.Principal)
+		if !found {
+			return fmt.Errorf("application privilege state for %s %q was not returned after apply", request.ApplicationPrivilege.PrincipalType, request.ApplicationPrivilege.Principal)
+		}
+		for _, desired := range request.ApplicationPrivilege.Permissions {
+			actual := applicationPermissionFor(current, desired.ApplicationID)
+			if actual.Access != desired.Access {
+				return fmt.Errorf("application %q access for %s %q is %q after apply, want %q", desired.ApplicationID, request.ApplicationPrivilege.PrincipalType, request.ApplicationPrivilege.Principal, actual.Access, desired.Access)
+			}
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported identity resource %q", request.Resource)
 	}
-	current, found := findGroup(state.Groups, name)
-	if !found {
-		return fmt.Errorf("group %q was not found after %s", name, request.Action)
-	}
-	if request.Group.Description != nil && current.Description != *request.Group.Description {
-		return fmt.Errorf("group %q description was not applied", name)
-	}
-	return nil
 }
 
 func verifySharePostcondition(state synology.ShareState, request share.ChangeRequest) error {
@@ -581,6 +769,68 @@ func findGroup(groups []identity.Group, name string) (identity.Group, bool) {
 	return identity.Group{}, false
 }
 
+func findMembership(memberships []identity.Membership, user string) (identity.Membership, bool) {
+	for _, membership := range memberships {
+		if strings.EqualFold(membership.User, user) {
+			return membership, true
+		}
+	}
+	return identity.Membership{}, false
+}
+
+func findQuotaAssignment(quotas []identity.PrincipalQuota, principalType, principal string) (identity.PrincipalQuota, bool) {
+	for _, quota := range quotas {
+		if quota.PrincipalType == principalType && strings.EqualFold(quota.Principal, principal) {
+			return quota, true
+		}
+	}
+	return identity.PrincipalQuota{}, false
+}
+
+func quotaLimitFor(quota identity.PrincipalQuota, targetType, target string) identity.QuotaLimit {
+	limit, found := findQuotaLimit(quota, targetType, target)
+	if found {
+		return limit
+	}
+	return identity.QuotaLimit{TargetType: targetType, Target: target, QuotaMiB: 0}
+}
+
+func findQuotaLimit(quota identity.PrincipalQuota, targetType, target string) (identity.QuotaLimit, bool) {
+	for _, limit := range quota.Limits {
+		if limit.TargetType == targetType && strings.EqualFold(limit.Target, target) {
+			return limit, true
+		}
+	}
+	return identity.QuotaLimit{}, false
+}
+
+func findApplication(applications []identity.Application, id string) (identity.Application, bool) {
+	for _, application := range applications {
+		if strings.EqualFold(application.ID, id) {
+			return application, true
+		}
+	}
+	return identity.Application{}, false
+}
+
+func findApplicationPrivilegeAssignment(assignments []identity.ApplicationPrivilegeAssignment, principalType, principal string) (identity.ApplicationPrivilegeAssignment, bool) {
+	for _, assignment := range assignments {
+		if assignment.PrincipalType == principalType && strings.EqualFold(assignment.Principal, principal) {
+			return assignment, true
+		}
+	}
+	return identity.ApplicationPrivilegeAssignment{}, false
+}
+
+func applicationPermissionFor(assignment identity.ApplicationPrivilegeAssignment, applicationID string) identity.ApplicationPermission {
+	for _, permission := range assignment.Permissions {
+		if strings.EqualFold(permission.ApplicationID, applicationID) {
+			return permission
+		}
+	}
+	return identity.ApplicationPermission{ApplicationID: applicationID, Access: identity.ApplicationAccessInherit}
+}
+
 func findShare(shares []share.SharedFolder, name string) (share.SharedFolder, bool) {
 	for _, folder := range shares {
 		if strings.EqualFold(folder.Name, name) {
@@ -608,9 +858,37 @@ func principalExists(state synology.IdentityState, principalType, principal stri
 	return found
 }
 
+func identityPrincipalID(state synology.IdentityState, principalType, principal string) (string, error) {
+	if principalType == identity.PrincipalUser {
+		value, found := findUser(state.Users, principal)
+		if !found {
+			return "", fmt.Errorf("user %q does not exist", principal)
+		}
+		return value.ID, nil
+	}
+	value, found := findGroup(state.Groups, principal)
+	if !found {
+		return "", fmt.Errorf("group %q does not exist", principal)
+	}
+	return value.ID, nil
+}
+
 func validateManagedName(label, name string) error {
 	if !managedNamePattern.MatchString(strings.TrimSpace(name)) {
 		return fmt.Errorf("%s name %q must start with a letter or number and contain at most 64 letters, numbers, '.', '_' or '-'", label, name)
+	}
+	return nil
+}
+
+func validatePrincipal(principalType, principal string) error {
+	if principalType != identity.PrincipalUser && principalType != identity.PrincipalGroup {
+		return fmt.Errorf("principal_type must be user or group")
+	}
+	if err := validateManagedName("principal", principal); err != nil {
+		return err
+	}
+	if principalType == identity.PrincipalUser && protectedUser(principal) {
+		return fmt.Errorf("user %q is reserved and cannot be managed", principal)
 	}
 	return nil
 }
@@ -651,14 +929,112 @@ func riskLevel(destructive bool) string {
 	return "medium"
 }
 
-func identitySummary(request identity.ChangeRequest) []string {
-	name := request.Resource
-	if request.User != nil {
-		name += " " + request.User.Name
-	} else {
-		name += " " + request.Group.Name
+func identityQueryForRequest(request identity.ChangeRequest) identity.StateQuery {
+	switch request.Resource {
+	case identity.ResourceMembership:
+		return identity.StateQuery{IncludeMemberships: true, PrincipalType: identity.PrincipalUser, Principal: request.Membership.User}
+	case identity.ResourceQuota:
+		return identity.StateQuery{IncludeQuotas: true, PrincipalType: request.Quota.PrincipalType, Principal: request.Quota.Principal}
+	case identity.ResourceApplicationPrivilege:
+		return identity.StateQuery{IncludeApplicationPrivileges: true, PrincipalType: request.ApplicationPrivilege.PrincipalType, Principal: request.ApplicationPrivilege.Principal}
+	default:
+		return identity.StateQuery{}
 	}
-	return []string{request.Action + " " + name, "re-read identity state and verify the plan precondition before applying", "verify the resulting identity state after DSM accepts the change"}
+}
+
+func identityChangeIsDestructive(state synology.IdentityState, request identity.ChangeRequest) bool {
+	if request.Action == identity.ActionDelete {
+		return true
+	}
+	switch request.Resource {
+	case identity.ResourceMembership:
+		current, _ := findMembership(state.Memberships, request.Membership.User)
+		_, remove := membershipDelta(current.Groups, request.Membership.Groups)
+		return len(remove) > 0 || containsFold(request.Membership.Groups, "administrators")
+	case identity.ResourceQuota:
+		current, _ := findQuotaAssignment(state.Quotas, request.Quota.PrincipalType, request.Quota.Principal)
+		for _, desired := range request.Quota.Limits {
+			before := quotaLimitFor(current, desired.TargetType, desired.Target).QuotaMiB
+			if desired.QuotaMiB > 0 && (before == 0 || desired.QuotaMiB < before) {
+				return true
+			}
+		}
+	case identity.ResourceApplicationPrivilege:
+		return true
+	}
+	return false
+}
+
+func membershipDelta(current, desired []string) ([]string, []string) {
+	currentSet := make(map[string]string)
+	desiredSet := make(map[string]string)
+	for _, value := range current {
+		currentSet[strings.ToLower(value)] = value
+	}
+	for _, value := range desired {
+		desiredSet[strings.ToLower(value)] = value
+	}
+	add := make([]string, 0)
+	remove := make([]string, 0)
+	for key, value := range desiredSet {
+		if _, found := currentSet[key]; !found {
+			add = append(add, value)
+		}
+	}
+	for key, value := range currentSet {
+		if _, found := desiredSet[key]; !found && !strings.EqualFold(value, "users") {
+			remove = append(remove, value)
+		}
+	}
+	sort.Strings(add)
+	sort.Strings(remove)
+	return add, remove
+}
+
+func sameStringSet(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	leftSet := make(map[string]struct{}, len(left))
+	for _, value := range left {
+		leftSet[strings.ToLower(value)] = struct{}{}
+	}
+	for _, value := range right {
+		if _, found := leftSet[strings.ToLower(value)]; !found {
+			return false
+		}
+	}
+	return true
+}
+
+func containsFold(values []string, desired string) bool {
+	for _, value := range values {
+		if strings.EqualFold(value, desired) {
+			return true
+		}
+	}
+	return false
+}
+
+func identitySummary(state synology.IdentityState, request identity.ChangeRequest) []string {
+	var action string
+	switch request.Resource {
+	case identity.ResourceUser:
+		action = request.Action + " user " + request.User.Name
+	case identity.ResourceGroup:
+		action = request.Action + " group " + request.Group.Name
+	case identity.ResourceMembership:
+		current, _ := findMembership(state.Memberships, request.Membership.User)
+		add, remove := membershipDelta(current.Groups, request.Membership.Groups)
+		action = fmt.Sprintf("set memberships for user %s (add: %v; remove: %v)", request.Membership.User, add, remove)
+	case identity.ResourceQuota:
+		action = fmt.Sprintf("set %d quota target(s) for %s %s", len(request.Quota.Limits), request.Quota.PrincipalType, request.Quota.Principal)
+	case identity.ResourceApplicationPrivilege:
+		action = fmt.Sprintf("set %d application privilege rule(s) for %s %s", len(request.ApplicationPrivilege.Permissions), request.ApplicationPrivilege.PrincipalType, request.ApplicationPrivilege.Principal)
+	default:
+		action = request.Action + " " + request.Resource
+	}
+	return []string{action, "re-read identity state and verify the plan precondition before applying", "verify the resulting identity state after DSM accepts the change"}
 }
 
 func shareSummary(request share.ChangeRequest) []string {

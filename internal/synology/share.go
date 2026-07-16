@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ychiu1211/dsmctl/internal/domain/identity"
 	"github.com/ychiu1211/dsmctl/internal/domain/share"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/identityinventory"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/shareinventory"
@@ -30,7 +31,7 @@ func (c *Client) ShareState(ctx context.Context, includePermissions bool) (Share
 
 	input := shareinventory.Input{IncludePermissions: includePermissions}
 	if includePermissions {
-		identities, _, err := c.identityStateLocked(ctx)
+		identities, _, err := c.identityStateLocked(ctx, identity.StateQuery{})
 		if err != nil {
 			return ShareState{}, fmt.Errorf("load permission principals: %w", err)
 		}

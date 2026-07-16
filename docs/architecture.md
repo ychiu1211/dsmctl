@@ -11,8 +11,8 @@ The first release proves one complete path shared by both products:
 5. Retain an independent session for that NAS.
 6. Read normalized system information through CLI and MCP.
 7. Read a normalized disk, storage-pool, RAID, volume, capacity, and health inventory through the same application service.
-8. Read normalized local users, groups, shared folders, and opt-in permission bindings without exposing authentication material.
-9. Plan and apply guarded local account/group and shared-folder changes through identical CLI and MCP use cases.
+8. Read normalized local users, groups, memberships, quotas, application privileges, shared folders, and opt-in permission bindings without exposing authentication material.
+9. Plan and apply guarded local identity and shared-folder changes through identical CLI and MCP use cases.
 
 ## Dependency direction
 
@@ -50,13 +50,20 @@ The highest-priority matching variant is selected. Shared HTTP, session, retry, 
 
 `storage.inventory` follows the same operation-scoped pattern. Its first backend uses `SYNO.Storage.CGI.Storage` v1 and normalizes the aggregate response into the stable `internal/domain/storage` model. Future DSM-specific field or endpoint differences can add a higher-priority variant without changing the CLI, MCP schemas, or application use case.
 
-Identity and share support is split into four independently selectable operations:
+Identity and share support is split into independently selectable operations:
 
 ```text
 identity.users.list         SYNO.Core.User v1
 identity.groups.list        SYNO.Core.Group v1
 identity.users.mutate       SYNO.Core.User v1
 identity.groups.mutate      SYNO.Core.Group v1
+identity.memberships.list   SYNO.Core.Group.Member v1
+identity.memberships.set    SYNO.Core.Group.Member v1
+identity.quotas.get         SYNO.Core.Quota v1
+identity.quotas.set         SYNO.Core.Quota v1
+identity.applications.list  SYNO.Core.AppPriv.App v2
+identity.application_privileges.get  SYNO.Core.AppPriv.Rule v1
+identity.application_privileges.set  SYNO.Core.AppPriv.Rule v1
 shares.list                 SYNO.Core.Share v1
 shares.permissions.list     SYNO.Core.Share.Permission v1
 shares.mutate               SYNO.Core.Share v1
@@ -116,7 +123,7 @@ dsmctl system info [--nas <name>] [--json]
 dsmctl storage capabilities [--nas <name>] [--json]
 dsmctl storage inventory [--nas <name>] [--json]
 dsmctl account capabilities [--nas <name>] [--json]
-dsmctl account inventory [--nas <name>] [--json]
+dsmctl account inventory [--nas <name>] [--memberships] [--quotas] [--application-privileges] [--principal-type user|group --principal <name>] [--json]
 dsmctl account plan [--nas <name>] --file <request.json> [--output <plan.json>]
 dsmctl account apply --file <plan.json> --approve <sha256>
 dsmctl share capabilities [--nas <name>] [--json]
@@ -134,7 +141,7 @@ get_capabilities { nas?: string }
 get_storage_capabilities { nas?: string }
 get_storage_state { nas?: string }
 get_account_capabilities { nas?: string }
-get_account_state { nas?: string }
+get_account_state { nas?: string, include_memberships?: boolean, include_quotas?: boolean, include_application_privileges?: boolean, principal_type?: "user"|"group", principal?: string }
 plan_account_change { nas?: string, request: IdentityChangeRequest }
 apply_account_plan { plan: IdentityPlan, approval_hash: string }
 get_share_capabilities { nas?: string }
@@ -162,7 +169,7 @@ Planning and inventory MCP tools declare read-only annotations. Apply tools decl
 - DSM error descriptions and structured application errors.
 - Versioned storage manifests plus plan/apply and plan-hash preconditions.
 - Guarded storage-pool and volume creation after write APIs are modeled per DSM version.
-- Group membership changes and effective-permission explanation.
+- Effective permission explanation across group membership, share ACLs, and application inheritance.
 - Encrypted shared-folder key lifecycle, WORM policy, and custom Windows ACL safeguards.
 - Control Panel read operations, followed by plan/apply mutations.
 - SAN inventory, followed by guarded LUN and target mutations.
