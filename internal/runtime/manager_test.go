@@ -8,12 +8,32 @@ import (
 	"testing"
 
 	"github.com/ychiu1211/dsmctl/internal/config"
+	"github.com/ychiu1211/dsmctl/internal/credentials"
 )
 
 type resolverFunc func(context.Context, string, config.Profile) (string, error)
 
 func (f resolverFunc) Password(ctx context.Context, name string, profile config.Profile) (string, error) {
 	return f(ctx, name, profile)
+}
+
+type fakeSessionStore struct {
+	sessions map[string]credentials.SessionCredential
+}
+
+func (f *fakeSessionStore) Session(_ context.Context, name string) (credentials.SessionCredential, error) {
+	return f.sessions[name], nil
+}
+
+func (f *fakeSessionStore) SaveSession(_ context.Context, name string, session credentials.SessionCredential) error {
+	f.sessions[name] = session
+	return nil
+}
+
+func (f *fakeSessionStore) DeleteSession(_ context.Context, name string) (bool, error) {
+	_, ok := f.sessions[name]
+	delete(f.sessions, name)
+	return ok, nil
 }
 
 func TestManagerMaintainsIndependentClientsPerNAS(t *testing.T) {
@@ -92,6 +112,106 @@ func TestSessionInfoReportsStateWithoutResolvingCredentials(t *testing.T) {
 	if info := manager.SessionInfo("office"); info != (SessionInfo{}) {
 		t.Fatalf("SessionInfo after Close() = %#v", info)
 	}
+}
+
+func TestManagerReusesStoredSessionWithoutLoginOrPassword(t *testing.T) {
+	loginCount := 0
+	server := newCountingDSMServer(t, "DS923+", "stored-sid", &loginCount)
+	defer server.Close()
+
+	cfg := config.New()
+	cfg.DefaultNAS = "office"
+	cfg.NAS["office"] = config.Profile{URL: server.URL, Username: "user"}
+
+	store := &fakeSessionStore{sessions: map[string]credentials.SessionCredential{
+		"office": {SID: "stored-sid", SynoToken: "stored-token"},
+	}}
+	resolutions := 0
+	manager := NewManager(cfg, resolverFunc(func(context.Context, string, config.Profile) (string, error) {
+		resolutions++
+		return "password", nil
+	}), WithSessionStore(store))
+
+	_, client, err := manager.Client(context.Background(), "office")
+	if err != nil {
+		t.Fatalf("Client() error = %v", err)
+	}
+	info, err := client.SystemInfo(context.Background())
+	if err != nil {
+		t.Fatalf("SystemInfo() error = %v", err)
+	}
+	if info.Model != "DS923+" {
+		t.Fatalf("SystemInfo() model = %q", info.Model)
+	}
+	if loginCount != 0 {
+		t.Fatalf("login called %d times; a stored session must be reused without logging in", loginCount)
+	}
+	if resolutions != 0 {
+		t.Fatalf("password resolved %d times; a stored session must be reused without a password", resolutions)
+	}
+}
+
+func TestManagerFallsBackToPasswordWithoutStoredSession(t *testing.T) {
+	loginCount := 0
+	server := newCountingDSMServer(t, "DS224+", "login-sid", &loginCount)
+	defer server.Close()
+
+	cfg := config.New()
+	cfg.DefaultNAS = "office"
+	cfg.NAS["office"] = config.Profile{URL: server.URL, Username: "user"}
+
+	store := &fakeSessionStore{sessions: map[string]credentials.SessionCredential{}}
+	resolutions := 0
+	manager := NewManager(cfg, resolverFunc(func(context.Context, string, config.Profile) (string, error) {
+		resolutions++
+		return "password", nil
+	}), WithSessionStore(store))
+
+	_, client, err := manager.Client(context.Background(), "office")
+	if err != nil {
+		t.Fatalf("Client() error = %v", err)
+	}
+	info, err := client.SystemInfo(context.Background())
+	if err != nil {
+		t.Fatalf("SystemInfo() error = %v", err)
+	}
+	if info.Model != "DS224+" {
+		t.Fatalf("SystemInfo() model = %q", info.Model)
+	}
+	if loginCount != 1 {
+		t.Fatalf("expected one password login, loginCount = %d", loginCount)
+	}
+	if resolutions != 1 {
+		t.Fatalf("expected one password resolution, resolutions = %d", resolutions)
+	}
+}
+
+func newCountingDSMServer(t *testing.T, model, sid string, loginCount *int) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Errorf("ParseForm() error = %v", err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Form.Get("api") + "." + r.Form.Get("method") {
+		case "SYNO.API.Info.query":
+			fmt.Fprint(w, `{"success":true,"data":{"SYNO.API.Auth":{"path":"entry.cgi","minVersion":1,"maxVersion":7},"SYNO.Core.System":{"path":"entry.cgi","minVersion":1,"maxVersion":3}}}`)
+		case "SYNO.API.Auth.login":
+			*loginCount++
+			fmt.Fprintf(w, `{"success":true,"data":{"sid":%q}}`, sid)
+		case "SYNO.Core.System.info":
+			if r.Form.Get("_sid") != sid {
+				t.Errorf("system info SID = %q, want %q", r.Form.Get("_sid"), sid)
+			}
+			fmt.Fprintf(w, `{"success":true,"data":{"model":%q}}`, model)
+		case "SYNO.API.Auth.logout":
+			fmt.Fprint(w, `{"success":true,"data":{}}`)
+		default:
+			t.Errorf("unexpected API call %s.%s", r.Form.Get("api"), r.Form.Get("method"))
+			fmt.Fprint(w, `{"success":false,"error":{"code":102}}`)
+		}
+	}))
 }
 
 func newDSMServer(t *testing.T, model, sid string) *httptest.Server {

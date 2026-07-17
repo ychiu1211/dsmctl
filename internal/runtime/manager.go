@@ -73,10 +73,20 @@ func WithDeviceName(name string) Option {
 	}
 }
 
+// WithSessionStore lets the manager reuse a persisted web-login session for a
+// profile instead of resolving a password. When a stored session is present it
+// is preferred; profiles without one fall back to the password path unchanged.
+func WithSessionStore(store credentials.SessionStore) Option {
+	return func(manager *Manager) {
+		manager.sessions = store
+	}
+}
+
 type Manager struct {
 	config      *config.Config
 	credentials credentials.Resolver
 	devices     credentials.DeviceStore
+	sessions    credentials.SessionStore
 	otp         OTPProvider
 	deviceName  string
 
@@ -112,6 +122,25 @@ func (m *Manager) Client(ctx context.Context, requested string) (string, Client,
 		return name, client, nil
 	}
 	m.mu.Unlock()
+
+	// Prefer a persisted web-login session over the password path. A profile
+	// without a stored session (or configured only for password auth) falls
+	// through unchanged.
+	if m.sessions != nil {
+		client, ok, err := m.sessionClient(ctx, name, profile)
+		if err != nil {
+			return "", nil, err
+		}
+		if ok {
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			if existing, exists := m.clients[name]; exists {
+				return name, existing, nil
+			}
+			m.clients[name] = client
+			return name, client, nil
+		}
+	}
 
 	password, err := m.credentials.Password(ctx, name, profile)
 	if err != nil {
@@ -163,6 +192,33 @@ func (m *Manager) Client(ctx context.Context, requested string) (string, Client,
 	}
 	m.clients[name] = client
 	return name, client, nil
+}
+
+// sessionClient builds a client seeded with a persisted web-login session, so
+// it reuses that session instead of authenticating with a password. It reports
+// ok=false when no usable session is stored, leaving the caller to fall back to
+// the password path. A stored session with resume key material but no live
+// session ID is treated as not directly usable here; silently refreshing it is
+// handled once resume support lands.
+func (m *Manager) sessionClient(ctx context.Context, name string, profile config.Profile) (*synology.Client, bool, error) {
+	session, err := m.sessions.Session(ctx, name)
+	if err != nil {
+		return nil, false, fmt.Errorf("read stored session for NAS %q: %w", name, err)
+	}
+	if session.SID == "" {
+		return nil, false, nil
+	}
+	client, err := synology.NewClient(synology.Options{
+		BaseURL:    profile.URL,
+		Username:   profile.Username,
+		SessionID:  session.SID,
+		SynoToken:  session.SynoToken,
+		HTTPClient: httpClient(profile),
+	})
+	if err != nil {
+		return nil, false, fmt.Errorf("create client for NAS %q from stored session: %w", name, err)
+	}
+	return client, true, nil
 }
 
 // SessionInfo reports in-process session state for one profile without
