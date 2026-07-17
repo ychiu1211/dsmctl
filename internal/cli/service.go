@@ -20,7 +20,7 @@ func (webLoginResolver) Password(_ context.Context, profileName string, _ config
 	return "", fmt.Errorf("not signed in to NAS %q; run 'dsmctl auth login --nas %s'", profileName, profileName)
 }
 
-func loadService(configPath string, otpProvider runtime.OTPProvider) (*application.Service, error) {
+func loadService(configPath string) (*application.Service, error) {
 	cfg, err := config.NewStore(configPath).Load()
 	if err != nil {
 		return nil, err
@@ -31,7 +31,6 @@ func loadService(configPath string, otpProvider runtime.OTPProvider) (*applicati
 		webLoginResolver{},
 		runtime.WithDeviceStore(secrets),
 		runtime.WithSessionStore(secrets),
-		runtime.WithOTPProvider(otpProvider),
 	)
 	return application.NewService(cfg, manager, application.WithCredentialStore(secrets)), nil
 }

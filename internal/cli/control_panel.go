@@ -47,7 +47,7 @@ func newControlPanelTimePlanCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
 				return fmt.Errorf("read time change: %w", err)
 			}
-			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			service, err := loadService(opts.configPath)
 			if err != nil {
 				return err
 			}
@@ -75,7 +75,7 @@ func newControlPanelTimeApplyCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, inputPath, &plan); err != nil {
 				return fmt.Errorf("read time plan: %w", err)
 			}
-			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			service, err := loadService(opts.configPath)
 			if err != nil {
 				return err
 			}
@@ -100,7 +100,7 @@ func newControlPanelTimeStateCommand(opts *options) *cobra.Command {
 		Short: "Show normalized time zone, display formats, and NTP settings",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			service, err := loadService(opts.configPath)
 			if err != nil {
 				return err
 			}
@@ -126,7 +126,7 @@ func newControlPanelTimeCapabilitiesCommand(opts *options) *cobra.Command {
 		Short: "Show time-module support and the selected DSM backend",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			service, err := loadService(opts.configPath)
 			if err != nil {
 				return err
 			}

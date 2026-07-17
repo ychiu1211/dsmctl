@@ -36,7 +36,7 @@ func newLogListCommand(opts *options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			service, err := loadService(opts.configPath)
 			if err != nil {
 				return err
 			}
@@ -72,7 +72,7 @@ func newLogCapabilitiesCommand(opts *options) *cobra.Command {
 		Short: "Show DSM log read support and the selected backend",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			service, err := loadService(opts.configPath)
 			if err != nil {
 				return err
 			}

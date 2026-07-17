@@ -50,19 +50,11 @@ type Client interface {
 	ApplyResourceRecordingChange(ctx context.Context, change resmon.RecordingChange) (synology.ResourceRecordingMutationResult, error)
 }
 
-type OTPProvider func(ctx context.Context, profileName string) (string, error)
-
 type Option func(*Manager)
 
 func WithDeviceStore(store credentials.DeviceStore) Option {
 	return func(manager *Manager) {
 		manager.devices = store
-	}
-}
-
-func WithOTPProvider(provider OTPProvider) Option {
-	return func(manager *Manager) {
-		manager.otp = provider
 	}
 }
 
@@ -88,7 +80,6 @@ type Manager struct {
 	credentials credentials.Resolver
 	devices     credentials.DeviceStore
 	sessions    credentials.SessionStore
-	otp         OTPProvider
 	deviceName  string
 
 	mu      sync.Mutex
@@ -157,12 +148,6 @@ func (m *Manager) Client(ctx context.Context, requested string) (string, Client,
 			device.Name = m.deviceName
 		}
 	}
-	var otp synology.OTPProvider
-	if m.otp != nil {
-		otp = func(ctx context.Context) (string, error) {
-			return m.otp(ctx, name)
-		}
-	}
 	var saveDeviceID synology.DeviceIDSaver
 	if m.devices != nil {
 		saveDeviceID = func(ctx context.Context, deviceID string) error {
@@ -178,7 +163,6 @@ func (m *Manager) Client(ctx context.Context, requested string) (string, Client,
 		Password:     password,
 		DeviceName:   device.Name,
 		DeviceID:     device.ID,
-		OTPProvider:  otp,
 		SaveDeviceID: saveDeviceID,
 		HTTPClient:   httpClient(profile),
 	})

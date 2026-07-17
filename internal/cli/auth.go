@@ -81,7 +81,7 @@ func newAuthStatusCommand(opts *options) *cobra.Command {
 			"offline: it never reveals secrets and never contacts a NAS.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			service, err := loadService(opts.configPath)
 			if err != nil {
 				return err
 			}

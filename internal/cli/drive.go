@@ -43,7 +43,7 @@ func newDriveAdminCapabilitiesCommand(opts *options) *cobra.Command {
 		Short: "Show Drive Admin operation support, selected backends, and the installed package version",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			service, err := loadService(opts.configPath)
 			if err != nil {
 				return err
 			}
@@ -69,7 +69,7 @@ func newDriveAdminStatusCommand(opts *options) *cobra.Command {
 		Short: "Show the Drive service status and installed package evidence",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			service, err := loadService(opts.configPath)
 			if err != nil {
 				return err
 			}
@@ -95,7 +95,7 @@ func newDriveAdminConnectionsCommand(opts *options) *cobra.Command {
 		Short: "List active Drive client connections",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			service, err := loadService(opts.configPath)
 			if err != nil {
 				return err
 			}
@@ -121,7 +121,7 @@ func newDriveAdminTeamFoldersCommand(opts *options) *cobra.Command {
 		Short: "List Drive team folders from the admin perspective",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			service, err := loadService(opts.configPath)
 			if err != nil {
 				return err
 			}
@@ -166,7 +166,7 @@ func newDriveAdminLogListCommand(opts *options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			service, err := loadService(opts.configPath)
 			if err != nil {
 				return err
 			}

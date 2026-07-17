@@ -36,7 +36,7 @@ func newStoragePlanCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
 				return fmt.Errorf("decode storage change request: %w", err)
 			}
-			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			service, err := loadService(opts.configPath)
 			if err != nil {
 				return err
 			}
@@ -64,7 +64,7 @@ func newStorageApplyCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, inputPath, &plan); err != nil {
 				return fmt.Errorf("decode storage plan: %w", err)
 			}
-			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			service, err := loadService(opts.configPath)
 			if err != nil {
 				return err
 			}
@@ -89,7 +89,7 @@ func newStorageCapabilitiesCommand(opts *options) *cobra.Command {
 		Short: "Show supported storage operations and selected DSM backend",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			service, err := loadService(opts.configPath)
 			if err != nil {
 				return err
 			}
@@ -118,7 +118,7 @@ func newStorageInventoryCommand(opts *options) *cobra.Command {
 		Short: "Show disks, storage pools, volumes, and their status",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			service, err := loadService(opts.configPath)
 			if err != nil {
 				return err
 			}

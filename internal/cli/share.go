@@ -33,7 +33,7 @@ func newSharePlanCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
 				return fmt.Errorf("read shared-folder change: %w", err)
 			}
-			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			service, err := loadService(opts.configPath)
 			if err != nil {
 				return err
 			}
@@ -61,7 +61,7 @@ func newShareApplyCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, inputPath, &plan); err != nil {
 				return fmt.Errorf("read shared-folder plan: %w", err)
 			}
-			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			service, err := loadService(opts.configPath)
 			if err != nil {
 				return err
 			}
@@ -86,7 +86,7 @@ func newShareCapabilitiesCommand(opts *options) *cobra.Command {
 		Short: "Show supported shared-folder operations and selected DSM backends",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			service, err := loadService(opts.configPath)
 			if err != nil {
 				return err
 			}
@@ -114,7 +114,7 @@ func newShareInventoryCommand(opts *options) *cobra.Command {
 		Short: "Show shared folders and optionally expand user/group permissions",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			service, err := loadService(opts.configPath)
 			if err != nil {
 				return err
 			}

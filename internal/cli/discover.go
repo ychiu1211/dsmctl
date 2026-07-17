@@ -27,7 +27,7 @@ func newDiscoverCommand(opts *options) *cobra.Command {
 			"same broadcast domain as this host can answer.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			service, err := loadService(opts.configPath)
 			if err != nil {
 				return err
 			}

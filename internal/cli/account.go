@@ -36,7 +36,7 @@ func newAccountPlanCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
 				return fmt.Errorf("read account change: %w", err)
 			}
-			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			service, err := loadService(opts.configPath)
 			if err != nil {
 				return err
 			}
@@ -64,7 +64,7 @@ func newAccountApplyCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, inputPath, &plan); err != nil {
 				return fmt.Errorf("read account plan: %w", err)
 			}
-			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			service, err := loadService(opts.configPath)
 			if err != nil {
 				return err
 			}
@@ -137,7 +137,7 @@ func newAccountCapabilitiesCommand(opts *options) *cobra.Command {
 		Short: "Show supported account operations and selected DSM backends",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			service, err := loadService(opts.configPath)
 			if err != nil {
 				return err
 			}
@@ -166,7 +166,7 @@ func newAccountInventoryCommand(opts *options) *cobra.Command {
 		Short: "Show local DSM identity state with optional membership, quota, and application expansion",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			service, err := loadService(opts.configPath)
 			if err != nil {
 				return err
 			}

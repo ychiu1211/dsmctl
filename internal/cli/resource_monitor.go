@@ -34,7 +34,7 @@ func newResourceMonitorCurrentCommand(opts *options) *cobra.Command {
 		Short: "Show the current CPU, memory, network, disk, and volume utilization",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			service, err := loadService(opts.configPath)
 			if err != nil {
 				return err
 			}
@@ -62,7 +62,7 @@ func newResourceMonitorHistoryCommand(opts *options) *cobra.Command {
 		Short: "Show recorded utilization history (requires history recording to be enabled)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			service, err := loadService(opts.configPath)
 			if err != nil {
 				return err
 			}
@@ -90,7 +90,7 @@ func newResourceMonitorSettingCommand(opts *options) *cobra.Command {
 		Short: "Show whether history recording is enabled",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			service, err := loadService(opts.configPath)
 			if err != nil {
 				return err
 			}
@@ -119,7 +119,7 @@ func newResourceMonitorCapabilitiesCommand(opts *options) *cobra.Command {
 		Short: "Show Resource Monitor support and the selected DSM backends",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			service, err := loadService(opts.configPath)
 			if err != nil {
 				return err
 			}
@@ -159,7 +159,7 @@ func newResourceMonitorPlanRecordingCommand(opts *options) *cobra.Command {
 				return fmt.Errorf("specify exactly one of --enable or --disable")
 			}
 			desired := enable
-			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			service, err := loadService(opts.configPath)
 			if err != nil {
 				return err
 			}
@@ -188,7 +188,7 @@ func newResourceMonitorApplyRecordingCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, inputPath, &plan); err != nil {
 				return fmt.Errorf("read recording plan: %w", err)
 			}
-			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			service, err := loadService(opts.configPath)
 			if err != nil {
 				return err
 			}

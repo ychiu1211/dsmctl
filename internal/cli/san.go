@@ -32,7 +32,7 @@ func newSANPlanCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
 				return fmt.Errorf("decode SAN change request: %w", err)
 			}
-			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			service, err := loadService(opts.configPath)
 			if err != nil {
 				return err
 			}
@@ -60,7 +60,7 @@ func newSANApplyCommand(opts *options) *cobra.Command {
 			if err := decodeJSONInput(cmd, inputPath, &plan); err != nil {
 				return fmt.Errorf("decode SAN plan: %w", err)
 			}
-			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			service, err := loadService(opts.configPath)
 			if err != nil {
 				return err
 			}
@@ -87,7 +87,7 @@ func newSANCapabilitiesCommand(opts *options) *cobra.Command {
 		Short: "Show SAN support and selected DSM backends",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			service, err := loadService(opts.configPath)
 			if err != nil {
 				return err
 			}
@@ -113,7 +113,7 @@ func newSANInventoryCommand(opts *options) *cobra.Command {
 		Short: "Show normalized iSCSI targets, LUNs, and mappings",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
+			service, err := loadService(opts.configPath)
 			if err != nil {
 				return err
 			}
