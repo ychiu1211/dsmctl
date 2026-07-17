@@ -44,14 +44,39 @@ flow.
 
 ## Design constraints
 
-- Confirm the exact `SYNO.Core.FileServ.SMB` advanced field names and the
-  `ServiceDiscovery` API name/version against DSM source and NAS API discovery
-  before wiring variants (WI-012 evidence discipline). Do not guess field names.
+- DSM evidence gathered 2026-07-18 (confirm exact field names/enums against
+  source before wiring each variant; do not guess):
+  - Service discovery is its own repo `webapi-ServiceDiscovery`. API
+    `SYNO.Core.FileServ.ServiceDiscovery` v1 get/set has exactly
+    `enable_smb_time_machine` and `enable_afp_time_machine`
+    (`src/SYNO.Core.FileServ.ServiceDiscovery.cpp`). A sibling API
+    `SYNO.Core.FileServ.ServiceDiscovery.WSTransfer` v1 get/set carries
+    `enable_wstransfer` (WS-Discovery), registered in
+    `synosamba/webapi/SYNO.Core.FileServ.SMB.cpp`. These are two independent
+    compatibility boundaries; WS-Discovery may be absent while Time Machine
+    advertising is present.
+  - SMB advanced fields live in the same `SYNO.Core.FileServ.SMB` get/set v3
+    that WI-012 already uses (`synosamba/webapi/SYNO.Core.FileServ.SMB.py`,
+    `SYNO_Core_FileServ_SMB_3_set_spec`), plus SMB durable-handle/lease toggles
+    sent via that API (`dsm-AdminCenter/modules/FileService/AdvancedTab.js`).
+    Extending it touches the WI-012 SMB decoder/encoder and its request-capture
+    test, so treat SMB-advanced as a distinct sub-slice from service discovery.
 - SMB advanced set is full-snapshot: refresh, merge approved fields, submit,
-  verify. SMB and service discovery remain separate compatibility boundaries.
+  verify (reuse the WI-025 snapshot pattern). SMB and service discovery remain
+  separate compatibility boundaries.
 - Enabling symbolic-link following or disabling signing/oplock protections is
-  high risk; a transfer-log toggle is medium.
+  high risk; a transfer-log or Time Machine/WS-Discovery toggle is medium.
 - No live SMB or service-discovery mutation without new explicit authorization.
+
+## Suggested slicing
+
+1. Service discovery module (clean, isolated, mirrors WI-024): the two
+   `ServiceDiscovery` Time Machine toggles plus the `WSTransfer` WS-Discovery
+   toggle, with independent read/set selection per API.
+2. SMB advanced fields as a follow-up sub-slice that extends the WI-012 SMB
+   snapshot with oplock, durable handles, symbolic-link, local master browser,
+   veto, WINS, macOS extension, and transfer-log fields once each field name is
+   confirmed.
 
 ## Acceptance criteria
 
