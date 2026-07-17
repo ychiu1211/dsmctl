@@ -31,7 +31,9 @@ exposes a raw DSM call and never mutates or clears logs.
 - Read `SYNO.Core.SyslogClient.Log` `list` and normalize each entry to
   `time`, `level` (info/warn/error), `type` (system/connection/fileTransfer),
   `who`, and `message`, plus whole-log severity counts.
-- DSM-applied filters: `keyword`, `logtype`, and `start`/`limit` paging.
+- DSM-applied filters: `keyword`, `logtype` (defaults to system; also connection,
+  package, fileTransfer), a `date_from`/`date_to` time range (Unix seconds), and
+  `start`/`limit` paging.
 - Client-side severity filter over the retrieved page (DSM exposes no stable
   server-side level filter).
 - `dsmctl log list` and `dsmctl log capabilities`; MCP `get_logs` and
@@ -54,7 +56,9 @@ exposes a raw DSM call and never mutates or clears logs.
 
 - [x] `log capabilities` reports `log.read` and the selected backend.
 - [x] `log list` returns normalized entries + counts with keyword/type/level/
-      paging filters and `--json`.
+      time-range/paging filters and `--json`.
+- [x] `--from`/`--to` accept a local timestamp or Unix seconds and are
+      live-verified to filter by time (and compose with `--type`).
 - [x] Request+decode locked by a fixture-backed operation test.
 - [x] MCP `get_logs` / `get_log_capabilities` registered read-only.
 

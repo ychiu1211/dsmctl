@@ -92,6 +92,7 @@ dsmctl access explain --nas office --principal-type user --principal automation 
 dsmctl log capabilities --nas office
 dsmctl log list --nas office
 dsmctl log list --nas office --type connection --limit 50
+dsmctl log list --nas office --from "2026-07-01" --to "2026-07-08"
 dsmctl log list --nas office --keyword cache --level error --json
 ```
 

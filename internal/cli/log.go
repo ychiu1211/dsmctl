@@ -22,12 +22,20 @@ func newLogCommand(opts *options) *cobra.Command {
 func newLogListCommand(opts *options) *cobra.Command {
 	var jsonOutput bool
 	var limit, offset int
-	var level, keyword, logType string
+	var level, keyword, logType, from, to string
 	command := &cobra.Command{
 		Use:   "list",
 		Short: "List DSM system log entries with optional filters",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			fromTime, err := syslog.ParseTime(from)
+			if err != nil {
+				return err
+			}
+			toTime, err := syslog.ParseTime(to)
+			if err != nil {
+				return err
+			}
 			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
 			if err != nil {
 				return err
@@ -35,6 +43,7 @@ func newLogListCommand(opts *options) *cobra.Command {
 			defer closeService(service)
 			result, err := service.GetLogState(cmd.Context(), opts.nas, syslog.StateQuery{
 				Limit: limit, Offset: offset, Keyword: keyword, LogType: logType, Level: level,
+				From: fromTime, To: toTime,
 			})
 			if err != nil {
 				return err
@@ -50,7 +59,9 @@ func newLogListCommand(opts *options) *cobra.Command {
 	command.Flags().IntVar(&offset, "offset", 0, "number of newest entries to skip for pagination")
 	command.Flags().StringVar(&level, "level", "", "filter severity within the retrieved page: info, warn, or error")
 	command.Flags().StringVar(&keyword, "keyword", "", "case-insensitive substring filter applied by DSM")
-	command.Flags().StringVar(&logType, "type", "", "DSM log category: system, connection, or fileTransfer")
+	command.Flags().StringVar(&logType, "type", "", "DSM log category (default system): system, connection, package, or fileTransfer")
+	command.Flags().StringVar(&from, "from", "", "only entries at or after this local time (2006-01-02[ 15:04:05]) or Unix seconds")
+	command.Flags().StringVar(&to, "to", "", "only entries at or before this local time (2006-01-02[ 15:04:05]) or Unix seconds; requires --from")
 	return command
 }
 

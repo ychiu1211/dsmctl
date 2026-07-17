@@ -19,10 +19,12 @@ const (
 // Input carries the DSM-applied filters. Level is intentionally absent: DSM has
 // no stable server-side severity filter, so severity is filtered by the caller.
 type Input struct {
-	Limit   int
-	Offset  int
-	Keyword string
-	LogType string
+	Limit    int
+	Offset   int
+	Keyword  string
+	LogType  string
+	DateFrom int64
+	DateTo   int64
 }
 
 var operation = compatibility.Operation[Input, syslog.State]{
@@ -38,6 +40,14 @@ var operation = compatibility.Operation[Input, syslog.State]{
 				}
 				if input.LogType != "" {
 					parameters["logtype"] = input.LogType
+				}
+				// DSM filters by time only when date_from is present; date_to is
+				// an optional inclusive upper bound.
+				if input.DateFrom > 0 {
+					parameters["date_from"] = input.DateFrom
+					if input.DateTo > 0 {
+						parameters["date_to"] = input.DateTo
+					}
 				}
 				data, err := executor.Execute(ctx, compatibility.Request{API: APIName, Version: 1, Method: "list", JSONParameters: parameters})
 				if err != nil {

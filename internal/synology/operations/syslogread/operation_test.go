@@ -35,7 +35,7 @@ func fixture(t *testing.T, name string) json.RawMessage {
 
 func TestListRequestAndDecode(t *testing.T) {
 	executor := executorFunc(func(_ context.Context, request compatibility.Request) (json.RawMessage, error) {
-		want := map[string]any{"start": 20, "limit": 50, "keyword": "cache", "logtype": "system"}
+		want := map[string]any{"start": 20, "limit": 50, "keyword": "cache", "logtype": "system", "date_from": int64(1700000000), "date_to": int64(1700086400)}
 		if request.API != APIName || request.Version != 1 || request.Method != "list" {
 			t.Fatalf("request = %#v", request)
 		}
@@ -44,7 +44,7 @@ func TestListRequestAndDecode(t *testing.T) {
 		}
 		return fixture(t, "list-v1.json"), nil
 	})
-	state, selection, err := Execute(context.Background(), supportedTarget(), executor, Input{Limit: 50, Offset: 20, Keyword: "cache", LogType: "system"})
+	state, selection, err := Execute(context.Background(), supportedTarget(), executor, Input{Limit: 50, Offset: 20, Keyword: "cache", LogType: "system", DateFrom: 1700000000, DateTo: 1700086400})
 	if err != nil || selection.Operation != OperationName || !selection.Supported {
 		t.Fatalf("state=%#v selection=%#v err=%v", state, selection, err)
 	}

@@ -41,6 +41,7 @@ func (c *Client) LogState(ctx context.Context, query syslog.StateQuery) (LogStat
 	}
 	state, selection, err := syslogread.Execute(ctx, c.target, lockedExecutor{client: c}, syslogread.Input{
 		Limit: limit, Offset: offset, Keyword: strings.TrimSpace(query.Keyword), LogType: strings.TrimSpace(query.LogType),
+		DateFrom: query.From, DateTo: query.To,
 	})
 	if err != nil {
 		return LogState{}, fmt.Errorf("read DSM logs: %w", err)

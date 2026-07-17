@@ -234,7 +234,9 @@ type getLogsInput struct {
 	Offset  int    `json:"offset,omitempty" jsonschema:"Number of newest entries to skip for pagination"`
 	Level   string `json:"level,omitempty" jsonschema:"Client-side severity filter over the retrieved page: info, warn, or error"`
 	Keyword string `json:"keyword,omitempty" jsonschema:"Case-insensitive substring filter applied by DSM"`
-	LogType string `json:"log_type,omitempty" jsonschema:"DSM log category: system, connection, or fileTransfer"`
+	LogType string `json:"log_type,omitempty" jsonschema:"DSM log category; defaults to system. Also: connection, package, or fileTransfer"`
+	From    string `json:"from,omitempty" jsonschema:"Inclusive lower time bound: a local timestamp (2006-01-02 or 2006-01-02 15:04:05) or Unix seconds"`
+	To      string `json:"to,omitempty" jsonschema:"Inclusive upper time bound (requires from): a local timestamp or Unix seconds"`
 }
 
 type getLogsOutput struct {
@@ -632,8 +634,17 @@ func New(service *application.Service, version string) *mcp.Server {
 		Description: "Read normalized DSM system log entries (SYNO.Core.SyslogClient.Log) with optional keyword, log-type, severity, and paging filters. Returns each entry's time, level, category, actor, and message plus whole-log severity counts. This tool never mutates or clears DSM logs.",
 		Annotations: readOnlyAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getLogsInput) (*mcp.CallToolResult, getLogsOutput, error) {
+		fromTime, err := syslog.ParseTime(input.From)
+		if err != nil {
+			return nil, getLogsOutput{}, err
+		}
+		toTime, err := syslog.ParseTime(input.To)
+		if err != nil {
+			return nil, getLogsOutput{}, err
+		}
 		result, err := service.GetLogState(ctx, input.NAS, syslog.StateQuery{
 			Limit: input.Limit, Offset: input.Offset, Keyword: input.Keyword, LogType: input.LogType, Level: input.Level,
+			From: fromTime, To: toTime,
 		})
 		if err != nil {
 			return nil, getLogsOutput{}, err
