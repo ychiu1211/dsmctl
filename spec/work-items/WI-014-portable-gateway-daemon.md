@@ -1,9 +1,9 @@
 ---
 id: WI-014
 title: Establish the portable HTTP gateway daemon
-status: ready
+status: in_progress
 priority: P0
-owner: ""
+owner: "gateway"
 depends_on: []
 parallel_group: F
 touches:
@@ -99,10 +99,11 @@ profile retains its independent DSM client and session.
 
 ## Coordination
 
-This item touches `internal/mcpserver` and `internal/application`, which overlap
-the in-progress WI-013. Do not begin overlapping edits until WI-013 completes
-or its owner records coordination. Prefer new gateway packages and entry points
-over restructuring existing management tools.
+This item touches `internal/mcpserver` and `internal/application`, which also
+appear in WI-013. WI-013 is complete as of commit `4303e36`, and its completion
+metadata is recorded in `0aa0b7e`; there is no remaining active overlap. Prefer
+new gateway packages and entry points over restructuring existing management
+tools.
 
 ## Handoff
 
