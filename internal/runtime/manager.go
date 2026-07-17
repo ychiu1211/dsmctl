@@ -14,6 +14,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/config"
 	"github.com/ychiu1211/dsmctl/internal/credentials"
 	"github.com/ychiu1211/dsmctl/internal/domain/identity"
+	"github.com/ychiu1211/dsmctl/internal/domain/resmon"
 	"github.com/ychiu1211/dsmctl/internal/domain/share"
 	"github.com/ychiu1211/dsmctl/internal/domain/syslog"
 	"github.com/ychiu1211/dsmctl/internal/synology"
@@ -41,6 +42,11 @@ type Client interface {
 	ApplySANChange(ctx context.Context, input synology.SANMutationInput) (synology.SANMutationResult, error)
 	LogState(ctx context.Context, query syslog.StateQuery) (synology.LogState, error)
 	LogCapabilities(ctx context.Context) (synology.LogCapabilities, synology.CompatibilityReport, error)
+	ResourceMonitorState(ctx context.Context) (synology.ResourceUtilization, error)
+	ResourceMonitorHistory(ctx context.Context, query resmon.HistoryQuery) (synology.ResourceHistory, error)
+	ResourceMonitorSetting(ctx context.Context) (synology.ResourceRecordingSetting, error)
+	ResourceMonitorCapabilities(ctx context.Context) (synology.ResourceMonitorCapabilities, synology.CompatibilityReport, error)
+	ApplyResourceRecordingChange(ctx context.Context, change resmon.RecordingChange) (synology.ResourceRecordingMutationResult, error)
 }
 
 type OTPProvider func(ctx context.Context, profileName string) (string, error)

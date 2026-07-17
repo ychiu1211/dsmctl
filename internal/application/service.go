@@ -7,6 +7,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/config"
 	"github.com/ychiu1211/dsmctl/internal/credentials"
 	"github.com/ychiu1211/dsmctl/internal/domain/identity"
+	"github.com/ychiu1211/dsmctl/internal/domain/resmon"
 	"github.com/ychiu1211/dsmctl/internal/domain/syslog"
 	"github.com/ychiu1211/dsmctl/internal/runtime"
 	"github.com/ychiu1211/dsmctl/internal/synology"
@@ -97,6 +98,27 @@ type LogCapabilitiesResult struct {
 	NAS          string                       `json:"nas" jsonschema:"NAS profile used for the request"`
 	Capabilities synology.LogCapabilities     `json:"capabilities" jsonschema:"DSM log read operations currently exposed by dsmctl"`
 	Report       synology.CompatibilityReport `json:"report" jsonschema:"Discovered APIs and selected log compatibility backend"`
+}
+
+type ResourceMonitorStateResult struct {
+	NAS         string                       `json:"nas" jsonschema:"NAS profile used for the request"`
+	Utilization synology.ResourceUtilization `json:"utilization" jsonschema:"Current normalized resource utilization snapshot"`
+}
+
+type ResourceMonitorHistoryResult struct {
+	NAS     string                   `json:"nas" jsonschema:"NAS profile used for the request"`
+	History synology.ResourceHistory `json:"history" jsonschema:"Recorded utilization history series"`
+}
+
+type ResourceRecordingSettingResult struct {
+	NAS     string                            `json:"nas" jsonschema:"NAS profile used for the request"`
+	Setting synology.ResourceRecordingSetting `json:"setting" jsonschema:"History-recording setting reported by DSM"`
+}
+
+type ResourceMonitorCapabilitiesResult struct {
+	NAS          string                               `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.ResourceMonitorCapabilities `json:"capabilities" jsonschema:"Resource Monitor operations currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport         `json:"report" jsonschema:"Discovered APIs and selected Resource Monitor compatibility backends"`
 }
 
 type ServiceOption func(*Service)
@@ -306,6 +328,54 @@ func (s *Service) GetLogCapabilities(ctx context.Context, requestedNAS string) (
 		return LogCapabilitiesResult{}, authenticationError(name, err)
 	}
 	return LogCapabilitiesResult{NAS: name, Capabilities: capabilities, Report: report}, nil
+}
+
+func (s *Service) GetResourceMonitorState(ctx context.Context, requestedNAS string) (ResourceMonitorStateResult, error) {
+	name, client, err := s.manager.Client(ctx, requestedNAS)
+	if err != nil {
+		return ResourceMonitorStateResult{}, err
+	}
+	state, err := client.ResourceMonitorState(ctx)
+	if err != nil {
+		return ResourceMonitorStateResult{}, authenticationError(name, err)
+	}
+	return ResourceMonitorStateResult{NAS: name, Utilization: state}, nil
+}
+
+func (s *Service) GetResourceMonitorHistory(ctx context.Context, requestedNAS string, query resmon.HistoryQuery) (ResourceMonitorHistoryResult, error) {
+	name, client, err := s.manager.Client(ctx, requestedNAS)
+	if err != nil {
+		return ResourceMonitorHistoryResult{}, err
+	}
+	history, err := client.ResourceMonitorHistory(ctx, query)
+	if err != nil {
+		return ResourceMonitorHistoryResult{}, authenticationError(name, err)
+	}
+	return ResourceMonitorHistoryResult{NAS: name, History: history}, nil
+}
+
+func (s *Service) GetResourceMonitorSetting(ctx context.Context, requestedNAS string) (ResourceRecordingSettingResult, error) {
+	name, client, err := s.manager.Client(ctx, requestedNAS)
+	if err != nil {
+		return ResourceRecordingSettingResult{}, err
+	}
+	setting, err := client.ResourceMonitorSetting(ctx)
+	if err != nil {
+		return ResourceRecordingSettingResult{}, authenticationError(name, err)
+	}
+	return ResourceRecordingSettingResult{NAS: name, Setting: setting}, nil
+}
+
+func (s *Service) GetResourceMonitorCapabilities(ctx context.Context, requestedNAS string) (ResourceMonitorCapabilitiesResult, error) {
+	name, client, err := s.manager.Client(ctx, requestedNAS)
+	if err != nil {
+		return ResourceMonitorCapabilitiesResult{}, err
+	}
+	capabilities, report, err := client.ResourceMonitorCapabilities(ctx)
+	if err != nil {
+		return ResourceMonitorCapabilitiesResult{}, authenticationError(name, err)
+	}
+	return ResourceMonitorCapabilitiesResult{NAS: name, Capabilities: capabilities, Report: report}, nil
 }
 
 func authenticationError(name string, err error) error {

@@ -32,6 +32,7 @@ func New(version string) *cobra.Command {
 		newLogCommand(opts),
 		newNASCommand(opts),
 		newPackageCommand(opts),
+		newResourceMonitorCommand(opts),
 		newSANCommand(opts),
 		newShareCommand(opts),
 		newStorageCommand(opts),

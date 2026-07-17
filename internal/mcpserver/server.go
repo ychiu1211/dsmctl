@@ -11,6 +11,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/domain/controlpanel"
 	"github.com/ychiu1211/dsmctl/internal/domain/identity"
 	"github.com/ychiu1211/dsmctl/internal/domain/packagecenter"
+	"github.com/ychiu1211/dsmctl/internal/domain/resmon"
 	"github.com/ychiu1211/dsmctl/internal/domain/san"
 	"github.com/ychiu1211/dsmctl/internal/domain/share"
 	"github.com/ychiu1211/dsmctl/internal/domain/storage"
@@ -243,6 +244,55 @@ type getLogsInput struct {
 type getLogsOutput struct {
 	NAS  string            `json:"nas" jsonschema:"NAS profile used for the request"`
 	Logs synology.LogState `json:"logs" jsonschema:"Normalized DSM system log entries and severity counts"`
+}
+
+type getResourceMonitorInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getResourceMonitorHistoryInput struct {
+	NAS        string   `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Period     string   `json:"period,omitempty" jsonschema:"History window: day (default), week, month, or year"`
+	Dimensions []string `json:"dimensions,omitempty" jsonschema:"Limit to dimensions: cpu, memory, network, disk, volume; empty returns all"`
+}
+
+type getResourceMonitorStateOutput struct {
+	NAS         string                       `json:"nas" jsonschema:"NAS profile used for the request"`
+	Utilization synology.ResourceUtilization `json:"utilization" jsonschema:"Current normalized resource utilization snapshot"`
+}
+
+type getResourceMonitorHistoryOutput struct {
+	NAS     string                   `json:"nas" jsonschema:"NAS profile used for the request"`
+	History synology.ResourceHistory `json:"history" jsonschema:"Recorded utilization history series"`
+}
+
+type getResourceRecordingSettingOutput struct {
+	NAS     string                            `json:"nas" jsonschema:"NAS profile used for the request"`
+	Setting synology.ResourceRecordingSetting `json:"setting" jsonschema:"History-recording setting reported by DSM"`
+}
+
+type getResourceMonitorCapabilitiesOutput struct {
+	NAS          string                               `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.ResourceMonitorCapabilities `json:"capabilities" jsonschema:"Resource Monitor operations currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport         `json:"report" jsonschema:"Discovered APIs and selected Resource Monitor compatibility backends"`
+}
+
+type planResourceRecordingChangeInput struct {
+	NAS     string                 `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request resmon.RecordingChange `json:"request" jsonschema:"History-recording toggle intent; set enable to true or false"`
+}
+
+type planResourceRecordingChangeOutput struct {
+	Plan application.ResourceRecordingPlan `json:"plan" jsonschema:"Approval plan bound to the observed recording setting"`
+}
+
+type applyResourceRecordingPlanInput struct {
+	Plan         application.ResourceRecordingPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_resource_recording_change"`
+	ApprovalHash string                            `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved recording plan"`
+}
+
+type applyResourceRecordingPlanOutput struct {
+	Result application.ResourceRecordingApplyResult `json:"result" jsonschema:"Outcome after hash, stale-state, and postcondition verification"`
 }
 
 type getLogCapabilitiesOutput struct {
@@ -689,6 +739,84 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getLogsOutput{}, err
 		}
 		return nil, getLogsOutput{NAS: result.NAS, Logs: result.Logs}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_resource_monitor_capabilities",
+		Title:       "Get Resource Monitor capabilities",
+		Description: "Report whether current utilization and recorded history can be read and whether history recording can be toggled, plus the DSM backend selected for each operation.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getResourceMonitorInput) (*mcp.CallToolResult, getResourceMonitorCapabilitiesOutput, error) {
+		result, err := service.GetResourceMonitorCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getResourceMonitorCapabilitiesOutput{}, err
+		}
+		return nil, getResourceMonitorCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_resource_monitor_state",
+		Title:       "Get current resource utilization",
+		Description: "Read DSM Resource Monitor's current CPU, memory, per-interface network, aggregate and per-disk I/O, and per-volume utilization (SYNO.Core.System.Utilization). This is a volatile snapshot and never changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getResourceMonitorInput) (*mcp.CallToolResult, getResourceMonitorStateOutput, error) {
+		result, err := service.GetResourceMonitorState(ctx, input.NAS)
+		if err != nil {
+			return nil, getResourceMonitorStateOutput{}, err
+		}
+		return nil, getResourceMonitorStateOutput{NAS: result.NAS, Utilization: result.Utilization}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_resource_monitor_history",
+		Title:       "Get recorded resource history",
+		Description: "Read recorded utilization history per dimension over a day/week/month/year window. Requires history recording to be enabled; if it is off, this returns an error asking to enable recording first. This tool never changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getResourceMonitorHistoryInput) (*mcp.CallToolResult, getResourceMonitorHistoryOutput, error) {
+		result, err := service.GetResourceMonitorHistory(ctx, input.NAS, resmon.HistoryQuery{Period: input.Period, Dimensions: input.Dimensions})
+		if err != nil {
+			return nil, getResourceMonitorHistoryOutput{}, err
+		}
+		return nil, getResourceMonitorHistoryOutput{NAS: result.NAS, History: result.History}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_resource_monitor_setting",
+		Title:       "Get history-recording setting",
+		Description: "Read whether DSM Resource Monitor history recording is enabled (SYNO.ResourceMonitor.Setting). This tool never changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getResourceMonitorInput) (*mcp.CallToolResult, getResourceRecordingSettingOutput, error) {
+		result, err := service.GetResourceMonitorSetting(ctx, input.NAS)
+		if err != nil {
+			return nil, getResourceRecordingSettingOutput{}, err
+		}
+		return nil, getResourceRecordingSettingOutput{NAS: result.NAS, Setting: result.Setting}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_resource_recording_change",
+		Title:       "Plan a history-recording change",
+		Description: "Validate a request to turn DSM Resource Monitor history recording on or off and return an approval plan bound to the observed setting. Disabling stops collecting new history but keeps already-recorded samples. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planResourceRecordingChangeInput) (*mcp.CallToolResult, planResourceRecordingChangeOutput, error) {
+		plan, err := service.PlanResourceRecordingChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planResourceRecordingChangeOutput{}, err
+		}
+		return nil, planResourceRecordingChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_resource_recording_plan",
+		Title:       "Apply an approved history-recording plan",
+		Description: "Apply an unmodified recording plan only while its approval hash and the observed setting still match, then verify the setting persisted. It re-sends the whole Resource Monitor setting object so co-located settings are never reset.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyResourceRecordingPlanInput) (*mcp.CallToolResult, applyResourceRecordingPlanOutput, error) {
+		result, err := service.ApplyResourceRecordingPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applyResourceRecordingPlanOutput{}, err
+		}
+		return nil, applyResourceRecordingPlanOutput{Result: result}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

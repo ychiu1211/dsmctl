@@ -62,8 +62,8 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools() error = %v", err)
 	}
-	if len(tools.Tools) != 37 {
-		t.Fatalf("ListTools() returned %d tools, want 37", len(tools.Tools))
+	if len(tools.Tools) != 43 {
+		t.Fatalf("ListTools() returned %d tools, want 43", len(tools.Tools))
 	}
 	readOnlyTools := map[string]bool{
 		"explain_effective_access":            false,
@@ -93,6 +93,11 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"get_package_state":                   false,
 		"get_package_settings":                false,
 		"plan_package_change":                 false,
+		"get_resource_monitor_capabilities":   false,
+		"get_resource_monitor_state":          false,
+		"get_resource_monitor_history":        false,
+		"get_resource_monitor_setting":        false,
+		"plan_resource_recording_change":      false,
 	}
 	mutationTools := map[string]bool{
 		"apply_account_plan":            false,
@@ -102,6 +107,7 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"apply_storage_plan":            false,
 		"apply_file_service_plan":       false,
 		"apply_package_plan":            false,
+		"apply_resource_recording_plan": false,
 	}
 	for _, tool := range tools.Tools {
 		if _, ok := mutationTools[tool.Name]; ok {

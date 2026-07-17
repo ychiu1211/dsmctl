@@ -1,0 +1,17 @@
+{
+  "cpu": {
+    "user_load": [10, 12, 15],
+    "system_load": [5, 6, 7]
+  },
+  "memory": {
+    "real_usage": [30, 33, 38]
+  },
+  "network": [
+    {"device": "eth0", "tx": [100, 200, 300], "rx": [400, 500, 600]}
+  ],
+  "space": {
+    "volume": [
+      {"device": "volume1", "utilization": [8, 9, 10]}
+    ]
+  }
+}

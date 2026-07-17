@@ -13,6 +13,8 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/identitymutation"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/identityquota"
 	pkgops "github.com/ychiu1211/dsmctl/internal/synology/operations/packagecenter"
+	"github.com/ychiu1211/dsmctl/internal/synology/operations/resmonsetting"
+	"github.com/ychiu1211/dsmctl/internal/synology/operations/resmonsettingmutation"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/saninventory"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/sanmutation"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/shareinventory"
@@ -22,6 +24,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/storagepoolmutation"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/syslogread"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/systeminfo"
+	"github.com/ychiu1211/dsmctl/internal/synology/operations/utilizationread"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/volumemutation"
 )
 
@@ -55,6 +58,9 @@ func (c *Client) Compatibility(ctx context.Context) (CompatibilityReport, error)
 	apiNames = append(apiNames, sanmutation.APINames()...)
 	apiNames = append(apiNames, syslogread.APINames()...)
 	apiNames = append(apiNames, pkgops.APINames()...)
+	apiNames = append(apiNames, utilizationread.APINames()...)
+	apiNames = append(apiNames, resmonsetting.APINames()...)
+	apiNames = append(apiNames, resmonsettingmutation.APINames()...)
 	if err := c.prepareCompatibilityTargetLocked(ctx, apiNames...); err != nil {
 		return CompatibilityReport{}, fmt.Errorf("discover compatibility target: %w", err)
 	}
@@ -147,6 +153,22 @@ func (c *Client) Compatibility(ctx context.Context) (CompatibilityReport, error)
 	if selectionErr != nil {
 		return CompatibilityReport{}, selectionErr
 	}
+	utilizationCurrentSelection, selectionErr := utilizationread.SelectCurrent(c.target)
+	if selectionErr != nil && !compatibility.IsUnsupported(selectionErr) {
+		return CompatibilityReport{}, selectionErr
+	}
+	utilizationHistorySelection, selectionErr := utilizationread.SelectHistory(c.target)
+	if selectionErr != nil && !compatibility.IsUnsupported(selectionErr) {
+		return CompatibilityReport{}, selectionErr
+	}
+	recordingReadSelection, selectionErr := resmonsetting.Select(c.target)
+	if selectionErr != nil && !compatibility.IsUnsupported(selectionErr) {
+		return CompatibilityReport{}, selectionErr
+	}
+	recordingSetSelection, selectionErr := resmonsettingmutation.SelectSet(c.target)
+	if selectionErr != nil && !compatibility.IsUnsupported(selectionErr) {
+		return CompatibilityReport{}, selectionErr
+	}
 	c.updateDerivedCapabilitiesLocked()
 	selections := []compatibility.Selection{systemSelection, storageSelection, storageModelSelection}
 	selections = append(selections, storageMutationSelections...)
@@ -164,6 +186,7 @@ func (c *Client) Compatibility(ctx context.Context) (CompatibilityReport, error)
 	selections = append(selections, sanMutationSelections...)
 	selections = append(selections, logSelection)
 	selections = append(selections, packageSelections...)
+	selections = append(selections, utilizationCurrentSelection, utilizationHistorySelection, recordingReadSelection, recordingSetSelection)
 	return c.target.Report(selections...), nil
 }
 
@@ -200,6 +223,15 @@ func (c *Client) updateDerivedCapabilitiesLocked() {
 	}
 	if selection, err := syslogread.Select(c.target); err == nil && selection.Supported {
 		c.target.AddCapability(syslogread.CapabilityName)
+	}
+	if selection, err := utilizationread.SelectCurrent(c.target); err == nil && selection.Supported {
+		c.target.AddCapability(utilizationread.CapabilityName)
+	}
+	if selection, err := resmonsetting.Select(c.target); err == nil && selection.Supported {
+		c.target.AddCapability(resmonsetting.CapabilityName)
+	}
+	if selection, err := resmonsettingmutation.SelectSet(c.target); err == nil && selection.Supported {
+		c.target.AddCapability(resmonsettingmutation.SetCapabilityName)
 	}
 	if selection, err := storagemodelconstraints.Select(c.target); err == nil && selection.Supported {
 		c.target.AddCapability(storagemodelconstraints.CapabilityName)

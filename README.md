@@ -97,6 +97,10 @@ dsmctl log list --nas office --keyword cache --level error --json
 dsmctl package capabilities --nas office
 dsmctl package inventory --nas office --json
 dsmctl package settings --nas office --json
+dsmctl resource-monitor capabilities --nas office
+dsmctl resource-monitor current --nas office --json
+dsmctl resource-monitor history --nas office --period week --dimension cpu --dimension memory
+dsmctl resource-monitor setting --nas office
 ```
 
 Account and shared-folder writes use a two-step plan/apply contract. Put the desired change in JSON, create a plan bound to the current DSM resource ID/state, review it, then apply that exact plan with its hash:
@@ -116,6 +120,9 @@ dsmctl control-panel time apply --file time-change.plan.json --approve <hash-fro
 
 dsmctl package plan --nas office --file package-change.json --output package-change.plan.json
 dsmctl package apply --file package-change.plan.json --approve <hash-from-plan>
+
+dsmctl resource-monitor plan-recording --nas office --enable --output recording.plan.json
+dsmctl resource-monitor apply-recording --file recording.plan.json --approve <hash-from-plan>
 ```
 
 Package Center changes use the same plan/apply contract: a `lifecycle` action

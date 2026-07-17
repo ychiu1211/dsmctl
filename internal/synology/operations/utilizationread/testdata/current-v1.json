@@ -1,0 +1,42 @@
+{
+  "cpu": {
+    "15min_load": 42,
+    "1min_load": 88,
+    "5min_load": 60,
+    "device": "System",
+    "other_load": 3,
+    "system_load": 7,
+    "user_load": 15
+  },
+  "disk": {
+    "total": {"read_access": 12, "write_access": 34, "read_byte": 524288, "write_byte": 1048576, "utilization": 22},
+    "disk": [
+      {"device": "sda", "display_name": "Disk 1", "read_access": 6, "write_access": 18, "read_byte": 262144, "write_byte": 524288, "utilization": 11},
+      {"device": "sdb", "display_name": "Disk 2", "read_access": 6, "write_access": 16, "read_byte": 262144, "write_byte": 524288, "utilization": 11}
+    ]
+  },
+  "memory": {
+    "avail_real": 6291456,
+    "avail_swap": 2097152,
+    "buffer": 131072,
+    "cached": 2097152,
+    "memory_size": 8192,
+    "real_usage": 38,
+    "si_disk": 0,
+    "so_disk": 0,
+    "swap_usage": 4,
+    "total_real": 8267520,
+    "total_swap": 2097152
+  },
+  "network": [
+    {"device": "total", "rx": 40960, "tx": 20480},
+    {"device": "eth0", "rx": 40960, "tx": 20480}
+  ],
+  "space": {
+    "total": {"read_access": 5, "write_access": 9, "read_byte": 131072, "write_byte": 262144, "utilization": 8},
+    "volume": [
+      {"device": "volume1", "display_name": "Volume 1", "read_access": 5, "write_access": 9, "read_byte": 131072, "write_byte": 262144, "utilization": 8}
+    ]
+  },
+  "enable_history": true
+}
