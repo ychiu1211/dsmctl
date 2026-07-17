@@ -9,6 +9,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/config"
 	"github.com/ychiu1211/dsmctl/internal/domain/access"
 	"github.com/ychiu1211/dsmctl/internal/domain/controlpanel"
+	"github.com/ychiu1211/dsmctl/internal/domain/driveadmin"
 	"github.com/ychiu1211/dsmctl/internal/domain/identity"
 	"github.com/ychiu1211/dsmctl/internal/domain/packagecenter"
 	"github.com/ychiu1211/dsmctl/internal/domain/resmon"
@@ -384,6 +385,46 @@ type applyPackagePlanInput struct {
 
 type applyPackagePlanOutput struct {
 	Result application.PackageApplyResult `json:"result" jsonschema:"Package Center mutation result after stale-state and postcondition checks"`
+}
+
+type getDriveAdminInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getDriveAdminCapabilitiesOutput struct {
+	NAS          string                          `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.DriveAdminCapabilities `json:"capabilities" jsonschema:"Drive Admin operations currently exposed by dsmctl, with installed-package evidence"`
+	Report       synology.CompatibilityReport    `json:"report" jsonschema:"Discovered APIs, installed packages, and selected Drive Admin backends"`
+}
+
+type getDriveAdminStatusOutput struct {
+	NAS    string                    `json:"nas" jsonschema:"NAS profile used for the request"`
+	Status synology.DriveAdminStatus `json:"status" jsonschema:"Normalized Drive service status with installed-package evidence"`
+}
+
+type getDriveAdminConnectionsOutput struct {
+	NAS         string                         `json:"nas" jsonschema:"NAS profile used for the request"`
+	Connections synology.DriveAdminConnections `json:"connections" jsonschema:"Active Drive client connections"`
+}
+
+type getDriveAdminTeamFoldersOutput struct {
+	NAS         string                         `json:"nas" jsonschema:"NAS profile used for the request"`
+	TeamFolders synology.DriveAdminTeamFolders `json:"team_folders" jsonschema:"Drive team folders from the admin perspective"`
+}
+
+type getDriveAdminLogsInput struct {
+	NAS      string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Limit    int    `json:"limit,omitempty" jsonschema:"Maximum entries to return; defaults to 100, maximum 1000"`
+	Keyword  string `json:"keyword,omitempty" jsonschema:"Substring filter applied by Drive"`
+	Username string `json:"username,omitempty" jsonschema:"Filter to one account name"`
+	Target   string `json:"target,omitempty" jsonschema:"Filter to one file or folder path"`
+	From     int64  `json:"from,omitempty" jsonschema:"Inclusive lower bound as a Unix time in seconds"`
+	To       int64  `json:"to,omitempty" jsonschema:"Inclusive upper bound as a Unix time in seconds"`
+}
+
+type getDriveAdminLogsOutput struct {
+	NAS string                 `json:"nas" jsonschema:"NAS profile used for the request"`
+	Log synology.DriveAdminLog `json:"log" jsonschema:"Drive server log entries for the requested page"`
 }
 
 func New(service *application.Service, version string) *mcp.Server {
@@ -960,6 +1001,74 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, applyPackagePlanOutput{}, err
 		}
 		return nil, applyPackagePlanOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_drive_admin_capabilities",
+		Title:       "Get Drive Admin capabilities",
+		Description: "Report which Synology Drive Admin operations dsmctl supports on the selected NAS, the backend selected for each, and the installed SynologyDrive package version and running state the selection used. The installed-package inventory is re-read first, so the evidence reflects this call. Team-folder changes are deferred and always report false.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDriveAdminInput) (*mcp.CallToolResult, getDriveAdminCapabilitiesOutput, error) {
+		result, err := service.GetDriveAdminCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getDriveAdminCapabilitiesOutput{}, err
+		}
+		return nil, getDriveAdminCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_drive_admin_status",
+		Title:       "Get Drive service status",
+		Description: "Read the Synology Drive service status as reported by the Drive package, plus the installed package version and running state observed immediately before the read. This tool never changes the Drive service.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDriveAdminInput) (*mcp.CallToolResult, getDriveAdminStatusOutput, error) {
+		result, err := service.GetDriveAdminStatus(ctx, input.NAS)
+		if err != nil {
+			return nil, getDriveAdminStatusOutput{}, err
+		}
+		return nil, getDriveAdminStatusOutput{NAS: result.NAS, Status: result.Status}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_drive_admin_connections",
+		Title:       "List Drive client connections",
+		Description: "List active Synology Drive client connections (user, device, client type, address) from the Drive Admin Console. This tool never disconnects clients.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDriveAdminInput) (*mcp.CallToolResult, getDriveAdminConnectionsOutput, error) {
+		result, err := service.GetDriveAdminConnections(ctx, input.NAS)
+		if err != nil {
+			return nil, getDriveAdminConnectionsOutput{}, err
+		}
+		return nil, getDriveAdminConnectionsOutput{NAS: result.NAS, Connections: result.Connections}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_drive_admin_team_folders",
+		Title:       "List Drive team folders",
+		Description: "List Synology Drive team folders from the admin perspective with their reported status. This tool never enables, disables, or changes team folders.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDriveAdminInput) (*mcp.CallToolResult, getDriveAdminTeamFoldersOutput, error) {
+		result, err := service.GetDriveAdminTeamFolders(ctx, input.NAS)
+		if err != nil {
+			return nil, getDriveAdminTeamFoldersOutput{}, err
+		}
+		return nil, getDriveAdminTeamFoldersOutput{NAS: result.NAS, TeamFolders: result.TeamFolders}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_drive_admin_logs",
+		Title:       "List Drive server logs",
+		Description: "Read Synology Drive server log entries with optional Drive-applied keyword, username, target-path, and Unix-seconds time-range filters. Results are newest first and bounded by limit; this tool never clears logs.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDriveAdminLogsInput) (*mcp.CallToolResult, getDriveAdminLogsOutput, error) {
+		result, err := service.GetDriveAdminLog(ctx, input.NAS, driveadmin.LogQuery{
+			Limit: input.Limit, Keyword: input.Keyword, Username: input.Username,
+			Target: input.Target, From: input.From, To: input.To,
+		})
+		if err != nil {
+			return nil, getDriveAdminLogsOutput{}, err
+		}
+		return nil, getDriveAdminLogsOutput{NAS: result.NAS, Log: result.Log}, nil
 	})
 
 	return server

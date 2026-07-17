@@ -6,6 +6,7 @@ import (
 
 	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/controlpaneltime"
+	driveops "github.com/ychiu1211/dsmctl/internal/synology/operations/driveadmin"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/fileservices"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/identityappprivilege"
 	"github.com/ychiu1211/dsmctl/internal/synology/operations/identityinventory"
@@ -61,8 +62,16 @@ func (c *Client) Compatibility(ctx context.Context) (CompatibilityReport, error)
 	apiNames = append(apiNames, utilizationread.APINames()...)
 	apiNames = append(apiNames, resmonsetting.APINames()...)
 	apiNames = append(apiNames, resmonsettingmutation.APINames()...)
+	apiNames = append(apiNames, driveops.APINames()...)
 	if err := c.prepareCompatibilityTargetLocked(ctx, apiNames...); err != nil {
 		return CompatibilityReport{}, fmt.Errorf("discover compatibility target: %w", err)
+	}
+	// Package-scoped operations select on the installed-package catalog, so the
+	// full report loads it whenever the verified inventory backend exists.
+	if inventorySelection, err := pkgops.SelectInventory(c.target); err == nil && inventorySelection.Supported {
+		if err := c.refreshInstalledPackageCatalogLocked(ctx); err != nil {
+			return CompatibilityReport{}, err
+		}
 	}
 
 	systemSelection, selectionErr := systeminfo.Select(c.target)
@@ -169,6 +178,10 @@ func (c *Client) Compatibility(ctx context.Context) (CompatibilityReport, error)
 	if selectionErr != nil && !compatibility.IsUnsupported(selectionErr) {
 		return CompatibilityReport{}, selectionErr
 	}
+	driveAdminSelections, selectionErr := driveops.Select(c.target)
+	if selectionErr != nil {
+		return CompatibilityReport{}, selectionErr
+	}
 	c.updateDerivedCapabilitiesLocked()
 	selections := []compatibility.Selection{systemSelection, storageSelection, storageModelSelection}
 	selections = append(selections, storageMutationSelections...)
@@ -187,6 +200,7 @@ func (c *Client) Compatibility(ctx context.Context) (CompatibilityReport, error)
 	selections = append(selections, logSelection)
 	selections = append(selections, packageSelections...)
 	selections = append(selections, utilizationCurrentSelection, utilizationHistorySelection, recordingReadSelection, recordingSetSelection)
+	selections = append(selections, driveAdminSelections...)
 	return c.target.Report(selections...), nil
 }
 
@@ -343,6 +357,9 @@ func (c *Client) updateDerivedCapabilitiesLocked() {
 	}
 	if selections, err := pkgops.Select(c.target); err == nil {
 		c.addPackageCapabilitiesLocked(selections)
+	}
+	if selections, err := driveops.Select(c.target); err == nil {
+		c.addDriveAdminCapabilitiesLocked(selections)
 	}
 	// Sending session credentials in both documented parameters and the web UI
 	// cookie/header locations is safe across tested DSM versions and fixes Core

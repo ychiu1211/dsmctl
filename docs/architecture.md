@@ -91,6 +91,21 @@ shares.permissions.mutate   SYNO.Core.Share.Permission v1
 
 DSM returns share permissions from the perspective of one user or group. Permission expansion therefore lists local principals, calls `list_by_user` or `list_by_group` for each principal, and aggregates bindings into the canonical shared-folder model. This fan-out is opt-in so ordinary share inventory remains one management API call.
 
+Functionality provided by an installed package selects on a third axis: the
+installed package version. The compatibility target carries an
+installed-package catalog loaded from the verified Package Center inventory,
+refreshed before every package-scoped command, and package matchers compose
+with the API/DSM matchers. The read-only Drive Admin module is the first
+consumer:
+
+```text
+drive.admin.status.read       SYNO.SynologyDrive v1            + SynologyDrive >= 3.0
+drive.admin.connections.read  SYNO.SynologyDrive.Connection v1 + SynologyDrive >= 3.0
+drive.admin.teamfolders.read  SYNO.SynologyDrive.Share v1      + SynologyDrive >= 3.0
+drive.admin.log.read          SYNO.SynologyDrive.Log v1        + SynologyDrive >= 3.0
+drive.admin.teamfolders.set   (no backend; fails closed)
+```
+
 See [`docs/compatibility.md`](compatibility.md) for rules and extension examples.
 
 ## Authentication flow
@@ -168,6 +183,11 @@ dsmctl share inventory [--nas <name>] [--include-permissions] [--json]
 dsmctl share plan [--nas <name>] --file <request.json> [--output <plan.json>]
 dsmctl share apply --file <plan.json> --approve <sha256>
 dsmctl access explain [--nas <name>] --principal-type user|group --principal <name> --resource-type share|application --resource <id> [--json]
+dsmctl drive admin capabilities [--nas <name>] [--json]
+dsmctl drive admin status [--nas <name>] [--json]
+dsmctl drive admin connections [--nas <name>] [--json]
+dsmctl drive admin team-folders [--nas <name>] [--json]
+dsmctl drive admin log list [--nas <name>] [--limit <n>] [--keyword <text>] [--username <name>] [--target <path>] [--from <time>] [--to <time>] [--json]
 ```
 
 MCP:
@@ -203,6 +223,11 @@ get_share_state { nas?: string, include_permissions?: boolean }
 plan_share_change { nas?: string, request: ShareChangeRequest }
 apply_share_plan { plan: SharePlan, approval_hash: string }
 explain_effective_access { nas?: string, principal_type: "user"|"group", principal: string, resource_type: "share"|"application", resource: string }
+get_drive_admin_capabilities { nas?: string }
+get_drive_admin_status { nas?: string }
+get_drive_admin_connections { nas?: string }
+get_drive_admin_team_folders { nas?: string }
+get_drive_admin_logs { nas?: string, limit?: number, keyword?: string, username?: string, target?: string, from?: number, to?: number }
 ```
 
 ## Extension rule

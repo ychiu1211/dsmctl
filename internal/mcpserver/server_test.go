@@ -62,8 +62,8 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools() error = %v", err)
 	}
-	if len(tools.Tools) != 43 {
-		t.Fatalf("ListTools() returned %d tools, want 43", len(tools.Tools))
+	if len(tools.Tools) != 48 {
+		t.Fatalf("ListTools() returned %d tools, want 48", len(tools.Tools))
 	}
 	readOnlyTools := map[string]bool{
 		"explain_effective_access":            false,
@@ -98,6 +98,11 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"get_resource_monitor_history":        false,
 		"get_resource_monitor_setting":        false,
 		"plan_resource_recording_change":      false,
+		"get_drive_admin_capabilities":        false,
+		"get_drive_admin_status":              false,
+		"get_drive_admin_connections":         false,
+		"get_drive_admin_team_folders":        false,
+		"get_drive_admin_logs":                false,
 	}
 	mutationTools := map[string]bool{
 		"apply_account_plan":            false,
