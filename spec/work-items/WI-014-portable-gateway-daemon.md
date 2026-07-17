@@ -1,9 +1,9 @@
 ---
 id: WI-014
 title: Establish the portable HTTP gateway daemon
-status: in_progress
+status: done
 priority: P0
-owner: "gateway"
+owner: ""
 depends_on: []
 parallel_group: F
 touches:
@@ -80,7 +80,7 @@ profile retains its independent DSM client and session.
       and closes all cached DSM sessions.
 - [x] `/healthz` does not contact DSM; `/readyz` fails when required local
       configuration or secret mounts are invalid.
-- [ ] A `CGO_ENABLED=0`, `linux/amd64` image builds and runs as non-root with a
+- [x] A `CGO_ENABLED=0`, `linux/amd64` image builds and runs as non-root with a
       read-only root filesystem and no Docker socket.
 - [x] The development Compose file binds the backend to `127.0.0.1` only.
 - [x] No image or runtime code refers to `/usr/syno`, `/var/packages`,
@@ -105,28 +105,27 @@ metadata is recorded in `0aa0b7e`; there is no remaining active overlap. Prefer
 new gateway packages and entry points over restructuring existing management
 tools.
 
-## Handoff
+## Completion record
 
-Last known good state: the gateway daemon, HTTP boundary tests, read-only MCP
-surface, amd64/CGO-disabled Dockerfile, hardened development Compose project,
-container CI smoke test, and user documentation are implemented in the current
-working tree. The work remains `in_progress` only because this Windows host has
-no Docker, Podman, Buildah, or WSL runtime with which to execute the required
-local image build/run inspection.
-
-Verification completed:
-
-- `go test ./... -count=1`
-- `go vet ./...`
-- focused Streamable HTTP tests, including `list_nas` and `get_system_info`
-  against an in-process fake DSM
-- `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath
-  ./cmd/dsmctl-gateway`, followed by `go version -m` verification
-- forbidden Synology-runtime string scan of both gateway source and the
-  cross-built binary
-
-Pending verification: run the image build and hardened smoke test now encoded
-in `.github/workflows/ci.yml`, or execute the equivalent Docker commands on an
-amd64 Linux host. The local attempt failed before execution because `docker`
-is not installed (`docker : The term 'docker' is not recognized`). No live DSM
-mutation was performed and no temporary resource remains.
+- Completed on 2026-07-17 in implementation commit `ae1deb3`; this completion
+  metadata records the subsequently executed container verification.
+- `go test ./... -count=1` and `go vet ./...` passed. Focused Streamable HTTP
+  tests initialized MCP, called `list_nas`, and called `get_system_info`
+  against an in-process fake DSM.
+- Docker Desktop 4.82.0 / Engine 29.6.1 on WSL 2.7.10 built image
+  `sha256:13a8cf79bbfb3e2351812c84a553b99dc58f4c1edbf15a7c5115bc4823006845`
+  from `deploy/container/Dockerfile` for `linux/amd64`. The scratch image was
+  4,362,856 bytes, configured as UID/GID `10001:10001`, and had the expected
+  binary-only entrypoint and health check.
+- A real container ran healthy with a read-only root filesystem, all
+  capabilities dropped, `no-new-privileges`, bounded tmpfs/process/memory/CPU,
+  bridge networking, read-only config/secret mounts, and publication only on
+  `127.0.0.1:18765`. Inspect showed no Docker socket mount; the process ran as
+  UID 10001 and `/bin/sh` was absent.
+- Runtime probes returned health/readiness 200, missing auth 401, invalid
+  Host/Origin 403, invalid content type 415, MCP protocol `2025-06-18`, no
+  `plan_*` or `apply_*` tools, and a successful empty `list_nas` result.
+  SIGTERM shutdown completed with exit code 0 and no OOM. The test container
+  and mounted test config/token were removed; no live DSM call or mutation was
+  performed. The locally built `dsmctl-gateway:wi014` image remains available
+  for inspection.

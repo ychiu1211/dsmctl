@@ -1,7 +1,7 @@
 ---
 id: WI-015
 title: Add persistent gateway profiles, vault, and administration
-status: blocked
+status: ready
 priority: P0
 owner: ""
 depends_on: [WI-014]
