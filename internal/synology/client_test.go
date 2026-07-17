@@ -117,6 +117,135 @@ func TestClientSystemInfoLoginAndLogout(t *testing.T) {
 	}
 }
 
+func TestClientClosePreservesSeededSessionWithoutContactingDSM(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"success":true,"data":{}}`)
+	}))
+	defer server.Close()
+
+	client, err := NewClient(Options{
+		BaseURL:                server.URL,
+		SessionID:              "stored-sid",
+		SynoToken:              "stored-token",
+		HTTPClient:             server.Client(),
+		PreserveSessionOnClose: true,
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	if err := client.Close(context.Background()); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if requests != 0 {
+		t.Fatalf("Close() contacted DSM %d times; a preserved session must not be logged out", requests)
+	}
+	if client.HasSession() {
+		t.Fatal("Close() must drop the in-memory session even when preserving it server-side")
+	}
+}
+
+func TestClientLogoutRevokesEvenWhenPreservingOnClose(t *testing.T) {
+	logoutCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Errorf("ParseForm() error = %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Form.Get("api") + "." + r.Form.Get("method") {
+		case "SYNO.API.Info.query":
+			fmt.Fprint(w, `{"success":true,"data":{"SYNO.API.Auth":{"path":"entry.cgi","minVersion":1,"maxVersion":7}}}`)
+		case "SYNO.API.Auth.logout":
+			logoutCount++
+			if r.Form.Get("_sid") != "stored-sid" {
+				t.Errorf("logout SID = %q, want stored-sid", r.Form.Get("_sid"))
+			}
+			fmt.Fprint(w, `{"success":true,"data":{}}`)
+		default:
+			t.Errorf("unexpected request %s.%s", r.Form.Get("api"), r.Form.Get("method"))
+			fmt.Fprint(w, `{"success":false,"error":{"code":102}}`)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient(Options{
+		BaseURL:                server.URL,
+		SessionID:              "stored-sid",
+		HTTPClient:             server.Client(),
+		PreserveSessionOnClose: true,
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	if err := client.Logout(context.Background()); err != nil {
+		t.Fatalf("Logout() error = %v", err)
+	}
+	if logoutCount != 1 {
+		t.Fatalf("logout called %d times, want 1; Logout is the explicit revocation verb", logoutCount)
+	}
+	if client.HasSession() {
+		t.Fatal("Logout() must drop the in-memory session")
+	}
+}
+
+func TestClientRefreshesSeededSessionAfterExpiry(t *testing.T) {
+	staleAttempts, freshAttempts := 0, 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Errorf("ParseForm() error = %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Form.Get("api") + "." + r.Form.Get("method") {
+		case "SYNO.API.Info.query":
+			fmt.Fprint(w, `{"success":true,"data":{"SYNO.API.Auth":{"path":"entry.cgi","minVersion":1,"maxVersion":7},"SYNO.Core.System":{"path":"entry.cgi","minVersion":1,"maxVersion":3}}}`)
+		case "SYNO.Core.System.info":
+			switch r.Form.Get("_sid") {
+			case "stale-sid":
+				staleAttempts++
+				fmt.Fprint(w, `{"success":false,"error":{"code":119}}`)
+			case "fresh-sid":
+				freshAttempts++
+				fmt.Fprint(w, `{"success":true,"data":{"model":"DS923+"}}`)
+			default:
+				t.Errorf("system info SID = %q", r.Form.Get("_sid"))
+				fmt.Fprint(w, `{"success":false,"error":{"code":119}}`)
+			}
+		case "SYNO.API.Auth.login":
+			t.Error("login must not be called; the client has no password")
+			fmt.Fprint(w, `{"success":false,"error":{"code":400}}`)
+		default:
+			t.Errorf("unexpected request %s.%s", r.Form.Get("api"), r.Form.Get("method"))
+			fmt.Fprint(w, `{"success":false,"error":{"code":102}}`)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient(Options{
+		BaseURL:                server.URL,
+		SessionID:              "stale-sid",
+		HTTPClient:             server.Client(),
+		PreserveSessionOnClose: true,
+		Resume: func(context.Context) (string, string, error) {
+			return "fresh-sid", "fresh-token", nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	info, err := client.SystemInfo(context.Background())
+	if err != nil {
+		t.Fatalf("SystemInfo() error = %v", err)
+	}
+	if info.Model != "DS923+" {
+		t.Fatalf("SystemInfo() model = %q", info.Model)
+	}
+	if staleAttempts != 1 || freshAttempts != 1 {
+		t.Fatalf("attempts stale=%d fresh=%d, want one rejected then one refreshed retry", staleAttempts, freshAttempts)
+	}
+}
+
 func TestPreferredVersionClampsToAdvertisedRange(t *testing.T) {
 	for _, test := range []struct {
 		name string

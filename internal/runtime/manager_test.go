@@ -115,8 +115,8 @@ func TestSessionInfoReportsStateWithoutResolvingCredentials(t *testing.T) {
 }
 
 func TestManagerReusesStoredSessionWithoutLoginOrPassword(t *testing.T) {
-	loginCount := 0
-	server := newCountingDSMServer(t, "DS923+", "stored-sid", &loginCount)
+	loginCount, logoutCount := 0, 0
+	server := newCountingDSMServer(t, "DS923+", "stored-sid", &loginCount, &logoutCount)
 	defer server.Close()
 
 	cfg := config.New()
@@ -149,11 +149,176 @@ func TestManagerReusesStoredSessionWithoutLoginOrPassword(t *testing.T) {
 	if resolutions != 0 {
 		t.Fatalf("password resolved %d times; a stored session must be reused without a password", resolutions)
 	}
+	if err := manager.Close(context.Background()); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if logoutCount != 0 {
+		t.Fatalf("logout called %d times on Close; the persisted session must stay valid for later processes", logoutCount)
+	}
+}
+
+func TestSeededClientPicksUpRenewedStoredSessionAfterExpiry(t *testing.T) {
+	staleAttempts, freshAttempts := 0, 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Errorf("ParseForm() error = %v", err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Form.Get("api") + "." + r.Form.Get("method") {
+		case "SYNO.API.Info.query":
+			fmt.Fprint(w, `{"success":true,"data":{"SYNO.API.Auth":{"path":"entry.cgi","minVersion":1,"maxVersion":7},"SYNO.Core.System":{"path":"entry.cgi","minVersion":1,"maxVersion":3}}}`)
+		case "SYNO.Core.System.info":
+			if r.Form.Get("_sid") == "stale-sid" {
+				staleAttempts++
+				fmt.Fprint(w, `{"success":false,"error":{"code":119}}`)
+				return
+			}
+			freshAttempts++
+			if r.Form.Get("_sid") != "fresh-sid" {
+				t.Errorf("system info SID = %q", r.Form.Get("_sid"))
+			}
+			fmt.Fprint(w, `{"success":true,"data":{"model":"DS923+"}}`)
+		case "SYNO.API.Auth.login":
+			t.Error("login must not be called; renewal comes from the session store")
+			fmt.Fprint(w, `{"success":false,"error":{"code":400}}`)
+		default:
+			t.Errorf("unexpected API call %s.%s", r.Form.Get("api"), r.Form.Get("method"))
+			fmt.Fprint(w, `{"success":false,"error":{"code":102}}`)
+		}
+	}))
+	defer server.Close()
+
+	cfg := config.New()
+	cfg.DefaultNAS = "office"
+	cfg.NAS["office"] = config.Profile{URL: server.URL, Username: "user"}
+	store := &fakeSessionStore{sessions: map[string]credentials.SessionCredential{
+		"office": {SID: "stale-sid", SynoToken: "stale-token"},
+	}}
+	manager := NewManager(cfg, resolverFunc(func(context.Context, string, config.Profile) (string, error) {
+		t.Error("a seeded client must not resolve a password")
+		return "", nil
+	}), WithSessionStore(store))
+
+	_, client, err := manager.Client(context.Background(), "office")
+	if err != nil {
+		t.Fatalf("Client() error = %v", err)
+	}
+	// Another process signs in again and stores a fresh session while this
+	// long-running process still holds the stale one.
+	store.sessions["office"] = credentials.SessionCredential{SID: "fresh-sid", SynoToken: "fresh-token"}
+
+	info, err := client.SystemInfo(context.Background())
+	if err != nil {
+		t.Fatalf("SystemInfo() error = %v", err)
+	}
+	if info.Model != "DS923+" {
+		t.Fatalf("SystemInfo() model = %q", info.Model)
+	}
+	if staleAttempts != 1 || freshAttempts != 1 {
+		t.Fatalf("attempts stale=%d fresh=%d, want one rejected then one renewed retry", staleAttempts, freshAttempts)
+	}
+}
+
+func TestRevokeStoredSessionLogsOutServerSide(t *testing.T) {
+	loginCount, logoutCount := 0, 0
+	server := newCountingDSMServer(t, "DS923+", "stored-sid", &loginCount, &logoutCount)
+	defer server.Close()
+
+	cfg := config.New()
+	cfg.DefaultNAS = "office"
+	cfg.NAS["office"] = config.Profile{URL: server.URL, Username: "user"}
+	store := &fakeSessionStore{sessions: map[string]credentials.SessionCredential{
+		"office": {SID: "stored-sid", SynoToken: "stored-token"},
+	}}
+	manager := NewManager(cfg, resolverFunc(func(context.Context, string, config.Profile) (string, error) {
+		t.Error("revocation must not resolve a password")
+		return "", nil
+	}), WithSessionStore(store))
+
+	revoked, err := manager.RevokeStoredSession(context.Background(), "office")
+	if err != nil {
+		t.Fatalf("RevokeStoredSession() error = %v", err)
+	}
+	if !revoked {
+		t.Fatal("RevokeStoredSession() = false, want true")
+	}
+	if logoutCount != 1 || loginCount != 0 {
+		t.Fatalf("request counts login=%d logout=%d, want 0 and 1", loginCount, logoutCount)
+	}
+	if _, ok := store.sessions["office"]; !ok {
+		t.Fatal("RevokeStoredSession() must not delete the stored entry; that is the caller's decision")
+	}
+}
+
+func TestRevokeStoredSessionReportsNothingToRevoke(t *testing.T) {
+	cfg := config.New()
+	cfg.DefaultNAS = "office"
+	cfg.NAS["office"] = config.Profile{URL: "http://127.0.0.1:9", Username: "user"}
+
+	for name, store := range map[string]*fakeSessionStore{
+		"no session stored":      {sessions: map[string]credentials.SessionCredential{}},
+		"resume keys but no SID": {sessions: map[string]credentials.SessionCredential{"office": {LocalPrivateKey: []byte{1}, ServerPublicKey: []byte{2}}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			manager := NewManager(cfg, resolverFunc(func(context.Context, string, config.Profile) (string, error) {
+				return "", nil
+			}), WithSessionStore(store))
+			revoked, err := manager.RevokeStoredSession(context.Background(), "office")
+			if err != nil || revoked {
+				t.Fatalf("RevokeStoredSession() = %v, %v; want false, nil", revoked, err)
+			}
+		})
+	}
+
+	t.Run("profile not configured", func(t *testing.T) {
+		store := &fakeSessionStore{sessions: map[string]credentials.SessionCredential{
+			"retired": {SID: "stored-sid"},
+		}}
+		manager := NewManager(cfg, resolverFunc(func(context.Context, string, config.Profile) (string, error) {
+			return "", nil
+		}), WithSessionStore(store))
+		revoked, err := manager.RevokeStoredSession(context.Background(), "retired")
+		if err != nil || revoked {
+			t.Fatalf("RevokeStoredSession() = %v, %v; want false, nil", revoked, err)
+		}
+	})
+
+	t.Run("no session store", func(t *testing.T) {
+		manager := NewManager(cfg, resolverFunc(func(context.Context, string, config.Profile) (string, error) {
+			return "", nil
+		}))
+		revoked, err := manager.RevokeStoredSession(context.Background(), "office")
+		if err != nil || revoked {
+			t.Fatalf("RevokeStoredSession() = %v, %v; want false, nil", revoked, err)
+		}
+	})
+}
+
+func TestRevokeStoredSessionReportsUnreachableNAS(t *testing.T) {
+	server := newDSMServer(t, "DS923+", "stored-sid")
+	url := server.URL
+	server.Close()
+
+	cfg := config.New()
+	cfg.DefaultNAS = "office"
+	cfg.NAS["office"] = config.Profile{URL: url, Username: "user"}
+	store := &fakeSessionStore{sessions: map[string]credentials.SessionCredential{
+		"office": {SID: "stored-sid"},
+	}}
+	manager := NewManager(cfg, resolverFunc(func(context.Context, string, config.Profile) (string, error) {
+		return "", nil
+	}), WithSessionStore(store))
+
+	revoked, err := manager.RevokeStoredSession(context.Background(), "office")
+	if err == nil || revoked {
+		t.Fatalf("RevokeStoredSession() = %v, %v; want false and an error for an unreachable NAS", revoked, err)
+	}
 }
 
 func TestManagerFallsBackToPasswordWithoutStoredSession(t *testing.T) {
-	loginCount := 0
-	server := newCountingDSMServer(t, "DS224+", "login-sid", &loginCount)
+	loginCount, logoutCount := 0, 0
+	server := newCountingDSMServer(t, "DS224+", "login-sid", &loginCount, &logoutCount)
 	defer server.Close()
 
 	cfg := config.New()
@@ -186,7 +351,7 @@ func TestManagerFallsBackToPasswordWithoutStoredSession(t *testing.T) {
 	}
 }
 
-func newCountingDSMServer(t *testing.T, model, sid string, loginCount *int) *httptest.Server {
+func newCountingDSMServer(t *testing.T, model, sid string, loginCount, logoutCount *int) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
@@ -206,6 +371,10 @@ func newCountingDSMServer(t *testing.T, model, sid string, loginCount *int) *htt
 			}
 			fmt.Fprintf(w, `{"success":true,"data":{"model":%q}}`, model)
 		case "SYNO.API.Auth.logout":
+			*logoutCount++
+			if r.Form.Get("_sid") != sid {
+				t.Errorf("logout SID = %q, want %q", r.Form.Get("_sid"), sid)
+			}
 			fmt.Fprint(w, `{"success":true,"data":{}}`)
 		default:
 			t.Errorf("unexpected API call %s.%s", r.Form.Get("api"), r.Form.Get("method"))

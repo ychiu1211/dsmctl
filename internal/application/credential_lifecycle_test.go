@@ -3,6 +3,9 @@ package application
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -12,11 +15,12 @@ import (
 )
 
 type fakeCredentialStore struct {
-	passwords map[string]bool
-	devices   map[string]bool
-	envSet    map[string]bool
-	sessions  map[string]credentials.SessionMeta
-	probeErr  error
+	passwords        map[string]bool
+	devices          map[string]bool
+	envSet           map[string]bool
+	sessions         map[string]credentials.SessionMeta
+	probeErr         error
+	deleteSessionErr error
 }
 
 func (store *fakeCredentialStore) HasPassword(_ context.Context, profileName string) (bool, error) {
@@ -31,6 +35,15 @@ func (store *fakeCredentialStore) HasTrustedDevice(_ context.Context, profileNam
 		return false, store.probeErr
 	}
 	return store.devices[profileName], nil
+}
+
+func (store *fakeCredentialStore) DeleteSession(_ context.Context, profileName string) (bool, error) {
+	if store.deleteSessionErr != nil {
+		return false, store.deleteSessionErr
+	}
+	existed := store.sessions[profileName].Present
+	delete(store.sessions, profileName)
+	return existed, nil
 }
 
 func (store *fakeCredentialStore) PasswordEnvironment(profileName string, profile config.Profile) (string, bool) {
@@ -120,5 +133,153 @@ func TestGetAuthStatusRequiresStore(t *testing.T) {
 	service := NewService(cfg, manager)
 	if _, err := service.GetAuthStatus(context.Background(), ""); err == nil || !strings.Contains(err.Error(), "credential store") {
 		t.Fatalf("GetAuthStatus() error = %v", err)
+	}
+}
+
+// fakeSessionStore backs the runtime manager in Logout tests; it stands in
+// for the OS keyring's session entries.
+type fakeSessionStore struct {
+	sessions map[string]credentials.SessionCredential
+}
+
+func (f *fakeSessionStore) Session(_ context.Context, name string) (credentials.SessionCredential, error) {
+	return f.sessions[name], nil
+}
+
+func (f *fakeSessionStore) SaveSession(_ context.Context, name string, session credentials.SessionCredential) error {
+	f.sessions[name] = session
+	return nil
+}
+
+func (f *fakeSessionStore) DeleteSession(_ context.Context, name string) (bool, error) {
+	_, ok := f.sessions[name]
+	delete(f.sessions, name)
+	return ok, nil
+}
+
+// logoutTestService wires a Service whose manager can reach a fake DSM for
+// revocation and whose credential store tracks the local removal.
+func logoutTestService(nasURL string, sessionStore *fakeSessionStore, store CredentialStore) *Service {
+	cfg := config.New()
+	cfg.DefaultNAS = "office"
+	cfg.NAS["office"] = config.Profile{URL: nasURL, Username: "admin"}
+	manager := runtime.NewManager(cfg, credentials.NewEnvironment(), runtime.WithSessionStore(sessionStore))
+	return NewService(cfg, manager, WithCredentialStore(store))
+}
+
+func newLogoutDSMServer(t *testing.T, wantSID string, logoutCount *int) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Errorf("ParseForm() error = %v", err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Form.Get("api") + "." + r.Form.Get("method") {
+		case "SYNO.API.Info.query":
+			fmt.Fprint(w, `{"success":true,"data":{"SYNO.API.Auth":{"path":"entry.cgi","minVersion":1,"maxVersion":7}}}`)
+		case "SYNO.API.Auth.logout":
+			*logoutCount++
+			if r.Form.Get("_sid") != wantSID {
+				t.Errorf("logout SID = %q, want %q", r.Form.Get("_sid"), wantSID)
+			}
+			fmt.Fprint(w, `{"success":true,"data":{}}`)
+		default:
+			t.Errorf("unexpected API call %s.%s", r.Form.Get("api"), r.Form.Get("method"))
+			fmt.Fprint(w, `{"success":false,"error":{"code":102}}`)
+		}
+	}))
+}
+
+func TestLogoutRevokesServerSideAndRemovesStoredSession(t *testing.T) {
+	logoutCount := 0
+	server := newLogoutDSMServer(t, "stored-sid", &logoutCount)
+	defer server.Close()
+
+	sessionStore := &fakeSessionStore{sessions: map[string]credentials.SessionCredential{
+		"office": {SID: "stored-sid", SynoToken: "stored-token"},
+	}}
+	store := &fakeCredentialStore{sessions: map[string]credentials.SessionMeta{
+		"office": {Present: true},
+	}}
+	service := logoutTestService(server.URL, sessionStore, store)
+
+	result, err := service.Logout(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Logout() error = %v", err)
+	}
+	want := LogoutResult{NAS: "office", Revoked: true, Removed: true, Configured: true}
+	if result != want {
+		t.Fatalf("Logout() = %#v, want %#v", result, want)
+	}
+	if logoutCount != 1 {
+		t.Fatalf("logout called %d times, want 1", logoutCount)
+	}
+}
+
+func TestLogoutRemovesLocallyWhenRevocationFails(t *testing.T) {
+	server := newLogoutDSMServer(t, "stored-sid", new(int))
+	url := server.URL
+	server.Close()
+
+	sessionStore := &fakeSessionStore{sessions: map[string]credentials.SessionCredential{
+		"office": {SID: "stored-sid"},
+	}}
+	store := &fakeCredentialStore{sessions: map[string]credentials.SessionMeta{
+		"office": {Present: true},
+	}}
+	service := logoutTestService(url, sessionStore, store)
+
+	result, err := service.Logout(context.Background(), "office")
+	if err != nil {
+		t.Fatalf("Logout() error = %v", err)
+	}
+	if result.Revoked || result.RevocationError == "" {
+		t.Fatalf("Logout() = %#v, want a revocation error and Revoked=false", result)
+	}
+	if !result.Removed || !result.Configured {
+		t.Fatalf("Logout() = %#v, want the local copy removed for a configured profile", result)
+	}
+}
+
+func TestLogoutHandlesOrphanedProfilesLocally(t *testing.T) {
+	sessionStore := &fakeSessionStore{sessions: map[string]credentials.SessionCredential{
+		"retired": {SID: "stored-sid"},
+	}}
+	store := &fakeCredentialStore{sessions: map[string]credentials.SessionMeta{
+		"retired": {Present: true},
+	}}
+	service := logoutTestService("https://office.example:5001", sessionStore, store)
+
+	result, err := service.Logout(context.Background(), "retired")
+	if err != nil {
+		t.Fatalf("Logout(orphan) error = %v", err)
+	}
+	want := LogoutResult{NAS: "retired", Removed: true}
+	if result != want {
+		t.Fatalf("Logout(orphan) = %#v, want %#v", result, want)
+	}
+	if _, err := service.Logout(context.Background(), "bad name!"); err == nil || !strings.Contains(err.Error(), "invalid NAS name") {
+		t.Fatalf("invalid name error = %v", err)
+	}
+}
+
+func TestLogoutReportsRemovalFailureAfterRevocation(t *testing.T) {
+	logoutCount := 0
+	server := newLogoutDSMServer(t, "stored-sid", &logoutCount)
+	defer server.Close()
+
+	sessionStore := &fakeSessionStore{sessions: map[string]credentials.SessionCredential{
+		"office": {SID: "stored-sid"},
+	}}
+	store := &fakeCredentialStore{deleteSessionErr: errors.New("keychain is locked")}
+	service := logoutTestService(server.URL, sessionStore, store)
+
+	result, err := service.Logout(context.Background(), "office")
+	if err == nil || !strings.Contains(err.Error(), "was revoked") {
+		t.Fatalf("Logout() error = %v, want a removal failure that mentions the completed revocation", err)
+	}
+	if !result.Revoked || result.Removed {
+		t.Fatalf("Logout() = %#v, want Revoked=true and Removed=false", result)
 	}
 }

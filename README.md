@@ -52,17 +52,16 @@ Authenticate interactively:
 dsmctl auth login --nas office
 ```
 
-The password and DSM trusted-device credential are stored in the operating system's credential store, not in `config.json`. Password and OTP prompts are hidden. If DSM requests an OTP, `dsmctl` exchanges it for a trusted-device ID so later CLI and MCP processes can authenticate without transporting OTP values through an AI client.
+`auth login` opens the NAS's own sign-in page in your web browser; the password — and any two-factor, passkey, or approve-sign-in step — is entered only there and never passes through dsmctl. The resulting DSM session (SID, SynoToken, and its renewal keys) is stored per profile in the operating system's credential store, not in `config.json`, and is reused by later CLI and MCP processes.
 
-Inspect, remove, or rotate stored credentials without revealing any secret value:
+Inspect or remove the stored session without revealing any secret value:
 
 ```console
 dsmctl auth status
 dsmctl auth logout --nas office
-dsmctl auth rotate-device --nas office
 ```
 
-`auth status` is fully offline, `auth logout` removes the stored password and trusted device (narrow it with `--password` or `--trusted-device`), and `auth rotate-device` re-authenticates so DSM issues a fresh trusted-device credential. `nas remove` also cleans the removed profile's credentials unless `--keep-credentials` is passed. Details and cross-process caveats are in [the credential lifecycle guide](docs/credentials.md).
+`auth status` is fully offline. `auth logout` signs out: it asks DSM to revoke the session (best-effort; an unreachable NAS only skips the revocation) and then deletes the stored copy. `nas remove` also cleans the removed profile's stored session unless `--keep-credentials` is passed. Details and cross-process caveats are in [the credential lifecycle guide](docs/credentials.md).
 
 Read system information:
 
@@ -165,13 +164,13 @@ Example configuration (no secret values):
 }
 ```
 
-`password_env` remains available as a non-interactive password fallback:
+`password_env` remains available as a non-interactive password fallback for automation; it is consulted only when no web-login session is stored for the profile:
 
 ```powershell
 $env:DSMCTL_PASSWORD_OFFICE = "your-password"
 ```
 
-For a 2FA-protected account, run `dsmctl auth login` once on the same host so DSM's trusted-device credential can be placed in the OS credential store.
+Two-factor authentication needs no special handling: the challenge is completed in the browser during `dsmctl auth login`, and the stored session is what later processes reuse.
 
 Use `--insecure-skip-tls-verify` only for a test NAS with a certificate that cannot be trusted. TLS verification is enabled by default.
 
@@ -256,11 +255,13 @@ go test ./integration -run TestMCPGetSystemInfoLive -v
 - Built-in `admin`, `guest`, `root`, `administrators`, `users`, `http`, `home`, and `homes` resources cannot be managed by mutation commands.
 - Login parameters use an HTTPS POST form, not URL query parameters.
 - OTP values are short-lived and never persisted.
-- Passwords and trusted-device IDs use Windows Credential Manager, macOS Keychain, or Linux Secret Service.
-- Credential status reports booleans and the environment variable name only; device names, IDs, and password values are never displayed.
-- Credential removal is local: running dsmctl processes keep their in-memory credentials and DSM sessions until they exit, and a set password environment variable still enables non-interactive login.
-- Every NAS profile owns a separate session and trusted-device credential.
-- DSM session errors 106 and 119 trigger one automatic re-login and retry.
+- Web-login sessions (SID, SynoToken, and renewal keys) use Windows Credential Manager, macOS Keychain, or Linux Secret Service; dsmctl adds no encryption layer of its own because the OS store already provides at-rest encryption, and on hosts without a store (headless Linux) it fails closed instead of writing secrets to disk.
+- Passwords are never stored by dsmctl: web login keeps them in the browser, and the optional automation fallback reads an environment variable at login time.
+- Credential status reports booleans, metadata, and the environment variable name only; session IDs, tokens, keys, and password values are never displayed.
+- `auth logout` and `nas remove` revoke the DSM session server-side (best-effort, with a bounded wait) before deleting the stored copy, so a signed-out session cannot be replayed; when the NAS is unreachable the local copy is still removed and the session lapses on its own expiry.
+- Closing a process never invalidates the stored web-login session; only an explicit sign-out does.
+- Every NAS profile owns a separate stored session.
+- DSM session errors 106 and 119 trigger one automatic re-login and retry when the client logged in with a password; a client using a stored web-login session instead recovers without a password — it re-reads the store (picking up a newer `auth login` from another process) or renews the session with the stored Noise resume keys — and otherwise reports that a new `auth login` is required.
 
 ## Adding commands
 

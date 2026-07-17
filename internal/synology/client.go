@@ -44,25 +44,39 @@ type Options struct {
 	SessionID string
 	SynoToken string
 
-	// Resume, when set, refreshes an expired injected session without a
-	// password (for web login, a browserless Noise resume). It returns the new
-	// session ID and SynoToken. It is tried before the password path when a
-	// session error occurs.
+	// Resume, when set, renews an expired injected session without a password.
+	// It is tried instead of the password path when a session error occurs.
+	// The runtime wires it for clients seeded from the persisted web-login
+	// session: it re-reads the store (picking up a session renewed by another
+	// process's 'auth login' — essential for long-running processes such as
+	// the MCP server, whose cached client would otherwise stay dead forever)
+	// and then attempts a browserless Noise resume with the stored renewal
+	// keys. It returns the new session ID and SynoToken.
 	Resume func(ctx context.Context) (sid, synoToken string, err error)
+
+	// PreserveSessionOnClose keeps the DSM session alive when the client is
+	// closed: Close drops the in-memory session instead of calling
+	// SYNO.API.Auth logout. Set it for clients seeded from a persisted
+	// web-login session, which must outlive this process so later commands can
+	// reuse it; revoking it is then an explicit action (Logout), not a side
+	// effect of process exit. Leave it unset for password logins, whose
+	// sessions belong to this process alone.
+	PreserveSessionOnClose bool
 }
 
 type APIInfo = compatibility.APIInfo
 
 type Client struct {
-	baseURL      *url.URL
-	username     string
-	password     string
-	deviceName   string
-	deviceID     string
-	otp          OTPProvider
-	saveDeviceID DeviceIDSaver
-	resume       func(ctx context.Context) (string, string, error)
-	httpClient   *http.Client
+	baseURL         *url.URL
+	username        string
+	password        string
+	deviceName      string
+	deviceID        string
+	otp             OTPProvider
+	saveDeviceID    DeviceIDSaver
+	resume          func(ctx context.Context) (string, string, error)
+	httpClient      *http.Client
+	preserveSession bool
 
 	mu         sync.Mutex
 	target     compatibility.Target
@@ -99,19 +113,20 @@ func NewClient(options Options) (*Client, error) {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
 	return &Client{
-		baseURL:      baseURL,
-		username:     options.Username,
-		password:     options.Password,
-		deviceName:   options.DeviceName,
-		deviceID:     options.DeviceID,
-		otp:          options.OTPProvider,
-		saveDeviceID: options.SaveDeviceID,
-		resume:       options.Resume,
-		httpClient:   httpClient,
-		target:       compatibility.NewTarget(),
-		apiChecked:   make(map[string]bool),
-		sid:          options.SessionID,
-		synoToken:    options.SynoToken,
+		baseURL:         baseURL,
+		username:        options.Username,
+		password:        options.Password,
+		deviceName:      options.DeviceName,
+		deviceID:        options.DeviceID,
+		otp:             options.OTPProvider,
+		saveDeviceID:    options.SaveDeviceID,
+		resume:          options.Resume,
+		httpClient:      httpClient,
+		preserveSession: options.PreserveSessionOnClose,
+		target:          compatibility.NewTarget(),
+		apiChecked:      make(map[string]bool),
+		sid:             options.SessionID,
+		synoToken:       options.SynoToken,
 	}, nil
 }
 
@@ -499,9 +514,31 @@ func (c *Client) HasSession() bool {
 	return c.sid != ""
 }
 
+// Close releases the client's DSM session. It logs the session out server-side
+// unless the client was created with PreserveSessionOnClose, in which case only
+// the in-memory copy is dropped and the session stays valid for later reuse.
 func (c *Client) Close(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.preserveSession {
+		c.sid = ""
+		c.synoToken = ""
+		return nil
+	}
+	return c.logoutLocked(ctx)
+}
+
+// Logout asks DSM to invalidate the client's session and drops the in-memory
+// copy. Unlike Close it always revokes, even on a client created with
+// PreserveSessionOnClose — it is the explicit sign-out verb, used when the
+// user asks for the persisted session to stop working.
+func (c *Client) Logout(ctx context.Context) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.logoutLocked(ctx)
+}
+
+func (c *Client) logoutLocked(ctx context.Context) error {
 	if c.sid == "" {
 		return nil
 	}

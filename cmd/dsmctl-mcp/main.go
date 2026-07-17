@@ -27,7 +27,13 @@ func main() {
 		fatal(err)
 	}
 	secrets := credentials.NewSecureStore()
-	manager := runtime.NewManager(cfg, secrets, runtime.WithDeviceStore(secrets))
+	// Prefer the stored web-login session, exactly like the CLI. The password
+	// resolver stays as the automation fallback (environment variable, or a
+	// password stored by an older release).
+	manager := runtime.NewManager(cfg, secrets,
+		runtime.WithDeviceStore(secrets),
+		runtime.WithSessionStore(secrets),
+	)
 	service := application.NewService(cfg, manager, application.WithCredentialStore(secrets))
 	server := mcpserver.New(service, buildinfo.Version)
 

@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/ychiu1211/dsmctl/internal/application"
 	"github.com/ychiu1211/dsmctl/internal/config"
 	"github.com/ychiu1211/dsmctl/internal/credentials"
 )
@@ -126,6 +127,17 @@ func newNASRemoveCommand(opts *options) *cobra.Command {
 			if _, ok := cfg.NAS[name]; !ok {
 				return fmt.Errorf("NAS profile %q is not configured", name)
 			}
+			// The service must load the configuration while the profile still
+			// exists: signing out below needs the NAS URL to revoke the DSM
+			// session, and after Save the profile is gone from disk.
+			var service *application.Service
+			if !keepCredentials {
+				service, err = loadService(opts.configPath)
+				if err != nil {
+					return err
+				}
+				defer closeService(service)
+			}
 			delete(cfg.NAS, name)
 			if cfg.DefaultNAS == name {
 				cfg.DefaultNAS = ""
@@ -141,21 +153,34 @@ func newNASRemoveCommand(opts *options) *cobra.Command {
 			if err := store.Save(cfg); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Removed NAS %q.\n", name)
+			out := cmd.OutOrStdout()
+			fmt.Fprintf(out, "Removed NAS %q.\n", name)
 			if keepCredentials {
 				return nil
 			}
-			secrets := credentials.NewSecureStore()
-			sessionRemoved, sessionErr := secrets.DeleteSession(cmd.Context(), name)
+			// Sign out like auth logout: revoke the DSM session server-side
+			// (best-effort), then delete the stored entry.
+			result, logoutErr := service.Logout(cmd.Context(), name)
 			// Best-effort cleanup of any credential left by an earlier release.
+			secrets := credentials.NewSecureStore()
 			_, passwordErr := secrets.DeletePassword(cmd.Context(), name)
 			_, deviceErr := secrets.DeleteTrustedDevice(cmd.Context(), name)
-			if cleanupErr := errors.Join(sessionErr, passwordErr, deviceErr); cleanupErr != nil {
+			if cleanupErr := errors.Join(logoutErr, passwordErr, deviceErr); cleanupErr != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not clean the OS credential store for NAS %q; run 'dsmctl auth logout --nas %s' to retry: %v\n", name, name, cleanupErr)
 				return nil
 			}
-			if sessionRemoved {
-				fmt.Fprintf(cmd.OutOrStdout(), "Removed the stored session for NAS %q from the OS credential store.\n", name)
+			if result.RevocationError != "" {
+				fmt.Fprintf(cmd.ErrOrStderr(),
+					"Warning: could not revoke the DSM session on NAS %q: %s\n"+
+						"The stored copy was removed; the DSM session stays valid until it expires.\n",
+					name, result.RevocationError)
+			}
+			if result.Removed {
+				if result.Revoked {
+					fmt.Fprintf(out, "Signed out of NAS %q and removed the stored session from the OS credential store.\n", name)
+				} else {
+					fmt.Fprintf(out, "Removed the stored session for NAS %q from the OS credential store.\n", name)
+				}
 			}
 			return nil
 		},

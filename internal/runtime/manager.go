@@ -181,10 +181,9 @@ func (m *Manager) Client(ctx context.Context, requested string) (string, Client,
 
 // sessionClient builds a client seeded with a persisted web-login session, so
 // it reuses that session instead of authenticating with a password. It reports
-// ok=false when no usable session is stored, leaving the caller to fall back to
-// the password path. A stored session with resume key material but no live
-// session ID is treated as not directly usable here; silently refreshing it is
-// handled once resume support lands.
+// ok=false when no usable session is stored, leaving the caller to fall back
+// to the password path. Recovery of a rejected session ID is the seeded
+// client's Resume closure, wired in seededClient.
 func (m *Manager) sessionClient(ctx context.Context, name string, profile config.Profile) (*synology.Client, bool, error) {
 	session, err := m.sessions.Session(ctx, name)
 	if err != nil {
@@ -193,41 +192,103 @@ func (m *Manager) sessionClient(ctx context.Context, name string, profile config
 	if session.SID == "" {
 		return nil, false, nil
 	}
+	client, err := m.seededClient(name, profile, session)
+	if err != nil {
+		return nil, false, err
+	}
+	return client, true, nil
+}
+
+// seededClient builds the one client shape used for a persisted web-login
+// session, so reuse (sessionClient) and revocation (RevokeStoredSession)
+// cannot drift apart. The session is borrowed, not owned: the client never
+// logs it out on Close (revocation is an explicit Logout), and when DSM
+// rejects the session the Resume closure recovers without a browser or
+// password. It first re-reads the store — picking up a session renewed by
+// another process's 'auth login', which keeps a long-running MCP server
+// usable after the session it started with expires — and otherwise performs
+// the browserless Noise resume with the stored renewal keys, persisting the
+// refreshed session for other processes to pick up the same way.
+func (m *Manager) seededClient(name string, profile config.Profile, session credentials.SessionCredential) (*synology.Client, error) {
+	current := session
 	client, err := synology.NewClient(synology.Options{
-		BaseURL:    profile.URL,
-		Username:   profile.Username,
-		SessionID:  session.SID,
-		SynoToken:  session.SynoToken,
-		HTTPClient: httpClient(profile),
+		BaseURL:                profile.URL,
+		Username:               profile.Username,
+		SessionID:              session.SID,
+		SynoToken:              session.SynoToken,
+		HTTPClient:             httpClient(profile),
+		PreserveSessionOnClose: true,
 		Resume: func(ctx context.Context) (string, string, error) {
-			if len(session.LocalPrivateKey) == 0 || len(session.ServerPublicKey) == 0 {
+			if latest, err := m.sessions.Session(ctx, name); err == nil && latest.SID != "" && latest.SID != current.SID {
+				current = latest
+				return latest.SID, latest.SynoToken, nil
+			}
+			if !current.CanResume() {
 				return "", "", fmt.Errorf("the stored session for NAS %q cannot be renewed; run 'dsmctl auth login --nas %s'", name, name)
 			}
 			// The webui session resumes an existing session keyed by its sid, so
-			// pass the latest known sid. On success DSM returns a fresh sid; mutate
-			// the captured session so the next resume uses it.
+			// pass the latest known sid. On success DSM returns a fresh sid;
+			// update the captured session so the next resume uses it.
 			refreshed, err := weblogin.Resume(ctx, profile.URL, weblogin.ResumeInput{
-				Account:         session.Account,
-				DeviceID:        session.DeviceID,
-				SID:             session.SID,
-				ServerPublicKey: session.ServerPublicKey,
-				LocalPublicKey:  session.LocalPublicKey,
-				LocalPrivateKey: session.LocalPrivateKey,
+				Account:         current.Account,
+				DeviceID:        current.DeviceID,
+				SID:             current.SID,
+				ServerPublicKey: current.ServerPublicKey,
+				LocalPublicKey:  current.LocalPublicKey,
+				LocalPrivateKey: current.LocalPrivateKey,
 			}, httpClient(profile))
 			if err != nil {
 				return "", "", fmt.Errorf("could not renew the session for NAS %q; run 'dsmctl auth login --nas %s': %w", name, name, err)
 			}
-			session.SID = refreshed.SID
-			session.SynoToken = refreshed.SynoToken
-			session.LastVerified = time.Now()
-			_ = m.sessions.SaveSession(ctx, name, session)
+			updated := current
+			updated.SID = refreshed.SID
+			updated.SynoToken = refreshed.SynoToken
+			updated.LastVerified = time.Now()
+			current = updated
+			_ = m.sessions.SaveSession(ctx, name, updated)
 			return refreshed.SID, refreshed.SynoToken, nil
 		},
 	})
 	if err != nil {
-		return nil, false, fmt.Errorf("create client for NAS %q from stored session: %w", name, err)
+		return nil, fmt.Errorf("create client for NAS %q from stored session: %w", name, err)
 	}
-	return client, true, nil
+	return client, nil
+}
+
+// RevokeStoredSession asks DSM to invalidate the persisted web-login session
+// for a profile, so signing out revokes the session server-side instead of
+// only forgetting the local copy. It never touches the store itself: callers
+// delete the stored entry regardless of the outcome, because a revocation
+// failure (NAS offline) must not keep dead material around locally.
+//
+// It reports (false, nil) when there is nothing it can revoke: no session
+// store, no stored session ID, or a profile that is no longer configured (the
+// NAS URL of an orphaned session is unknown). Transport or DSM failures are
+// returned so callers can warn that the server-side session may outlive the
+// local removal until it expires.
+func (m *Manager) RevokeStoredSession(ctx context.Context, name string) (bool, error) {
+	if m.sessions == nil {
+		return false, nil
+	}
+	profile, ok := m.config.NAS[name]
+	if !ok || profile.URL == "" {
+		return false, nil
+	}
+	session, err := m.sessions.Session(ctx, name)
+	if err != nil {
+		return false, fmt.Errorf("read stored session for NAS %q: %w", name, err)
+	}
+	if session.SID == "" {
+		return false, nil
+	}
+	client, err := m.seededClient(name, profile, session)
+	if err != nil {
+		return false, err
+	}
+	if err := client.Logout(ctx); err != nil {
+		return false, fmt.Errorf("revoke DSM session for NAS %q: %w", name, err)
+	}
+	return true, nil
 }
 
 // SessionInfo reports in-process session state for one profile without

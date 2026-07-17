@@ -21,6 +21,10 @@ func (fakeCredentialStore) HasTrustedDevice(context.Context, string) (bool, erro
 	return false, nil
 }
 
+func (fakeCredentialStore) DeleteSession(context.Context, string) (bool, error) {
+	return false, nil
+}
+
 func (fakeCredentialStore) PasswordEnvironment(profileName string, _ config.Profile) (string, bool) {
 	return credentials.DefaultEnvironmentVariable(profileName), false
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/ychiu1211/dsmctl/internal/config"
 	"github.com/ychiu1211/dsmctl/internal/credentials"
@@ -17,6 +18,7 @@ import (
 type CredentialStore interface {
 	HasPassword(ctx context.Context, profileName string) (bool, error)
 	HasTrustedDevice(ctx context.Context, profileName string) (bool, error)
+	DeleteSession(ctx context.Context, profileName string) (bool, error)
 	PasswordEnvironment(profileName string, profile config.Profile) (string, bool)
 	SessionMeta(ctx context.Context, profileName string) (credentials.SessionMeta, error)
 }
@@ -104,6 +106,75 @@ func (s *Service) GetAuthStatus(ctx context.Context, requestedNAS string) (AuthS
 		status.ClientCached, status.SessionHeld = session.ClientCached, session.SessionHeld
 		result.Statuses = append(result.Statuses, status)
 	}
+	return result, nil
+}
+
+// LogoutResult reports what sign-out did for one profile. It contains no
+// secret values.
+type LogoutResult struct {
+	NAS string `json:"nas" jsonschema:"NAS profile the sign-out applied to"`
+	// Revoked means DSM accepted the sign-out call for the stored session. DSM
+	// answers logout success even for an already-expired session ID, so this
+	// confirms the session is no longer usable, not that it was live.
+	Revoked bool `json:"revoked" jsonschema:"DSM accepted the sign-out for the stored session"`
+	// RevocationError is the best-effort revocation failure, if any. It never
+	// blocks the local removal: the session then stays valid server-side only
+	// until its own expiry.
+	RevocationError string `json:"revocation_error,omitempty" jsonschema:"Why the DSM session could not be revoked server-side; the local copy is still removed"`
+	Removed         bool   `json:"removed" jsonschema:"A stored session existed and was deleted from the OS credential store"`
+	// Configured reports whether the profile exists in the configuration. An
+	// orphaned session (profile already removed) can only be deleted locally,
+	// because the NAS URL is unknown.
+	Configured bool `json:"configured" jsonschema:"The profile is configured, so its NAS could be contacted for revocation"`
+}
+
+// revocationTimeout bounds the best-effort server-side revocation inside
+// Logout. Sign-out must stay snappy when the NAS is off: the local removal is
+// the part the user is waiting for, and an unreachable NAS's session lapses on
+// its own expiry anyway.
+const revocationTimeout = 10 * time.Second
+
+// Logout signs out of one NAS profile: it asks DSM to revoke the stored
+// web-login session (best-effort, bounded by revocationTimeout) and then
+// deletes the stored entry. A revocation failure is reported in the result,
+// never as an error, so the local removal always proceeds; a removal failure
+// after a successful revocation is an error that says the session was already
+// revoked, so a retry only needs to clean the store. An explicitly named
+// profile does not need to exist in the configuration, so a session orphaned
+// by an earlier profile removal stays removable.
+func (s *Service) Logout(ctx context.Context, requestedNAS string) (LogoutResult, error) {
+	if s.credentialStore == nil {
+		return LogoutResult{}, errors.New("sign-out requires the OS credential store, which is not configured for this process")
+	}
+	name := strings.TrimSpace(requestedNAS)
+	if name == "" {
+		resolved, _, err := s.config.Resolve("")
+		if err != nil {
+			return LogoutResult{}, err
+		}
+		name = resolved
+	} else if err := config.ValidateName(name); err != nil {
+		return LogoutResult{}, fmt.Errorf("invalid NAS name %q: %w", name, err)
+	}
+	result := LogoutResult{NAS: name}
+	_, result.Configured = s.config.NAS[name]
+
+	revokeCtx, cancel := context.WithTimeout(ctx, revocationTimeout)
+	revoked, err := s.manager.RevokeStoredSession(revokeCtx, name)
+	cancel()
+	result.Revoked = revoked
+	if err != nil {
+		result.RevocationError = err.Error()
+	}
+
+	removed, err := s.credentialStore.DeleteSession(ctx, name)
+	if err != nil {
+		if revoked {
+			return result, fmt.Errorf("the DSM session was revoked, but the stored copy could not be removed (retry 'auth logout'): %w", err)
+		}
+		return result, err
+	}
+	result.Removed = removed
 	return result, nil
 }
 

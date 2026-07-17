@@ -111,26 +111,30 @@ See [`docs/compatibility.md`](compatibility.md) for rules and extension examples
 ## Authentication flow
 
 ```text
-Password from OS keyring (or environment fallback)
+dsmctl auth login opens the DSM sign-in page in the user's browser
+        (password / 2FA / passkey stay in the browser, against the NAS)
                        |
                        v
-       Login with saved device_name + device_id
+   One-time code returned to a loopback listener (PKCE-bound)
                        |
-             +---------+---------+
-             |                   |
-          success          DSM requests OTP
-             |                   |
-             |          CLI prompts without echo
-             |                   |
-             |          Login with otp_code and
-             |          enable_device_token=yes
-             |                   |
-             +---------+---------+
+                       v
+   Code exchanged over a Noise_IK channel with the NAS
                        |
-              SID + SynoToken + did
+                       v
+   SID + SynoToken + device ID + durable Noise resume keys
+                       |
+                       v
+   Stored per profile in the OS credential store
 ```
 
-The returned `did` and its `device_name` are stored per profile in the OS credential store. Later CLI and MCP processes reuse that pair. MCP never accepts password or OTP inputs; if the trusted device is absent or expired, the user completes `dsmctl auth login` in a terminal.
+Later CLI and MCP processes seed their DSM client from the stored session
+instead of logging in; closing such a client drops only the in-memory copy,
+so the stored session stays valid across processes until `auth logout`
+revokes it server-side and deletes it. The password resolver (environment
+variable, or a password stored by an older release) remains as the
+automation fallback and is consulted only when no session is stored. MCP
+never accepts password or OTP inputs; if no usable session exists, the user
+completes `dsmctl auth login` in a terminal.
 
 The client prefers `SYNO.API.Auth` v7, clamped to the versions reported by API discovery. DSM 7.3 requires the v7 session for privileged Control Panel mutations such as local-user writes; the same client automatically falls back to v6 or an older advertised version instead of maintaining a separate DSM client. SynoToken and trusted-device support require v6 or newer.
 
@@ -140,7 +144,34 @@ WebAPI parameter shape remains operation-specific. User mutations use typed JSON
 
 `runtime.Manager` owns a map keyed by NAS profile name. Each entry is a separate `synology.Client` containing its own SID, SynoToken, trusted-device state, discovered API versions, and HTTP transport. Clients are created lazily and reused until the CLI command or MCP process exits.
 
-Calls to one NAS are serialized inside that NAS client to protect mutable session state. Calls to different profiles use different clients. DSM session errors 106 and 119 clear the local session, perform one automatic login, and retry the failed API call once.
+Two session lifetimes exist:
+
+- A client seeded from the persisted web-login session borrows it: it is
+  created with `PreserveSessionOnClose`, so `Manager.Close` drops its
+  in-memory copy without contacting DSM. When DSM rejects the session, the
+  client's `Resume` closure recovers without a browser or password: it first
+  re-reads the store — picking up a session renewed by another process's
+  `auth login`, which keeps a long-running MCP server usable after the
+  session it started with expires — and otherwise performs the browserless
+  Noise resume with the stored renewal keys, persisting the refreshed
+  session. Revocation is an explicit act: `application.Service.Logout` (used
+  by `auth logout` and `nas remove`) calls `Manager.RevokeStoredSession` with
+  a bounded timeout, which asks DSM to invalidate the stored SID via the
+  client's explicit `Logout` verb before the local entry is deleted
+  (best-effort; an unreachable NAS never blocks the local removal).
+- A client that logged in itself (password fallback) owns its session and
+  logs it out on `Close`.
+
+The persisted session is stored per profile in the OS credential store
+(Windows Credential Manager, macOS Keychain, Linux Secret Service) under
+`dsmctl` / `session/<profile>`, so many NAS can hold independent sessions at
+once. The blob bundles the live SID/SynoToken with the durable Noise resume
+keys; display paths only ever see the non-secret `SessionMeta` projection.
+The credential store provides the at-rest encryption; dsmctl adds no layer of
+its own, and on hosts without a store (headless Linux without a D-Bus Secret
+Service) it fails closed rather than writing secrets to disk.
+
+Calls to one NAS are serialized inside that NAS client to protect mutable session state. Calls to different profiles use different clients. DSM session errors 106 and 119 clear the local session, re-establish one, and retry the failed API call once; a session-seeded client has no password, so re-establishing means the store re-read plus Noise resume described above, and when neither yields a session it reports that a new `auth login` is required.
 
 ## Public surfaces
 
@@ -154,8 +185,7 @@ dsmctl nas remove <name> [--keep-credentials]
 dsmctl nas capabilities [--nas <name>] [--json]
 dsmctl auth login [--nas <name>]
 dsmctl auth status [--nas <name>] [--json]
-dsmctl auth logout [--nas <name>] [--password] [--trusted-device]
-dsmctl auth rotate-device [--nas <name>]
+dsmctl auth logout [--nas <name>]
 dsmctl system info [--nas <name>] [--json]
 dsmctl storage capabilities [--nas <name>] [--json]
 dsmctl storage inventory [--nas <name>] [--json]

@@ -103,45 +103,57 @@ func newAuthStatusCommand(opts *options) *cobra.Command {
 func newAuthLogoutCommand(opts *options) *cobra.Command {
 	command := &cobra.Command{
 		Use:   "logout",
-		Short: "Remove the stored session for a NAS",
-		Long: "Delete the stored web-login session (and its renewal keys) for one NAS\n" +
-			"profile from the OS credential store. An explicitly named profile does\n" +
-			"not need to exist in the configuration, so a session left behind by an\n" +
-			"earlier 'nas remove' can still be cleaned up. Removal is local: DSM\n" +
-			"sessions held by other running dsmctl processes stay valid until they\n" +
-			"exit. Sign in again with 'dsmctl auth login'.",
+		Short: "Sign out of a NAS and remove the stored session",
+		Long: "Ask DSM to revoke the stored web-login session, then delete it (and its\n" +
+			"renewal keys) for one NAS profile from the OS credential store. The\n" +
+			"revocation is best-effort: when the NAS is unreachable, or an explicitly\n" +
+			"named profile no longer exists in the configuration (a session left\n" +
+			"behind by an earlier 'nas remove'), the local copy is still removed and\n" +
+			"the DSM session lapses on its own expiry. Sign in again with\n" +
+			"'dsmctl auth login'.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			cfg, err := config.NewStore(opts.configPath).Load()
+			service, err := loadService(opts.configPath)
 			if err != nil {
 				return err
 			}
-			name := opts.nas
-			if name == "" {
-				resolved, _, resolveErr := cfg.Resolve("")
-				if resolveErr != nil {
-					return resolveErr
-				}
-				name = resolved
-			} else if err := config.ValidateName(name); err != nil {
-				return fmt.Errorf("invalid NAS name %q: %w", name, err)
-			}
-			secrets := credentials.NewSecureStore()
-			removed, err := secrets.DeleteSession(cmd.Context(), name)
+			defer closeService(service)
+			result, err := service.Logout(cmd.Context(), opts.nas)
 			if err != nil {
 				return err
 			}
-			out := cmd.OutOrStdout()
-			if removed {
-				fmt.Fprintf(out, "Removed the stored session for NAS %q.\n", name)
-			} else {
-				fmt.Fprintf(out, "No session was stored for NAS %q.\n", name)
-			}
-			fmt.Fprintln(out, "Running dsmctl processes keep their in-memory session until they exit.")
+			writeLogoutResult(cmd, result)
 			return nil
 		},
 	}
 	return command
+}
+
+// writeLogoutResult narrates a sign-out outcome. Revocation problems go to
+// stderr so scripts reading stdout still see the primary outcome line.
+func writeLogoutResult(cmd *cobra.Command, result application.LogoutResult) {
+	if result.RevocationError != "" {
+		fmt.Fprintf(cmd.ErrOrStderr(),
+			"Warning: could not revoke the DSM session on NAS %q: %s\n"+
+				"The stored copy is removed anyway; the DSM session stays valid until it expires.\n",
+			result.NAS, result.RevocationError)
+	}
+	out := cmd.OutOrStdout()
+	switch {
+	case result.Revoked && result.Removed:
+		fmt.Fprintf(out, "Signed out of NAS %q: DSM accepted the sign-out and the stored session was removed.\n", result.NAS)
+	case result.Revoked:
+		fmt.Fprintf(out, "Signed out of NAS %q: DSM accepted the sign-out; no stored session remained to remove.\n", result.NAS)
+	case result.Removed:
+		fmt.Fprintf(out, "Removed the stored session for NAS %q.\n", result.NAS)
+		if !result.Configured {
+			fmt.Fprintf(cmd.ErrOrStderr(),
+				"NAS %q is not configured, so its URL is unknown and the DSM session was not revoked server-side; it stays valid until it expires.\n",
+				result.NAS)
+		}
+	default:
+		fmt.Fprintf(out, "No session was stored for NAS %q.\n", result.NAS)
+	}
 }
 
 func writeAuthStatus(cmd *cobra.Command, result application.AuthStatusResult) error {
