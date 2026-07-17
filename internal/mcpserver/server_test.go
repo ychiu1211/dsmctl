@@ -66,10 +66,11 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools() error = %v", err)
 	}
-	if len(tools.Tools) != 48 {
-		t.Fatalf("ListTools() returned %d tools, want 48", len(tools.Tools))
+	if len(tools.Tools) != 49 {
+		t.Fatalf("ListTools() returned %d tools, want 49", len(tools.Tools))
 	}
 	readOnlyTools := map[string]bool{
+		"discover_lan_devices":                false,
 		"explain_effective_access":            false,
 		"get_auth_status":                     false,
 		"get_logs":                            false,

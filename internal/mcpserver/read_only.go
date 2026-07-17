@@ -8,10 +8,13 @@ import (
 
 // NewReadOnly returns the MCP surface permitted by the developer HTTP
 // gateway. Planning and applying are deliberately omitted until the remote
-// authorization and approval boundary is implemented by WI-016.
+// authorization and approval boundary is implemented by WI-016. LAN discovery
+// is also omitted: a remote caller must not be able to trigger a broadcast scan
+// of, or enumerate devices on, the gateway host's local network.
 func NewReadOnly(service *application.Service, version string) *mcp.Server {
 	server := New(service, version)
 	server.RemoveTools(
+		"discover_lan_devices",
 		"plan_account_change",
 		"plan_control_panel_time_change",
 		"plan_file_service_change",

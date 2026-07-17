@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/config"
 	"github.com/ychiu1211/dsmctl/internal/domain/access"
 	"github.com/ychiu1211/dsmctl/internal/domain/controlpanel"
+	"github.com/ychiu1211/dsmctl/internal/domain/discovery"
 	"github.com/ychiu1211/dsmctl/internal/domain/driveadmin"
 	"github.com/ychiu1211/dsmctl/internal/domain/identity"
 	"github.com/ychiu1211/dsmctl/internal/domain/packagecenter"
@@ -19,6 +21,14 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/domain/syslog"
 	"github.com/ychiu1211/dsmctl/internal/synology"
 )
+
+type discoverLANDevicesInput struct {
+	TimeoutSeconds int `json:"timeout_seconds,omitempty" jsonschema:"How long to listen for device responses, in seconds; defaults to 3 and is capped at 60"`
+}
+
+type discoverLANDevicesOutput struct {
+	Devices []discovery.Device `json:"devices" jsonschema:"Synology devices that answered the findhost broadcast, deduplicated by device"`
+}
 
 type listNASInput struct{}
 
@@ -436,6 +446,19 @@ func New(service *application.Service, version string) *mcp.Server {
 		Description: "List configured Synology NAS connection profiles. Passwords are never returned.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, _ listNASInput) (*mcp.CallToolResult, listNASOutput, error) {
 		return nil, listNASOutput{NAS: service.ListNAS()}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "discover_lan_devices",
+		Title:       "Discover Synology devices on the LAN",
+		Description: "Broadcast a Synology findhost discovery query on the local network and return the Synology devices that answer: hostname, model, OS version, serial, IPv4 address(es), MAC, and self-reported state. Needs no configured NAS, credential, or DSM session, and mutates nothing — it only sends discovery query packets. It sees only devices in the local broadcast domain of the host running dsmctl.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input discoverLANDevicesInput) (*mcp.CallToolResult, discoverLANDevicesOutput, error) {
+		result, err := service.DiscoverDevices(ctx, discovery.Query{Timeout: time.Duration(input.TimeoutSeconds) * time.Second})
+		if err != nil {
+			return nil, discoverLANDevicesOutput{}, err
+		}
+		return nil, discoverLANDevicesOutput{Devices: result.Devices}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
