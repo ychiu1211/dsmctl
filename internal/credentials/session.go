@@ -34,6 +34,9 @@ type SessionCredential struct {
 	LocalPublicKey  []byte `json:"local_public_key,omitempty"`
 	LocalPrivateKey []byte `json:"local_private_key,omitempty"`
 
+	// DeviceID is the trusted-device identifier DSM issued for this session.
+	DeviceID string `json:"device_id,omitempty"`
+
 	// The following fields are non-secret metadata, safe to surface through
 	// SessionMeta. ExpiresAt is zero when DSM did not report an expiry, in which
 	// case validity can only be confirmed by contacting the NAS.

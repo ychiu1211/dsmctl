@@ -33,6 +33,10 @@ func (fakeCredentialStore) PasswordEnvironment(profileName string, _ config.Prof
 	return credentials.DefaultEnvironmentVariable(profileName), false
 }
 
+func (fakeCredentialStore) SessionMeta(context.Context, string) (credentials.SessionMeta, error) {
+	return credentials.SessionMeta{}, nil
+}
+
 func TestNewRegistersToolSchemas(t *testing.T) {
 	cfg := config.New()
 	manager := runtime.NewManager(cfg, credentials.NewEnvironment())

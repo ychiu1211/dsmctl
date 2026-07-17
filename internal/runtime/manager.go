@@ -263,6 +263,13 @@ func (m *Manager) Close(ctx context.Context) error {
 	return errors.Join(closeErrors...)
 }
 
+// HTTPClient builds an HTTP client honoring a profile's TLS and timeout
+// settings. It is exported so login flows outside the manager (for example the
+// web-login handshake) can reach a NAS with the same policy.
+func HTTPClient(profile config.Profile) *http.Client {
+	return httpClient(profile)
+}
+
 func httpClient(profile config.Profile) *http.Client {
 	timeout := 30 * time.Second
 	if profile.TimeoutSeconds > 0 {

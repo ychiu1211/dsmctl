@@ -15,6 +15,7 @@ type fakeCredentialStore struct {
 	passwords map[string]bool
 	devices   map[string]bool
 	envSet    map[string]bool
+	sessions  map[string]credentials.SessionMeta
 	probeErr  error
 	deleted   []string
 }
@@ -53,6 +54,10 @@ func (store *fakeCredentialStore) PasswordEnvironment(profileName string, profil
 		name = credentials.DefaultEnvironmentVariable(profileName)
 	}
 	return name, store.envSet[name]
+}
+
+func (store *fakeCredentialStore) SessionMeta(_ context.Context, profileName string) (credentials.SessionMeta, error) {
+	return store.sessions[profileName], nil
 }
 
 func credentialTestService(store CredentialStore) *Service {

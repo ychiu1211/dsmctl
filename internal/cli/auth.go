@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 	"text/tabwriter"
 	"time"
@@ -12,15 +11,15 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/config"
 	"github.com/ychiu1211/dsmctl/internal/credentials"
 	"github.com/ychiu1211/dsmctl/internal/runtime"
+	"github.com/ychiu1211/dsmctl/internal/weblogin"
 )
 
 func newAuthCommand(opts *options) *cobra.Command {
-	command := &cobra.Command{Use: "auth", Short: "Manage DSM authentication credentials securely"}
+	command := &cobra.Command{Use: "auth", Short: "Manage DSM authentication"}
 	command.AddCommand(
 		newAuthLoginCommand(opts),
 		newAuthStatusCommand(opts),
 		newAuthLogoutCommand(opts),
-		newAuthRotateDeviceCommand(opts),
 	)
 	return command
 }
@@ -28,8 +27,13 @@ func newAuthCommand(opts *options) *cobra.Command {
 func newAuthLoginCommand(opts *options) *cobra.Command {
 	return &cobra.Command{
 		Use:   "login",
-		Short: "Verify and save a DSM password and trusted device",
-		Args:  cobra.NoArgs,
+		Short: "Sign in to a NAS through your web browser",
+		Long: "Open the NAS's own sign-in page in your web browser and store the\n" +
+			"resulting DSM session. The password (and any two-factor, passkey, or\n" +
+			"approve-sign-in step) is entered only in the browser against the NAS;\n" +
+			"dsmctl never handles it. The stored session and its renewal keys are\n" +
+			"reused by later commands.",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := config.NewStore(opts.configPath).Load()
 			if err != nil {
@@ -39,35 +43,29 @@ func newAuthLoginCommand(opts *options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			password, err := promptSecret(cmd, fmt.Sprintf("Password for %s on NAS %q: ", profile.Username, name))
+			result, err := weblogin.Login(cmd.Context(), profile.URL, weblogin.Options{
+				HTTPClient: runtime.HTTPClient(profile),
+				Prompt:     cmd.ErrOrStderr(),
+			})
 			if err != nil {
 				return err
 			}
-
-			secrets := credentials.NewSecureStore()
-			resolver := credentials.WithPassword(secrets, name, password)
-			manager := runtime.NewManager(
-				cfg,
-				resolver,
-				runtime.WithDeviceStore(secrets),
-				runtime.WithOTPProvider(terminalOTPProvider(cmd)),
-			)
-			service := application.NewService(cfg, manager, application.WithCredentialStore(secrets))
-			defer func() {
-				closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				_ = service.Close(closeCtx)
-			}()
-
-			result, err := service.Authenticate(cmd.Context(), name)
-			if err != nil {
+			now := time.Now()
+			session := credentials.SessionCredential{
+				SID:             result.SID,
+				SynoToken:       result.SynoToken,
+				DeviceID:        result.DeviceID,
+				ServerPublicKey: result.ServerPublicKey,
+				LocalPublicKey:  result.LocalPublicKey,
+				LocalPrivateKey: result.LocalPrivateKey,
+				Account:         result.Account,
+				IssuedAt:        now,
+				LastVerified:    now,
+			}
+			if err := credentials.NewSecureStore().SaveSession(cmd.Context(), name, session); err != nil {
 				return err
 			}
-			if err := secrets.SavePassword(cmd.Context(), name, password); err != nil {
-				return err
-			}
-			password = ""
-			fmt.Fprintf(cmd.OutOrStdout(), "Authenticated to NAS %q. Password and any DSM trusted-device credential are stored in the OS credential store.\n", result.NAS)
+			fmt.Fprintf(cmd.OutOrStdout(), "Signed in to NAS %q as %s. The session is stored in the OS credential store.\n", name, result.Account)
 			return nil
 		},
 	}
@@ -77,11 +75,10 @@ func newAuthStatusCommand(opts *options) *cobra.Command {
 	var jsonOutput bool
 	command := &cobra.Command{
 		Use:   "status",
-		Short: "Show stored credential status without revealing secrets",
-		Long: "Report, per NAS profile, whether a password and a DSM trusted-device\n" +
-			"credential are stored in the OS credential store, plus the password\n" +
-			"environment variable name and whether it is set. The command is fully\n" +
-			"offline: it never resolves passwords and never contacts a NAS.",
+		Short: "Show stored session status without revealing secrets",
+		Long: "Report, per NAS profile, whether a web-login session is stored in the OS\n" +
+			"credential store and whether it can be renewed. The command is fully\n" +
+			"offline: it never reveals secrets and never contacts a NAS.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
@@ -104,125 +101,66 @@ func newAuthStatusCommand(opts *options) *cobra.Command {
 }
 
 func newAuthLogoutCommand(opts *options) *cobra.Command {
-	var passwordOnly, deviceOnly bool
 	command := &cobra.Command{
 		Use:   "logout",
-		Short: "Remove the stored password and trusted device for a NAS (default: both)",
-		Long: "Remove stored credentials for one NAS profile from the OS credential store.\n" +
-			"By default both the password and the DSM trusted-device credential are\n" +
-			"removed; --password or --trusted-device narrows the scope. An explicitly\n" +
-			"named profile does not need to exist in the configuration, so credentials\n" +
-			"left behind by an earlier 'nas remove' can still be cleaned up. Removal is\n" +
-			"local and reversible with 'dsmctl auth login': DSM sessions held by other\n" +
-			"running dsmctl processes stay valid until those processes exit.",
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			scope := application.CredentialScope{Password: true, TrustedDevice: true}
-			if passwordOnly || deviceOnly {
-				scope = application.CredentialScope{Password: passwordOnly, TrustedDevice: deviceOnly}
-			}
-			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
-			if err != nil {
-				return err
-			}
-			defer closeService(service)
-			result, err := service.RemoveCredentials(cmd.Context(), opts.nas, scope)
-			if err != nil {
-				return err
-			}
-			out := cmd.OutOrStdout()
-			if scope.Password {
-				if result.PasswordRemoved {
-					fmt.Fprintf(out, "Removed the stored password for NAS %q.\n", result.NAS)
-				} else {
-					fmt.Fprintf(out, "No password was stored for NAS %q.\n", result.NAS)
-				}
-			}
-			if scope.TrustedDevice {
-				if result.TrustedDeviceRemoved {
-					fmt.Fprintf(out, "Removed the stored trusted-device credential for NAS %q.\n", result.NAS)
-				} else {
-					fmt.Fprintf(out, "No trusted-device credential was stored for NAS %q.\n", result.NAS)
-				}
-			}
-			fmt.Fprintln(out, "Running dsmctl processes keep their in-memory credentials and DSM sessions until they exit.")
-			if scope.Password {
-				fmt.Fprintln(out, "A set password environment variable still enables non-interactive login; check 'dsmctl auth status'.")
-			}
-			return nil
-		},
-	}
-	command.Flags().BoolVar(&passwordOnly, "password", false, "remove only the stored password")
-	command.Flags().BoolVar(&deviceOnly, "trusted-device", false, "remove only the stored trusted-device credential")
-	return command
-}
-
-func newAuthRotateDeviceCommand(opts *options) *cobra.Command {
-	return &cobra.Command{
-		Use:   "rotate-device",
-		Short: "Replace the DSM trusted-device credential by re-authenticating",
-		Long: "Delete the stored trusted-device credential, then log in again using the\n" +
-			"stored password or the password environment variable. On a 2FA-protected\n" +
-			"account DSM prompts for an OTP and issues a new trusted-device ID, which is\n" +
-			"saved to the OS credential store. The old device entry may remain listed in\n" +
-			"DSM Personal > Security and can be revoked there. If login fails after the\n" +
-			"deletion, run 'dsmctl auth login' to recover.",
+		Short: "Remove the stored session for a NAS",
+		Long: "Delete the stored web-login session (and its renewal keys) for one NAS\n" +
+			"profile from the OS credential store. An explicitly named profile does\n" +
+			"not need to exist in the configuration, so a session left behind by an\n" +
+			"earlier 'nas remove' can still be cleaned up. Removal is local: DSM\n" +
+			"sessions held by other running dsmctl processes stay valid until they\n" +
+			"exit. Sign in again with 'dsmctl auth login'.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := config.NewStore(opts.configPath).Load()
 			if err != nil {
 				return err
 			}
-			name, _, err := cfg.Resolve(opts.nas)
-			if err != nil {
-				return err
+			name := opts.nas
+			if name == "" {
+				resolved, _, resolveErr := cfg.Resolve("")
+				if resolveErr != nil {
+					return resolveErr
+				}
+				name = resolved
+			} else if err := config.ValidateName(name); err != nil {
+				return fmt.Errorf("invalid NAS name %q: %w", name, err)
 			}
 			secrets := credentials.NewSecureStore()
-			removed, err := secrets.DeleteTrustedDevice(cmd.Context(), name)
+			removed, err := secrets.DeleteSession(cmd.Context(), name)
 			if err != nil {
 				return err
 			}
+			out := cmd.OutOrStdout()
 			if removed {
-				fmt.Fprintf(cmd.OutOrStdout(), "Removed the stored trusted device for NAS %q.\n", name)
+				fmt.Fprintf(out, "Removed the stored session for NAS %q.\n", name)
 			} else {
-				fmt.Fprintf(cmd.OutOrStdout(), "No trusted device was stored for NAS %q; authenticating to obtain one.\n", name)
+				fmt.Fprintf(out, "No session was stored for NAS %q.\n", name)
 			}
-			service, err := loadService(opts.configPath, terminalOTPProvider(cmd))
-			if err != nil {
-				return err
-			}
-			defer closeService(service)
-			result, err := service.Authenticate(cmd.Context(), name)
-			if err != nil {
-				return fmt.Errorf("re-authentication failed and the previous trusted device is no longer stored; run 'dsmctl auth login --nas %s' to recover: %w", name, err)
-			}
-			stored, err := secrets.HasTrustedDevice(cmd.Context(), name)
-			if err != nil {
-				return err
-			}
-			if stored {
-				fmt.Fprintf(cmd.OutOrStdout(), "Authenticated to NAS %q and stored a new trusted-device credential. The old entry may remain in DSM Personal > Security until revoked there.\n", result.NAS)
-			} else {
-				fmt.Fprintf(cmd.OutOrStdout(), "Authenticated to NAS %q. DSM did not issue a trusted-device credential; two-factor authentication may be disabled for this account.\n", result.NAS)
-			}
+			fmt.Fprintln(out, "Running dsmctl processes keep their in-memory session until they exit.")
 			return nil
 		},
 	}
+	return command
 }
 
 func writeAuthStatus(cmd *cobra.Command, result application.AuthStatusResult) error {
 	writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-	fmt.Fprintln(writer, "DEFAULT\tNAME\tPASSWORD\tTRUSTED DEVICE\tPASSWORD ENV\tENV SET")
+	fmt.Fprintln(writer, "DEFAULT\tNAME\tSESSION\tRENEWABLE\tACCOUNT")
 	for _, status := range result.Statuses {
 		marker := ""
 		if status.Default {
 			marker = "*"
 		}
-		password, device := storedOrNone(status.PasswordStored), storedOrNone(status.TrustedDeviceStored)
-		if status.StoreError != "" {
-			password, device = "error", "error"
+		session := storedOrNone(status.SessionStored)
+		renewable := yesNo(status.SessionRenewable)
+		if !status.SessionStored {
+			renewable = "-"
 		}
-		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%s\n", marker, status.NAS, password, device, status.PasswordEnv, yesNo(status.PasswordEnvSet))
+		if status.StoreError != "" {
+			session, renewable = "error", "error"
+		}
+		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\n", marker, status.NAS, session, renewable, status.Account)
 	}
 	if err := writer.Flush(); err != nil {
 		return err

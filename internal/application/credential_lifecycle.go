@@ -19,6 +19,7 @@ type CredentialStore interface {
 	DeletePassword(ctx context.Context, profileName string) (bool, error)
 	DeleteTrustedDevice(ctx context.Context, profileName string) (bool, error)
 	PasswordEnvironment(profileName string, profile config.Profile) (string, bool)
+	SessionMeta(ctx context.Context, profileName string) (credentials.SessionMeta, error)
 }
 
 func WithCredentialStore(store CredentialStore) ServiceOption {
@@ -39,6 +40,9 @@ type AuthStatus struct {
 	TrustedDeviceStored bool   `json:"trusted_device_stored" jsonschema:"A DSM trusted-device credential exists in the OS credential store; name and ID are never returned"`
 	PasswordEnv         string `json:"password_env" jsonschema:"Environment variable name consulted as the password fallback; only the name is reported"`
 	PasswordEnvSet      bool   `json:"password_env_set" jsonschema:"Whether that variable is currently set to a non-empty value in this process"`
+	SessionStored       bool   `json:"session_stored" jsonschema:"A web-login session is stored in the OS credential store; secrets are never returned"`
+	SessionRenewable    bool   `json:"session_renewable" jsonschema:"The stored session carries renewal (Noise resume) keys so it can be refreshed without a browser"`
+	Account             string `json:"account,omitempty" jsonschema:"DSM account the stored session belongs to"`
 	ClientCached        bool   `json:"client_cached" jsonschema:"A DSM client for this profile exists in this process"`
 	SessionHeld         bool   `json:"session_held" jsonschema:"The in-process client holds a DSM session ID from an earlier login; it may have expired server-side and is reported without contacting the NAS"`
 	StoreError          string `json:"store_error,omitempty" jsonschema:"OS credential store probe failure, if any; never contains secret values"`
@@ -99,6 +103,13 @@ func (s *Service) GetAuthStatus(ctx context.Context, requestedNAS string) (AuthS
 			probeErrors = append(probeErrors, err)
 		} else {
 			status.TrustedDeviceStored = stored
+		}
+		if meta, err := s.credentialStore.SessionMeta(ctx, summary.Name); err != nil {
+			probeErrors = append(probeErrors, err)
+		} else {
+			status.SessionStored = meta.Present
+			status.SessionRenewable = meta.CanResume
+			status.Account = meta.Account
 		}
 		if len(probeErrors) > 0 {
 			status.StoreError = errors.Join(probeErrors...).Error()

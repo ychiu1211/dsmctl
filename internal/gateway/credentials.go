@@ -41,3 +41,7 @@ func (*EnvironmentCredentials) DeleteTrustedDevice(context.Context, string) (boo
 func (c *EnvironmentCredentials) PasswordEnvironment(profileName string, profile config.Profile) (string, bool) {
 	return c.environment.Status(profileName, profile)
 }
+
+func (*EnvironmentCredentials) SessionMeta(context.Context, string) (credentials.SessionMeta, error) {
+	return credentials.SessionMeta{}, nil
+}
