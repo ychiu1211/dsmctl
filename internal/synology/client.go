@@ -37,6 +37,14 @@ type Options struct {
 	OTPProvider  OTPProvider
 	SaveDeviceID DeviceIDSaver
 	HTTPClient   *http.Client
+
+	// SessionID and SynoToken seed the client with a session obtained elsewhere
+	// (for example a web login). When SessionID is set the client reuses it
+	// instead of logging in, so a password is not required. If that session
+	// later expires the client can only re-authenticate when a password is also
+	// configured.
+	SessionID string
+	SynoToken string
 }
 
 type APIInfo = compatibility.APIInfo
@@ -74,8 +82,8 @@ func NewClient(options Options) (*Client, error) {
 	if strings.TrimSpace(options.Username) == "" {
 		return nil, errors.New("username is required")
 	}
-	if options.Password == "" {
-		return nil, errors.New("password is required")
+	if options.Password == "" && options.SessionID == "" {
+		return nil, errors.New("a password or an existing session is required")
 	}
 	baseURL.RawQuery = ""
 	baseURL.Fragment = ""
@@ -96,6 +104,8 @@ func NewClient(options Options) (*Client, error) {
 		httpClient:   httpClient,
 		target:       compatibility.NewTarget(),
 		apiChecked:   make(map[string]bool),
+		sid:          options.SessionID,
+		synoToken:    options.SynoToken,
 	}, nil
 }
 
@@ -151,6 +161,9 @@ func (c *Client) ensureAPIsLocked(ctx context.Context, names ...string) error {
 func (c *Client) loginLocked(ctx context.Context) error {
 	if c.sid != "" {
 		return nil
+	}
+	if c.password == "" {
+		return errors.New("DSM session is unavailable and no password is configured to re-authenticate; run 'dsmctl auth login' to sign in again")
 	}
 	if err := c.ensureAPIsLocked(ctx, authAPI); err != nil {
 		return err
@@ -255,6 +268,49 @@ func (c *Client) Authenticate(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.loginLocked(ctx)
+}
+
+// ValidateSession reports whether the session currently held by the client is
+// still accepted by DSM. It issues one cheap authenticated request and, unlike
+// the normal request path, never tries to re-authenticate: an expired or
+// rejected session is reported as (false, nil), a missing session as
+// (false, nil), and only transport or unexpected API failures return an error.
+// It is the authoritative, online counterpart to HasSession.
+func (c *Client) ValidateSession(ctx context.Context) (bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.sid == "" {
+		return false, nil
+	}
+	if err := c.probeSessionLocked(ctx); err != nil {
+		if isSessionError(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+// probeSessionLocked issues a single authenticated read that any DSM release
+// exposes, without the session-retry that executeLocked performs, so callers
+// can observe a session failure instead of silently re-authenticating.
+func (c *Client) probeSessionLocked(ctx context.Context) error {
+	const probeAPI = "SYNO.Core.System"
+	if err := c.ensureAPIsLocked(ctx, probeAPI); err != nil {
+		return err
+	}
+	info, _ := c.target.API(probeAPI)
+	params := url.Values{
+		"api":     {probeAPI},
+		"version": {strconv.Itoa(info.MaxVersion)},
+		"method":  {"info"},
+		"_sid":    {c.sid},
+	}
+	if c.synoToken != "" {
+		params.Set("SynoToken", c.synoToken)
+	}
+	_, err := c.requestLocked(ctx, info.Path, params, probeAPI, "info")
+	return err
 }
 
 func (c *Client) executeLocked(ctx context.Context, call compatibility.Request) (json.RawMessage, error) {
