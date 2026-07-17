@@ -27,7 +27,7 @@ import (
 const PackageID = "SynologyDrive"
 
 // DSM WebAPI anchors, verified by SYNO.API.Info discovery on the configured
-// target and the Admin Console client evidence recorded in WI-021.
+// target and the Admin Console client evidence recorded in WI-022.
 const (
 	StatusAPIName     = "SYNO.SynologyDrive"
 	ConnectionAPIName = "SYNO.SynologyDrive.Connection"

@@ -96,7 +96,7 @@ func TestTeamFoldersSetFailsClosed(t *testing.T) {
 }
 
 func TestExecuteStatusRequestShapeAndDecode(t *testing.T) {
-	// Response shape captured live from Drive 4.0.3 (WI-021).
+	// Response shape captured live from Drive 4.0.3 (WI-022).
 	executor := &capturingExecutor{response: json.RawMessage(`{
 		"csrv_alias_err": "", "csrv_enable": true, "csrv_status": "connected success",
 		"cstn_freeze": false, "enable_status": "Enabled", "no_folder_available": false
@@ -157,7 +157,7 @@ func TestExecuteConnectionsRejectsMissingListContainer(t *testing.T) {
 }
 
 func TestExecuteTeamFoldersRequestShapeAndDecode(t *testing.T) {
-	// Response shape captured live from Drive 4.0.3 (WI-021): share_enable is
+	// Response shape captured live from Drive 4.0.3 (WI-022): share_enable is
 	// the team-folder activation flag, and fields that do not apply to a
 	// disabled share are reported as "-".
 	executor := &capturingExecutor{response: json.RawMessage(`{
@@ -199,7 +199,7 @@ func TestExecuteTeamFoldersRequiresName(t *testing.T) {
 }
 
 func TestExecuteLogSendsFiltersAndDecodes(t *testing.T) {
-	// Response shape captured live from Drive 4.0.3 (WI-021): entries carry a
+	// Response shape captured live from Drive 4.0.3 (WI-022): entries carry a
 	// numeric event type plus substitution slots instead of rendered text.
 	executor := &capturingExecutor{response: json.RawMessage(`{
 		"total": 1,

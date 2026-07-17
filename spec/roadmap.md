@@ -24,7 +24,7 @@ flowchart LR
   WI014 --> WI016["WI-016 Remote authorization/approval/audit"]
   WI015 --> WI016
   WI016 --> WI017["WI-017 amd64 Linux/Synology distribution"]
-  WI019["WI-019 Package Center"] --> WI021["WI-021 Package-scoped operations + Drive Admin"]
+  WI019["WI-019 Package Center"] --> WI022["WI-022 Package-scoped operations + Drive Admin"]
 ```
 
 ## Work queue
@@ -52,7 +52,7 @@ flowchart LR
 | [WI-019](work-items/WI-019-package-center.md) | P1 | `done` | C | — | Package Center inventory, read-only settings, and guarded start/stop/uninstall (install/update/settings-set deferred). |
 | [WI-020](work-items/WI-020-package-settings-write.md) | P2 | `done` | C | WI-019 | Guarded Package Center automatic-update settings write (trust/beta/volume writes deferred). |
 | [WI-021](work-items/WI-021-resource-monitor.md) | P2 | `done` | D | — | Resource Monitor current utilization + recorded history reads and a guarded history-recording toggle. |
-| [WI-021](work-items/WI-021-package-scoped-operations.md) | P1 | `done` | C | WI-019 | Package-version-aware operation selection framework plus the read-only Drive Admin module. |
+| [WI-022](work-items/WI-022-package-scoped-operations.md) | P1 | `done` | C | WI-019 | Package-version-aware operation selection framework plus the read-only Drive Admin module. |
 
 Parallel groups indicate likely file overlap. Items in different groups may run
 at the same time after checking their `touches` lists. Only one agent should

@@ -1,5 +1,5 @@
 ---
-id: WI-021
+id: WI-022
 title: Package-scoped operation framework and Drive Admin read slice
 status: done
 priority: P1
@@ -25,7 +25,7 @@ touches:
   - README.md
 ---
 
-# WI-021 — Package-scoped operation framework and Drive Admin read slice
+# WI-022 — Package-scoped operation framework and Drive Admin read slice
 
 ## Outcome
 

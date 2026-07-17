@@ -46,7 +46,7 @@ func newDriveAdminTestServer(t *testing.T, driveVersion string, running bool, in
 				{"id":"SynologyDrive","name":"Synology Drive Server","version":%q,"additional":{"status":%q,"startable":true,"install_type":""}}
 			]}}`, driveVersion, runningStatus)
 		case "SYNO.SynologyDrive.get_status":
-			// Shape captured live from Drive 4.0.3 (WI-021).
+			// Shape captured live from Drive 4.0.3 (WI-022).
 			fmt.Fprint(w, `{"success":true,"data":{"cstn_freeze":false,"enable_status":"enabled","no_folder_available":false}}`)
 		case "SYNO.SynologyDrive.Connection.list":
 			// A stopped Drive package rejects its own WebAPI calls; mirror that
