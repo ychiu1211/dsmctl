@@ -1,9 +1,9 @@
 ---
 id: WI-013
 title: SSD cache management
-status: in_progress
+status: done
 priority: P2
-owner: "storage"
+owner: ""
 depends_on: [WI-001, WI-002, WI-003]
 parallel_group: A
 touches:
@@ -90,3 +90,13 @@ storage plan/apply flow, without dsmctl exposing a raw DSM call.
 Shares `internal/domain/storage/model.go`, `internal/synology/storage.go`, and
 `internal/application/storage_management.go` with WI-002/WI-003 (both `done`);
 cache branches are additive.
+
+## Completion record
+
+- Completed end to end on 2026-07-17 in commit `4303e36`. SSD cache inventory,
+  capability reporting, guarded read-only/read-write create, and mode-aware
+  remove are wired through the shared CLI/MCP/application plan/apply surface.
+- Verified with `go test ./...` and `go vet ./...`.
+- Live read-only and read-write cache create/remove were verified on DS3018xs
+  running DSM 7.3-81168. Stable postconditions handled asynchronous
+  read-write-cache teardown, and all temporary cache resources were removed.
