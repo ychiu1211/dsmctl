@@ -102,8 +102,8 @@ without dsmctl exposing a raw DSM settings or installation proxy.
 - [x] Request-capture tests lock every enabled DSM mutation shape.
 - [x] Read-only inventory/settings/capability verification passes against a
       configured DSM NAS (DSM 7.3-81168; see Completion record).
-- [x] Live start/stop verified with explicit user authorization; no uninstall or
-      settings mutation was applied.
+- [x] Live start/stop and uninstall verified with explicit user authorization; no
+      settings mutation was applied (settings set is deferred).
 
 ## Verification
 
@@ -157,7 +157,9 @@ the configured test NAS the same day.
   terminal-state postconditions, confirming `SYNO.Core.Package.Control` `start`/
   `stop` with an `id` parameter. `stop` on `AIConsole`/`UniversalViewer` returned
   DSM error 4582 (DSM refuses to stop packages required by others), surfaced as
-  an error rather than a false success. Uninstall was validated by plan only (not
-  applied), because install is deferred so dsmctl cannot reinstall; its apply
-  path shares the verified `id`-parameter mechanism and is locked by a
-  request-capture test.
+  an error rather than a false success. Uninstall was then verified live too:
+  `uninstall` of `Node.js_v18` applied successfully via
+  `SYNO.Core.Package.Uninstallation`, the package was removed, and the
+  absent-package postcondition passed. Uninstall is irreversible through dsmctl
+  (install is deferred), so a removed package is reinstalled from the Package
+  Center UI.
