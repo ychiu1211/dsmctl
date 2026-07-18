@@ -19,12 +19,15 @@ type PackageLifecycleChange = packagecenter.LifecycleChange
 type PackageMutationResult = pkgops.MutationResult
 type PackageCatalog = packagecenter.Catalog
 
-// PackageCatalog reads the online package server's Synology-published catalog.
+// PackageCatalog reads the online package server's Synology-published catalog
+// and cross-references the installed inventory so each offered package is marked
+// installed and, when the offered version differs from the installed one, as
+// having an available update.
 func (c *Client) PackageCatalog(ctx context.Context) (PackageCatalog, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if err := c.prepareCompatibilityTargetLocked(ctx, pkgops.ServerAPIName); err != nil {
+	if err := c.prepareCompatibilityTargetLocked(ctx, pkgops.ServerAPIName, pkgops.InventoryAPIName); err != nil {
 		return PackageCatalog{}, fmt.Errorf("prepare Package Center catalog target: %w", err)
 	}
 	catalog, _, err := pkgops.ExecuteCatalog(ctx, c.target, lockedExecutor{client: c})
@@ -32,6 +35,25 @@ func (c *Client) PackageCatalog(ctx context.Context) (PackageCatalog, error) {
 		return PackageCatalog{}, fmt.Errorf("get Package Center catalog: %w", err)
 	}
 	c.target.AddCapability(pkgops.CatalogCapabilityName)
+
+	// Best-effort inventory cross-reference; a missing inventory just leaves the
+	// installed/update flags at their defaults.
+	if state, _, invErr := pkgops.ExecuteInventory(ctx, c.target, lockedExecutor{client: c}); invErr == nil {
+		installed := make(map[string]string, len(state.Packages))
+		for _, pkg := range state.Packages {
+			installed[pkg.ID] = pkg.Version
+		}
+		for i := range catalog.Packages {
+			version, ok := installed[catalog.Packages[i].ID]
+			if !ok {
+				continue
+			}
+			catalog.Packages[i].Installed = true
+			// The online catalog offers the latest version, so a different
+			// installed version means an update is available.
+			catalog.Packages[i].UpdateAvailable = version != "" && catalog.Packages[i].Version != "" && version != catalog.Packages[i].Version
+		}
+	}
 	return catalog, nil
 }
 

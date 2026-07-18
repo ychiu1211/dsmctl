@@ -38,11 +38,21 @@ Implemented (install):
   task), polls `status` by task id, and confirms completion via the inventory.
 - CLI `package available` and `package install <id> --volume <path> [--approve]`.
 
+Implemented (update check):
+
+- The catalog read cross-references the installed inventory and marks each
+  offered package `installed` and, when the installed version differs from the
+  offered (latest) version, `update_available`. CLI `package available --updates`
+  lists only packages with a pending update. Live-verified: SynologyPhotos and
+  SynologyDrive show up-to-date while SecureSignIn/SynologyApplicationService/
+  UniversalViewer correctly surface available updates.
+
 Deferred (this WI stays in_progress until done):
 
-- Update / upgrade (`SYNO.Core.Package.Server check` for available updates plus
-  `SYNO.Core.Package.Installation` `upgrade`); could not be live-verified without
-  an out-of-date package on the lab.
+- Update / upgrade **apply** (`SYNO.Core.Package.Installation` `install`/`upgrade`
+  of the newer version over an installed package). A package upgrade is not
+  cleanly reversible (no supported downgrade), so it is implemented guarded but
+  not auto-executed against the lab without an explicit per-package request.
 - MCP tools for catalog/install and read-only-gateway exclusion of install-apply.
 
 ## Design constraints
@@ -72,7 +82,10 @@ Deferred (this WI stays in_progress until done):
 - [x] DSM 7.3.2 live verification: installed **Synology Photos 1.9.1-10928** to
       `/volume1` via `dsmctl package install` (the package is installed and
       running); the already-installed guard then rejects a re-install.
-- [ ] Update/upgrade implemented and (where possible) verified.
+- [x] Update **check**: catalog cross-references the inventory and flags
+      installed/update-available; live-verified via `package available --updates`.
+- [ ] Update/upgrade **apply** implemented (guarded; not auto-run — upgrades are
+      not cleanly reversible).
 - [ ] MCP parity for catalog/install with read-only gateway exclusion.
 
 ## Verification

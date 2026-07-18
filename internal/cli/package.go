@@ -65,7 +65,7 @@ func newPackageInstallCommand(opts *options) *cobra.Command {
 }
 
 func newPackageAvailableCommand(opts *options) *cobra.Command {
-	var jsonOutput bool
+	var jsonOutput, updatesOnly bool
 	command := &cobra.Command{
 		Use:   "available",
 		Short: "List packages offered by the online package server (Synology repository)",
@@ -85,19 +85,21 @@ func newPackageAvailableCommand(opts *options) *cobra.Command {
 			}
 			writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
 			fmt.Fprintf(writer, "NAS:\t%s\n", result.NAS)
-			fmt.Fprintf(writer, "Offered packages:\t%d\n\n", len(result.Catalog.Packages))
-			fmt.Fprintln(writer, "ID\tVERSION\tBETA\tSIZE\tLINK")
+			shown := 0
+			fmt.Fprintln(writer, "\nID\tVERSION\tINSTALLED\tUPDATE\tBETA\tSIZE")
 			for _, pkg := range result.Catalog.Packages {
-				link := pkg.DownloadLink
-				if len(link) > 48 {
-					link = link[:45] + "..."
+				if updatesOnly && !pkg.UpdateAvailable {
+					continue
 				}
-				fmt.Fprintf(writer, "%s\t%s\t%s\t%d\t%s\n", pkg.ID, valueOrDash(pkg.Version), yesNo(pkg.Beta), pkg.Size, valueOrDash(link))
+				fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%d\n", pkg.ID, valueOrDash(pkg.Version), yesNo(pkg.Installed), yesNo(pkg.UpdateAvailable), yesNo(pkg.Beta), pkg.Size)
+				shown++
 			}
+			fmt.Fprintf(writer, "\nShown:\t%d of %d offered\n", shown, len(result.Catalog.Packages))
 			return writer.Flush()
 		},
 	}
 	command.Flags().BoolVar(&jsonOutput, "json", false, "output structured JSON")
+	command.Flags().BoolVar(&updatesOnly, "updates", false, "show only installed packages with an available update")
 	return command
 }
 
