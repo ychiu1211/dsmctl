@@ -4,7 +4,7 @@ title: Ship generic Linux and Synology x86_64 distributions
 status: in_progress
 priority: P1
 owner: "synology-distribution"
-depends_on: [WI-014, WI-015, WI-016, WI-032, WI-033]
+depends_on: [WI-014, WI-015, WI-016, WI-032, WI-033, WI-035]
 parallel_group: G
 touches:
   - deploy/container
@@ -129,8 +129,8 @@ Depends on the completed gateway, state/vault, and authorization work. Most
 files are new deployment assets, but release documentation and workflows may
 overlap WI-010 reliability/release hardening if that item is later specified.
 WI-032 supersedes this item's DSM platform-authentication design. Real hardware
-certification and completion of this item are paused until WI-033 completes the
-final administration presentation and revalidates the shared image/SPK
+certification and completion of this item are paused until WI-035 completes the
+final multilingual MCP Server product copy and revalidates the shared image/SPK
 artifacts.
 
 ## Handoff
