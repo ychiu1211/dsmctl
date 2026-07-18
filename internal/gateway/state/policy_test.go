@@ -267,7 +267,7 @@ func TestSchemaOneStateMigratesToAuthorizationBucketsWithBackup(t *testing.T) {
 	}
 }
 
-func TestSchemaTwoUpgradePreservesManagedStateAndSelectsLocalAdminMode(t *testing.T) {
+func TestSchemaThreeLegacyAdministratorWithManagedStateFailsClosed(t *testing.T) {
 	directory := t.TempDir()
 	path := filepath.Join(directory, "gateway.db")
 	key := bytes.Repeat([]byte{5}, 32)
@@ -276,14 +276,6 @@ func TestSchemaTwoUpgradePreservesManagedStateAndSelectsLocalAdminMode(t *testin
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	bootstrap := "bootstrap-token-0123456789abcdef0123456789"
-	if err := repository.ConfigureBootstrap(ctx, bootstrap); err != nil {
-		t.Fatal(err)
-	}
-	adminToken, err := repository.EstablishAdministrator(ctx, bootstrap)
-	if err != nil {
-		t.Fatal(err)
-	}
 	if _, err := repository.CreateProfile(ctx, ProfileInput{Name: "office", URL: "https://office.example"}); err != nil {
 		t.Fatal(err)
 	}
@@ -303,38 +295,33 @@ func TestSchemaTwoUpgradePreservesManagedStateAndSelectsLocalAdminMode(t *testin
 	}
 	if err := db.Update(func(tx *bolt.Tx) error {
 		meta := tx.Bucket(bucketMeta)
-		if err := meta.Put(keySchemaVersion, encodeUint64(2)); err != nil {
+		if err := meta.Put(keySchemaVersion, encodeUint64(3)); err != nil {
 			return err
 		}
-		return meta.Delete(keyAdminMode)
+		if err := meta.Put(keyAdminMode, []byte("local")); err != nil {
+			return err
+		}
+		if err := meta.Put(keyAdminDigest, bytes.Repeat([]byte{7}, 32)); err != nil {
+			return err
+		}
+		for _, key := range [][]byte{keyAdminUsername, keyAdminPassword, keyAdminInitializedAt} {
+			if err := meta.Delete(key); err != nil {
+				return err
+			}
+		}
+		return tx.DeleteBucket(bucketAdminSessions)
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	repository, err = Open(path, key)
-	if err != nil {
-		t.Fatal(err)
+	if _, err = Open(path, key); err == nil || !strings.Contains(err.Error(), "automatic local-administrator reset is refused") {
+		t.Fatalf("legacy managed state migration error = %v", err)
 	}
-	defer repository.Close()
-	if err := repository.AuthenticateAdministrator(ctx, adminToken); err != nil {
-		t.Fatalf("administrator token was not preserved: %v", err)
-	}
-	health, err := repository.Health(ctx)
-	if err != nil || health.AdminMode != AdminModeLocal || health.ProfileCount != 1 {
-		t.Fatalf("migrated health = %#v, %v", health, err)
-	}
-	tokens, err := repository.MCPTokens(ctx)
-	if err != nil || len(tokens) != 1 || tokens[0].ID != issued.Token.ID {
-		t.Fatalf("migrated tokens = %#v, %v", tokens, err)
-	}
-	events, err := repository.AuditEvents(ctx, AuditQuery{Limit: 10, ActorID: "schema-two"})
-	if err != nil || len(events) != 1 {
-		t.Fatalf("migrated audit = %#v, %v", events, err)
-	}
-	backups, _ := filepath.Glob(path + ".pre-v2-*.bak")
+	_ = issued
+	backups, _ := filepath.Glob(path + ".pre-v3-*.bak")
 	if len(backups) != 1 {
-		t.Fatalf("schema-two backups = %v", backups)
+		t.Fatalf("schema-three backups = %v", backups)
 	}
 }

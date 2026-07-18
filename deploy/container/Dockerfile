@@ -40,4 +40,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD ["/dsmctl-gateway", "healthcheck", "--url", "http://127.0.0.1:8080/healthz"]
 
 ENTRYPOINT ["/dsmctl-gateway"]
-CMD ["--listen=0.0.0.0:8080", "--state=/data/gateway.db", "--master-key-file=/run/secrets/master.key", "--bootstrap-file=/run/secrets/bootstrap", "--allowed-hosts=localhost,127.0.0.1", "--allowed-origins=http://localhost:8080,http://127.0.0.1:8080"]
+CMD ["--listen=0.0.0.0:8080", "--state=/data/gateway.db", "--master-key-file=/run/secrets/master.key", "--allowed-hosts=localhost,127.0.0.1", "--allowed-origins=http://localhost:8080,http://127.0.0.1:8080"]

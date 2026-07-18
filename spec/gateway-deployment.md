@@ -64,8 +64,8 @@ Generic Docker Compose --------+
                                 +--> dsmctl gateway container
 Synology x86_64 SPK ------------+          |
   - Container Manager project              +--> HTTP auth/policy
-  - DSM admin-auth adapter                  +--> MCP adapter
-  - DSM reverse proxy                       +--> admin application
+  - DSM reverse proxy                       +--> MCP adapter
+                                           +--> admin application
                                            +--> existing application layer
                                                        |
                                                        +--> runtime/session manager
@@ -75,11 +75,11 @@ Synology x86_64 SPK ------------+          |
                                                                     +--> NAS C
 ```
 
-The gateway container owns HTTP transport, remote identity, authorization,
-profile administration, persistent state, and audit records. It reuses the
-existing application layer for DSM behavior. Deployment adapters own process,
-port, TLS termination, persistent mounts, and platform authentication wiring;
-they never construct DSM WebAPI requests.
+The gateway container owns HTTP transport, local administrator identity,
+authorization, profile administration, persistent state, and audit records. It
+reuses the existing application layer for DSM behavior. Deployment adapters
+own process, port, TLS termination, and persistent mounts; they never identify
+the gateway administrator or construct DSM WebAPI requests.
 
 ## Portability boundary
 
@@ -95,8 +95,6 @@ The image exposes only stable container paths and interfaces:
 ```text
 /data                    persistent database and audit data
 /run/secrets/master.key  read-only 32-byte vault key
-/run/secrets/bootstrap   optional one-time generic-Linux bootstrap token
-/run/secrets/platform.key optional Synology identity-assertion verification key
 /tmp                     bounded tmpfs
 /mcp                     Streamable HTTP MCP endpoint
 /admin                   administration API/UI endpoint
@@ -192,17 +190,16 @@ state; apply rejects a removed or materially changed profile.
 
 Administration is separate from MCP authorization.
 
-- Generic Linux uses a one-time bootstrap secret mounted from
-  `/run/secrets/bootstrap`. It creates the first local administrator token and
-  becomes invalid immediately after successful bootstrap.
-- The Synology wrapper authenticates the DSM browser session outside the core
-  container and forwards a short-lived, signed internal identity assertion to
-  the admin API. A raw username header is not trusted. DSM application
-  privilege restricts the UI to administrators.
-- Synology mode disables generic bootstrap/local-admin admission. The platform
-  adapter and gateway share a dedicated assertion key that is separate from
-  the vault master key. Assertions bind identity, administrator authorization,
-  audience, issue/expiry time, and nonce; the gateway rejects replay.
+- Every deployment uses the same local administrator. While no administrator
+  exists, each process start opens setup for one hour; expiry requires restart
+  of the still-uninitialized process. The first transactional setup creates a
+  normalized username, an Argon2id password verifier, and an expiring browser
+  session, then permanently closes setup for that initialized state.
+- Administration uses random browser sessions stored only as digests and sent
+  through HttpOnly/SameSite cookies. Mutations require same-origin JSON plus a
+  non-simple request header. Login/setup attempts are bounded in memory.
+- DSM browser sessions, DSM groups, forwarded identity headers, and the NAS
+  hosting the container do not authorize Gateway administration.
 - The admin API supports profile CRUD, connection testing, web-login session
   enrollment (the administrator signs in at the NAS's own page, the browser
   relays the one-time code, and the gateway performs the code exchange and
@@ -234,11 +231,10 @@ nas.admin
   before application execution and apply policy is rechecked at the gateway
   application boundary.
 - Rate-limit identity is the token ID, not a client-supplied name or IP alone.
-- Token values, authorization headers, cookies, and internal identity
-  assertions are always redacted.
+- Token values, authorization headers, and cookies are always redacted.
 
 High-risk remote applies require an approval record containing the plan hash,
-NAS profile and revision, approving DSM identity, requesting token ID, expiry,
+NAS profile and revision, approving local administrator identity, requesting token ID, expiry,
 and a single-use marker. Default approval lifetime is 10 minutes. Consumption
 and apply admission are atomic. Failed stale-state or postcondition checks do
 not make an old approval reusable. Local CLI/stdio behavior remains governed
@@ -246,8 +242,8 @@ by the existing plan/apply contract and is not silently changed by HTTP policy.
 
 ## Audit and observability
 
-Audit records contain timestamp, request/correlation ID, remote token ID or DSM
-admin identity, NAS profile, tool/use case, action, risk, plan hash when
+Audit records contain timestamp, request/correlation ID, remote token ID or
+local administrator identity, NAS profile, tool/use case, action, risk, plan hash when
 applicable, stable resource identifier when available, outcome, and normalized
 error class. They never contain request secrets, raw authorization material,
 SynoTokens, SIDs, OTPs, or encrypted payloads.
@@ -284,7 +280,7 @@ requirement justifies one.
 - The operator creates persistent data and secret files with documented UID
   ownership, supplies TLS/reverse proxy separately, and explicitly configures
   each NAS.
-- No platform SSO is assumed; one-time bootstrap creates the first local
+- No platform SSO is assumed; the one-hour first-run page creates the local
   administrator credential.
 
 ### Synology x86_64
@@ -301,11 +297,11 @@ requirement justifies one.
 - Resolve the DSM package user's dynamic UID/GID into Compose/runtime ownership
   so the long-running container remains non-root while package data and secret
   files remain unreadable to other users. Never solve an ownership mismatch by
-  making the master or assertion key world-readable.
+  making the master key world-readable.
 - Publish the backend to host loopback only and register the DSM portal/reverse
   proxy without automatically opening a firewall or router port.
-- Provide DSM administrator authentication for the admin UI and separate MCP
-  bearer credentials for MCP clients.
+- Route the same local-administrator UI through the DSM portal and keep its
+  browser session separate from MCP bearer credentials and every NAS session.
 
 ## Release and verification matrix
 
@@ -340,9 +336,11 @@ approved under the repository safety policy.
    runtime invalidation.
 3. WI-016 adds scoped remote authorization, out-of-band approval, and audit.
 4. WI-017 packages the completed gateway for generic Linux and Synology
-   x86_64, including offline image preload and DSM authentication wiring.
+   x86_64, including offline image preload and portal wiring.
+5. WI-024 replaces the pre-release bootstrap/platform-auth split with the same
+   one-hour local-administrator setup and browser session model everywhere.
 
-The production Synology package depends on all four items. Intermediate
+The production Synology package depends on all five items. Intermediate
 developer builds may expose read-only tools on generic Linux, but must be
 clearly labeled unsupported and must not enable remote apply.
 

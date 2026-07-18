@@ -139,7 +139,7 @@ func New(options Options) (*Server, error) {
 	}
 
 	handler := correlateAndLog(logger, options.TrustedProxies,
-		protectHostAndOrigin(allowedHosts, allowedOrigins, mux))
+		protectHostAndOrigin(allowedHosts, allowedOrigins, options.AdminHandler != nil, mux))
 	shutdownTimeout := durationOr(options.ShutdownTimeout, defaultShutdownTimeout)
 	server := &http.Server{
 		Handler:           handler,
@@ -380,7 +380,7 @@ func limitConcurrent(semaphore chan struct{}, next http.Handler) http.Handler {
 	})
 }
 
-func protectHostAndOrigin(allowedHosts, allowedOrigins map[string]struct{}, next http.Handler) http.Handler {
+func protectHostAndOrigin(allowedHosts, allowedOrigins map[string]struct{}, delegateDynamicAdminOrigin bool, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		host, err := normalizeHost(req.Host)
 		if err != nil {
@@ -397,7 +397,9 @@ func protectHostAndOrigin(allowedHosts, allowedOrigins map[string]struct{}, next
 				http.Error(w, "invalid Origin", http.StatusForbidden)
 				return
 			}
-			if _, ok := allowedOrigins[origin]; !ok {
+			_, explicitlyAllowed := allowedOrigins[origin]
+			dynamicAdminOrigin := delegateDynamicAdminOrigin && len(allowedOrigins) == 0 && (req.URL.Path == "/admin" || strings.HasPrefix(req.URL.Path, "/admin/"))
+			if !explicitlyAllowed && !dynamicAdminOrigin {
 				http.Error(w, "forbidden Origin", http.StatusForbidden)
 				return
 			}

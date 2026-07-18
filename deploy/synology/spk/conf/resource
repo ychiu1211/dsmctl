@@ -18,9 +18,12 @@
       "support_alias": true,
       "support_server": false,
       "type": "reverse_proxy",
-      "proxy_target": "http://127.0.0.1:18766",
+      "proxy_target": "http://127.0.0.1:18765",
       "proxy_http_version": 1,
       "proxy_headers": [{
+        "name": "Host",
+        "value": "127.0.0.1"
+      }, {
         "name": "X-Forwarded-Proto",
         "value": "$scheme"
       }, {

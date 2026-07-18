@@ -80,7 +80,6 @@ jobs:
           trap 'docker compose --env-file "$smoke/.env" -f deploy/linux/compose.yaml down >/dev/null 2>&1 || true; rm -rf "$smoke"' EXIT
           mkdir "$smoke/data" "$smoke/secrets"
           head -c 32 /dev/urandom > "$smoke/secrets/master.key"
-          printf '0123456789abcdef0123456789abcdef0123456789abcdef\n' > "$smoke/secrets/bootstrap"
           chmod 700 "$smoke/data" "$smoke/secrets"
           chmod 600 "$smoke/secrets/"*
           cat > "$smoke/.env" <<EOF
@@ -94,6 +93,18 @@ jobs:
           EOF
           docker compose --env-file "$smoke/.env" -f deploy/linux/compose.yaml up -d
           for attempt in $(seq 1 30); do curl -fsS http://127.0.0.1:18765/healthz && break; sleep 1; done
+          test "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18765/readyz)" = 503
+          setup_password='gateway-ci-password-canary'
+          curl -fsS -D "$smoke/setup.headers" \
+            -H 'Origin: https://gateway.example.test' \
+            -H 'X-DSMCTL-Request: 1' -H 'Content-Type: application/json' \
+            --data "{\"username\":\"release-admin\",\"password\":\"$setup_password\"}" \
+            http://127.0.0.1:18765/admin/api/setup >/dev/null
+          session_cookie="$(sed -n 's/^set-cookie: \([^;]*\).*/\1/ip' "$smoke/setup.headers")"
+          test -n "$session_cookie"
+          curl -fsS -H "Cookie: $session_cookie" http://127.0.0.1:18765/admin/api/session >/dev/null
+          curl -fsS http://127.0.0.1:18765/readyz >/dev/null
+          ! grep -a -q "$setup_password" "$smoke/data/gateway.db"
           container="$(docker compose --env-file "$smoke/.env" -f deploy/linux/compose.yaml ps -q gateway)"
           test "$(docker inspect "$container" --format '{{.HostConfig.ReadonlyRootfs}}')" = true
           test "$(docker inspect "$container" --format '{{json .HostConfig.CapDrop}}')" = '["ALL"]'
@@ -101,6 +112,7 @@ jobs:
           test -z "$(docker inspect "$container" --format '{{range .Mounts}}{{if eq .Destination "/var/run/docker.sock"}}{{.Source}}{{end}}{{end}}')"
           docker compose --env-file "$smoke/.env" -f deploy/linux/compose.yaml restart
           test -f "$smoke/data/gateway.db"
+          for attempt in $(seq 1 30); do curl -fsS -H "Cookie: $session_cookie" http://127.0.0.1:18765/admin/api/session && break; sleep 1; done
       - uses: actions/upload-artifact@v6
         with:
           name: dsmctl-gateway-${{ env.PACKAGE_VERSION }}-amd64

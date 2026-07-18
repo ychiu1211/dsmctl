@@ -3,9 +3,10 @@
 Create these owner-readable files before first start:
 
 - `master.key`: exactly 32 random binary bytes; never place it in `/data` or a
-  normal database backup;
-- `bootstrap`: at least 32 random non-whitespace characters, used exactly once
-  to establish the first local administrator;
+  normal database backup.
+
+There is no administrator bootstrap or platform-identity secret. Open the
+first-run page within one hour to create the local administrator account.
 
 Managed MCP tokens are created in the administration page and stored as
 digests in `gateway.db`; they are not mounted as container secrets. The

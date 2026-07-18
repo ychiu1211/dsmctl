@@ -16,14 +16,12 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	"unicode"
 
 	"github.com/ychiu1211/dsmctl/internal/application"
 	"github.com/ychiu1211/dsmctl/internal/buildinfo"
 	"github.com/ychiu1211/dsmctl/internal/config"
 	"github.com/ychiu1211/dsmctl/internal/gateway"
 	"github.com/ychiu1211/dsmctl/internal/gateway/admin"
-	"github.com/ychiu1211/dsmctl/internal/gateway/platformauth"
 	gatewaystate "github.com/ychiu1211/dsmctl/internal/gateway/state"
 	"github.com/ychiu1211/dsmctl/internal/mcpserver"
 	"github.com/ychiu1211/dsmctl/internal/runtime"
@@ -46,10 +44,7 @@ func run(arguments []string, logger *slog.Logger) error {
 	configPath := flags.String("config", config.DefaultPath(), "configuration file path")
 	statePath := flags.String("state", "", "managed gateway state database path; enables dynamic administration")
 	masterKeyPath := flags.String("master-key-file", "", "32-byte managed gateway vault key file")
-	bootstrapPath := flags.String("bootstrap-file", "", "one-time generic Linux administrator bootstrap token file")
-	platformAssertionKeyPath := flags.String("platform-assertion-key-file", "", "Synology platform administrator assertion key file; disables generic bootstrap")
-	platformAssertionAudience := flags.String("platform-assertion-audience", platformauth.DefaultAudience, "required audience for Synology administrator assertions")
-	adminPublicURL := flags.String("admin-public-url", "", "public gateway origin used as the DSM web-login opener")
+	adminPublicURL := flags.String("admin-public-url", "", "public gateway origin used for browser request validation and DSM web-login opener")
 	listenAddress := flags.String("listen", "127.0.0.1:18765", "HTTP listen address")
 	tokenPath := flags.String("dev-read-only-token-file", "", "required local bearer-token file for explicit read-only developer mode")
 	allowedHosts := flags.String("allowed-hosts", "localhost,127.0.0.1,::1", "comma-separated allowed HTTP Host names or addresses")
@@ -72,13 +67,6 @@ func run(arguments []string, logger *slog.Logger) error {
 	}
 
 	managed := strings.TrimSpace(*statePath) != ""
-	platformManaged := strings.TrimSpace(*platformAssertionKeyPath) != ""
-	if platformManaged && !managed {
-		return errors.New("platform assertion authentication requires managed gateway state")
-	}
-	if platformManaged && strings.TrimSpace(*bootstrapPath) != "" {
-		return errors.New("platform assertion authentication cannot be combined with generic bootstrap")
-	}
 	var token string
 	var tokenDigest [sha256.Size]byte
 	var err error
@@ -95,16 +83,14 @@ func run(arguments []string, logger *slog.Logger) error {
 	}
 
 	var (
-		cfg              *config.Config
-		manager          *runtime.Manager
-		service          *application.Service
-		adminHandler     http.Handler
-		ready            func(context.Context) error
-		closeState       func() error
-		mode             string
-		repository       *gatewaystate.Repository
-		platformVerifier *platformauth.Verifier
-		platformDigest   [sha256.Size]byte
+		cfg          *config.Config
+		manager      *runtime.Manager
+		service      *application.Service
+		adminHandler http.Handler
+		ready        func(context.Context) error
+		closeState   func() error
+		mode         string
+		repository   *gatewaystate.Repository
 	)
 	if managed {
 		masterKey, err := gatewaystate.ReadMasterKey(*masterKeyPath)
@@ -120,43 +106,6 @@ func run(arguments []string, logger *slog.Logger) error {
 			return err
 		}
 		closeState = repository.Close
-		if platformManaged {
-			platformKey, err := platformauth.ReadKey(*platformAssertionKeyPath)
-			if err != nil {
-				_ = repository.Close()
-				return err
-			}
-			platformDigest = sha256.Sum256(platformKey)
-			platformVerifier, err = platformauth.NewVerifier(platformKey, *platformAssertionAudience)
-			for index := range platformKey {
-				platformKey[index] = 0
-			}
-			if err != nil {
-				_ = repository.Close()
-				return err
-			}
-			if err := repository.EnablePlatformAdministration(context.Background()); err != nil {
-				_ = repository.Close()
-				return err
-			}
-		} else {
-			health, err := repository.Health(context.Background())
-			if err != nil {
-				_ = repository.Close()
-				return err
-			}
-			if !health.Initialized {
-				bootstrap, err := readBootstrapToken(*bootstrapPath)
-				if err != nil {
-					_ = repository.Close()
-					return err
-				}
-				if err := repository.ConfigureBootstrap(context.Background(), bootstrap); err != nil {
-					_ = repository.Close()
-					return err
-				}
-			}
-		}
 		cfg, err = repository.Snapshot(context.Background())
 		if err != nil {
 			_ = repository.Close()
@@ -173,7 +122,7 @@ func run(arguments []string, logger *slog.Logger) error {
 			application.WithSecretReferenceResolver(repository),
 			application.WithRemoteApplyAuthorizer(repository),
 		)
-		adminApplication, err := admin.New(admin.Options{Repository: repository, Manager: manager, PublicURL: *adminPublicURL, PlatformVerifier: platformVerifier})
+		adminApplication, err := admin.New(admin.Options{Repository: repository, Manager: manager, PublicURL: *adminPublicURL})
 		if err != nil {
 			_ = service.Close(context.Background())
 			_ = repository.Close()
@@ -182,10 +131,6 @@ func run(arguments []string, logger *slog.Logger) error {
 		adminHandler = adminApplication
 		ready = managedReadiness(repository, *masterKeyPath, masterDigest)
 		mode = "managed"
-		if platformManaged {
-			ready = platformReadiness(repository, *masterKeyPath, masterDigest, *platformAssertionKeyPath, platformDigest)
-			mode = "managed-synology"
-		}
 	} else {
 		cfg, err = loadRequiredConfig(*configPath)
 		if err != nil {
@@ -271,45 +216,6 @@ func managedReadiness(repository *gatewaystate.Repository, masterKeyPath string,
 		}
 		return nil
 	}
-}
-
-func platformReadiness(repository *gatewaystate.Repository, masterKeyPath string, expectedMasterKey [sha256.Size]byte, platformKeyPath string, expectedPlatformKey [sha256.Size]byte) func(context.Context) error {
-	managedReady := managedReadiness(repository, masterKeyPath, expectedMasterKey)
-	return func(ctx context.Context) error {
-		if err := managedReady(ctx); err != nil {
-			return err
-		}
-		platformKey, err := platformauth.ReadKey(platformKeyPath)
-		if err != nil {
-			return err
-		}
-		actualPlatformKey := sha256.Sum256(platformKey)
-		for index := range platformKey {
-			platformKey[index] = 0
-		}
-		if subtle.ConstantTimeCompare(expectedPlatformKey[:], actualPlatformKey[:]) != 1 {
-			return errors.New("platform assertion key file changed; restart the gateway")
-		}
-		return nil
-	}
-}
-
-func readBootstrapToken(path string) (string, error) {
-	if strings.TrimSpace(path) == "" {
-		return "", errors.New("bootstrap file is required until the first gateway administrator is established")
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", fmt.Errorf("read bootstrap file: %w", err)
-	}
-	if len(data) > 4096 {
-		return "", errors.New("bootstrap file is too large")
-	}
-	token := strings.TrimSpace(string(data))
-	if len(token) < 32 || strings.IndexFunc(token, unicode.IsSpace) >= 0 {
-		return "", errors.New("bootstrap token must be at least 32 bytes and contain no whitespace")
-	}
-	return token, nil
 }
 
 func localReadiness(configPath, tokenPath string, expectedToken [32]byte) func(context.Context) error {

@@ -145,22 +145,21 @@ func TestVaultEncryptsDistinctNoncesAndSessionRenewalKeepsRevision(t *testing.T)
 	}
 }
 
-func TestWrongMasterKeyAndBootstrapFailClosed(t *testing.T) {
+func TestWrongMasterKeyAndLocalAdministratorFailClosed(t *testing.T) {
 	repository, path := openTestRepository(t)
 	ctx := context.Background()
-	bootstrap := "bootstrap-token-0123456789abcdef0123456789"
-	if err := repository.ConfigureBootstrap(ctx, bootstrap); err != nil {
-		t.Fatal(err)
-	}
-	adminToken, err := repository.EstablishAdministrator(ctx, bootstrap)
+	sessionToken, session, err := repository.CreateAdministrator(ctx, "Owner", "correct horse battery staple")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if adminToken == "" || repository.AuthenticateAdministrator(ctx, adminToken) != nil {
-		t.Fatal("administrator token was not established")
+	if sessionToken == "" || session.Username != "owner" {
+		t.Fatal("administrator and first session were not established")
 	}
-	if _, err := repository.EstablishAdministrator(ctx, bootstrap); !errors.Is(err, ErrBootstrapConsumed) {
-		t.Fatalf("bootstrap replay error = %v", err)
+	if _, err := repository.AuthenticateAdministratorSession(ctx, sessionToken); err != nil {
+		t.Fatalf("authenticate first session: %v", err)
+	}
+	if _, _, err := repository.CreateAdministrator(ctx, "other", "another correct horse battery"); !errors.Is(err, ErrAlreadyInitialized) {
+		t.Fatalf("administrator replay error = %v", err)
 	}
 	if err := repository.Ready(ctx); err != nil {
 		t.Fatalf("Ready() = %v", err)
@@ -175,46 +174,6 @@ func TestWrongMasterKeyAndBootstrapFailClosed(t *testing.T) {
 	after, _ := os.ReadFile(path)
 	if !bytes.Equal(before, after) {
 		t.Fatal("wrong-key attempt modified encrypted state")
-	}
-}
-
-func TestPlatformAdministrationDisablesLocalBootstrap(t *testing.T) {
-	repository, _ := openTestRepository(t)
-	ctx := context.Background()
-	if err := repository.EnablePlatformAdministration(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if err := repository.Ready(ctx); err != nil {
-		t.Fatalf("Ready() = %v", err)
-	}
-	health, err := repository.Health(ctx)
-	if err != nil || !health.Initialized || health.AdminMode != AdminModePlatform {
-		t.Fatalf("Health() = %#v, %v", health, err)
-	}
-	bootstrap := "bootstrap-token-0123456789abcdef0123456789"
-	if err := repository.ConfigureBootstrap(ctx, bootstrap); err == nil {
-		t.Fatal("platform repository accepted generic bootstrap configuration")
-	}
-	if _, err := repository.EstablishAdministrator(ctx, bootstrap); !errors.Is(err, ErrUnauthorized) {
-		t.Fatalf("EstablishAdministrator() = %v", err)
-	}
-	if err := repository.AuthenticateAdministrator(ctx, "anything"); !errors.Is(err, ErrUnauthorized) {
-		t.Fatalf("AuthenticateAdministrator() = %v", err)
-	}
-	if _, err := repository.RotateAdministrator(ctx); !errors.Is(err, ErrUnauthorized) {
-		t.Fatalf("RotateAdministrator() = %v", err)
-	}
-}
-
-func TestPlatformAdministrationCannotReplaceLocalAdministration(t *testing.T) {
-	repository, _ := openTestRepository(t)
-	ctx := context.Background()
-	bootstrap := "bootstrap-token-0123456789abcdef0123456789"
-	if err := repository.ConfigureBootstrap(ctx, bootstrap); err != nil {
-		t.Fatal(err)
-	}
-	if err := repository.EnablePlatformAdministration(ctx); err == nil {
-		t.Fatal("platform administration replaced configured local administration")
 	}
 }
 

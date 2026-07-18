@@ -1,42 +1,15 @@
 #!/bin/sh
 set -eu
 
-pid_file="${SYNOPKG_PKGVAR:?}/synology-auth.pid"
-log_file="${SYNOPKG_PKGVAR}/synology-auth.log"
-binary="${SYNOPKG_PKGDEST:?}/bin/dsmctl-synology-auth"
-key="${SYNOPKG_PKGHOME:?}/secrets/platform.key"
-
-running() {
-    [ -f "$pid_file" ] || return 1
-    pid="$(cat "$pid_file" 2>/dev/null || true)"
-    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
-}
-
+# Container lifecycle is owned by Synology's docker-project resource worker.
+# This script contributes only a local process-health status check.
 case "${1:-}" in
-    start)
-        if ! running; then
-            "$binary" --listen=127.0.0.1:18766 --backend=http://127.0.0.1:18765 \
-                --assertion-key-file="$key" --audience=dsmctl-synology-admin \
-                >> "$log_file" 2>&1 &
-            echo "$!" > "$pid_file"
-        fi
-        ;;
-    stop)
-        if running; then
-            kill "$(cat "$pid_file")"
-            for unused in 1 2 3 4 5; do
-                running || break
-                sleep 1
-            done
-        fi
-        rm -f "$pid_file"
+    start|stop)
+        exit 0
         ;;
     status)
-        if ! running; then
-            exit 3
-        fi
         if ! /usr/bin/wget -q -T 2 -O /dev/null http://127.0.0.1:18765/healthz; then
-            exit 1
+            exit 3
         fi
         exit 0
         ;;
@@ -44,4 +17,3 @@ case "${1:-}" in
         exit 2
         ;;
 esac
-exit 0

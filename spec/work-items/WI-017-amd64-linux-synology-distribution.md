@@ -30,25 +30,22 @@ secured reverse-proxy endpoint, and pass the same gateway behavior suite.
 - Produce one reproducible `linux/amd64`, `CGO_ENABLED=0` image with version,
   revision, SBOM, checksum, and provenance metadata.
 - Provide generic Docker Compose, documented Podman invocation, persistent
-  directory/UID setup, master-key and bootstrap-secret creation, reverse-proxy
+  directory/UID setup, master-key creation, reverse-proxy
   requirements, backup guidance, upgrade, and uninstall instructions.
 - Build an x86_64-only SPK with `arch="x86_64"`, minimum DSM
   `7.2.1-69057`, and a `ContainerManager>=1432` package dependency.
 - Bundle the exact image as `image.tar.gz` and use Synology's `docker-project`
   worker to preload, create/recreate, start, stop, and remove the project.
 - Mount package persistent data at `/data`, mount the package-private master
-  key read-only at `/run/secrets/master.key`, mount a separate platform
-  assertion key when Synology authentication is enabled, and use a bounded
-  tmpfs.
+  key read-only at `/run/secrets/master.key`, and use a bounded tmpfs.
 - Resolve the DSM package user's dynamic UID/GID into the Compose project so
   the non-root container can read its private keys and write package data
   without widening host file permissions.
 - Publish the container port only to host loopback and register a DSM
   portal/reverse proxy. Do not automatically modify DSM firewall, router, VPN,
   QuickConnect, or certificate settings.
-- Add a Synology admin-auth adapter that validates the DSM session outside the
-  core image, confirms administrator/application privilege, and sends a
-  short-lived signed identity assertion to the admin API.
+- Route the portable local-administrator setup/login UI through the DSM portal
+  without deriving any Gateway identity or NAS credential from the host DSM.
 - Add Package Center lifecycle/status, install/upgrade/uninstall messaging,
   data retention choice, state migration backup, and actionable log paths.
 - Create release and install/upgrade test automation plus an explicit supported
@@ -72,12 +69,10 @@ secured reverse-proxy endpoint, and pass the same gateway behavior suite.
   between generic Linux and Synology delivery.
 - The SPK uses the official resource worker and never mounts the Docker socket
   or shells out from the gateway to control Container Manager.
-- DSM authentication remains outside the image. Forwarded identity must be
-  integrity-protected, short-lived, audience-bound, and accepted only from the
-  private adapter path; a raw username header is invalid.
-- Synology mode disables the generic bootstrap/local-admin path and uses a
-  dedicated platform assertion key, not the vault master key. UID/GID mismatch
-  must not be worked around by running the gateway as root or making key files
+- Gateway local-administrator setup/login is identical in generic Linux and
+  Synology. DSM sessions, groups, forwarded identity headers, and the host NAS
+  are never Gateway administrator authority. UID/GID mismatch must not be
+  worked around by running the gateway as root or making key files
   group/world-readable.
 - Package start/stop/status reflects the Container Manager project without
   treating an unreachable managed NAS as a dead package.
@@ -100,11 +95,9 @@ secured reverse-proxy endpoint, and pass the same gateway behavior suite.
       Docker project while managed-NAS outages remain application health data.
 - [ ] The DSM portal reaches admin and MCP endpoints through TLS/reverse proxy;
       the backend port is not reachable directly from another LAN host.
-- [ ] DSM admin authentication produces a verified signed identity assertion;
-      unauthenticated, non-admin, expired, replayed, wrong-audience, and forged
-      assertions fail closed.
-- [ ] Generic bootstrap and Synology DSM administration both manage the same
-      profile/vault/token models without image-specific branches.
+- [ ] The DSM portal serves the same one-hour local-account setup, login Cookie,
+      profile/vault/token models, and security behavior as generic Linux with
+      no image-specific branch or host-DSM authentication adapter.
 - [ ] Upgrade preserves profiles, encrypted secrets, tokens, audit data, and
       master key and successfully applies a tested schema migration.
 - [ ] Retain-data uninstall leaves documented recoverable state; delete-data
@@ -144,20 +137,26 @@ adapter and revalidates the shared image/SPK artifacts.
 Implementation and local verification are complete; real Synology hardware
 certification remains before this item can truthfully move to `done`.
 
-- Last known good state: the core supports irreversible platform-admin mode,
-  short-lived audience-bound replay-protected assertions, and the external
-  loopback DSM auth adapter. Generic Linux assets, deterministic offline SPK
-  assets, lifecycle scripts, release workflow, supported matrix, and user docs
-  are present.
-- Verification: `go test ./... -count=1` and `go vet ./...` pass. The same
-  `linux/amd64` image passed generic bootstrap/restart and platform-mode
-  no-bootstrap/restart Docker lifecycles. Two fixed-input builds produced image
-  ID `sha256:8a762b0ec480204d85ece83826ca1845d706f43c7d6ed78e0f3a3efd39e05055`;
-  SPKs built independently from those images were byte-identical at SHA-256
-  `6bb0cc4181cbb37e1cdfbe1757852f45ce1fc5ebf91efd9fa0c7c7f3a16b4124`.
-  Offline image load, Compose parsing, SPK structure/security validation,
-  shell/JSON syntax, icon dimensions, mounted-key non-disclosure, and container
-  security inspection passed.
+- Last known good state: WI-024 is complete. Generic Linux and Synology use the
+  same portable local-administrator setup/login flow and exact image. The SPK
+  owns only package lifecycle, master-key creation, offline image/project
+  resources, and loopback DSM portal wiring; there is no DSM authentication
+  adapter, platform assertion key, bootstrap secret, or implicit host-NAS
+  profile. Deterministic offline SPK assets, lifecycle scripts, release
+  workflow, supported matrix, and user documentation are present.
+- Verification: `go test ./... -count=1`, `go vet ./...`, and
+  `git diff --check` pass. Two fixed-input `linux/amd64` builds were identical
+  at image ID
+  `sha256:23bc4034b70d97d347ca87dfe0fa193bddfa5d1dba190bcd73207318bf5fa1d6`.
+  The hardened generic Docker lifecycle passed local setup, readiness, Cookie
+  controls, secret non-disclosure, and administrator-session persistence across
+  restart. Two SPK builds were byte-identical at SHA-256
+  `9d576f03f350fa9950eaffaef3cf010bf71144f2de5f11ff19080bf0cff45186`;
+  the offline x86_64 SPK structure/security validator passed with embedded
+  image archive SHA-256
+  `acc85497bf8a13688129b98ffe314dae190c28270f82722971cd4c0d4ab5b88b`.
+  Compose parsing, shell/JSON syntax, icon dimensions, mounted-key
+  non-disclosure, and container security inspection also pass locally.
 - Blocker: install/start/stop/reboot/portal/upgrade/uninstall and behavior tests
   still require authorized real Intel and AMD x86_64 Synology systems across
   the DSM versions claimed in `deploy/synology/SUPPORTED.md`. No ordinary

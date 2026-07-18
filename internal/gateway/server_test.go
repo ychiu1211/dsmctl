@@ -153,6 +153,31 @@ func TestHTTPBoundaryRejectsInvalidRequests(t *testing.T) {
 	}
 }
 
+func TestHTTPBoundaryDelegatesDynamicAdminOriginOnlyWhenNoGlobalOriginIsConfigured(t *testing.T) {
+	var reached atomic.Bool
+	server := newBoundaryTestServer(t, Options{AdminHandler: http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		reached.Store(true)
+		w.WriteHeader(http.StatusNoContent)
+	})})
+	request := httptest.NewRequest(http.MethodPost, "http://gateway.example.test/admin/api/login", strings.NewReader(`{}`))
+	request.Host = "gateway.example.test"
+	request.Header.Set("Origin", "https://dynamic-dsm.example.test")
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent || !reached.Load() {
+		t.Fatalf("dynamic admin origin status = %d, reached=%v", response.Code, reached.Load())
+	}
+
+	mcpRequest := httptest.NewRequest(http.MethodPost, "http://gateway.example.test/mcp", strings.NewReader(`{}`))
+	mcpRequest.Host = "gateway.example.test"
+	mcpRequest.Header.Set("Origin", "https://dynamic-dsm.example.test")
+	mcpResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(mcpResponse, mcpRequest)
+	if mcpResponse.Code != http.StatusForbidden {
+		t.Fatalf("dynamic MCP origin status = %d", mcpResponse.Code)
+	}
+}
+
 func TestHealthAndReadinessAreLocal(t *testing.T) {
 	var readyCalls atomic.Int32
 	notReady := atomic.Bool{}

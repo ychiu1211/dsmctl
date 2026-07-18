@@ -11,25 +11,26 @@ import (
 )
 
 const (
-	SchemaVersion        = 3
+	SchemaVersion        = 4
 	MaxProfiles          = 32
 	MaxMCPTokenNameBytes = 64
 	DefaultApprovalTTL   = 10 * time.Minute
 	AdminModeLocal       = "local"
-	AdminModePlatform    = "platform"
+	MaxAdminSessions     = 16
+	AdminSessionTTL      = 12 * time.Hour
 
 	TLSSystemCA          = "system_ca"
 	TLSPinnedFingerprint = "pinned_fingerprint"
 )
 
 var (
-	ErrNotFound          = errors.New("gateway state entry not found")
-	ErrRevisionConflict  = errors.New("profile revision conflict")
-	ErrBootstrapRequired = errors.New("gateway administrator bootstrap is required")
-	ErrBootstrapConsumed = errors.New("gateway administrator bootstrap was already consumed")
-	ErrUnauthorized      = errors.New("gateway administrator authentication failed")
-	ErrTokenUnauthorized = errors.New("MCP bearer token authentication failed")
-	ErrApprovalRequired  = errors.New("an exact unexpired administrator approval is required")
+	ErrNotFound              = errors.New("gateway state entry not found")
+	ErrRevisionConflict      = errors.New("profile revision conflict")
+	ErrAdministratorRequired = errors.New("gateway local administrator setup is required")
+	ErrAlreadyInitialized    = errors.New("gateway local administrator is already initialized")
+	ErrUnauthorized          = errors.New("gateway administrator authentication failed")
+	ErrTokenUnauthorized     = errors.New("MCP bearer token authentication failed")
+	ErrApprovalRequired      = errors.New("an exact unexpired administrator approval is required")
 )
 
 // Profile is the non-secret, persistent connection definition exposed by the
@@ -67,6 +68,15 @@ type Health struct {
 	Initialized   bool   `json:"initialized"`
 	Ready         bool   `json:"ready"`
 	AdminMode     string `json:"admin_mode,omitempty"`
+}
+
+// AdministratorSession is non-secret session metadata. The browser token and
+// its SHA-256 database key are deliberately absent.
+type AdministratorSession struct {
+	ID        string    `json:"id"`
+	Username  string    `json:"username"`
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
 }
 
 type SecretMetadata struct {

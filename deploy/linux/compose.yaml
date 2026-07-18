@@ -28,7 +28,6 @@ services:
       - --listen=0.0.0.0:8080
       - --state=/data/gateway.db
       - --master-key-file=/run/secrets/master.key
-      - --bootstrap-file=/run/secrets/bootstrap
       - --admin-public-url=${DSMCTL_PUBLIC_ORIGIN:?Set the HTTPS public origin used by the reverse proxy}
       - --allowed-hosts=127.0.0.1,localhost
       - --allowed-origins=${DSMCTL_PUBLIC_ORIGIN}

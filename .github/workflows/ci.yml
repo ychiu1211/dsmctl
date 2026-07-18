@@ -18,7 +18,7 @@ jobs:
           cache: true
       - run: go test ./...
       - run: go vet ./...
-      - run: go build ./cmd/dsmctl ./cmd/dsmctl-mcp ./cmd/dsmctl-gateway ./cmd/dsmctl-synology-auth
+      - run: go build ./cmd/dsmctl ./cmd/dsmctl-mcp ./cmd/dsmctl-gateway
       - run: go build -trimpath -o /tmp/dsmctl-gateway ./cmd/dsmctl-gateway
         env:
           CGO_ENABLED: "0"

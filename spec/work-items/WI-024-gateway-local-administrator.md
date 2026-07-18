@@ -1,9 +1,9 @@
 ---
 id: WI-024
 title: Replace platform administration with a portable local administrator
-status: in_progress
+status: done
 priority: P0
-owner: "gateway-local-admin"
+owner: ""
 depends_on: [WI-015, WI-016]
 parallel_group: G
 touches:
@@ -94,31 +94,31 @@ no implicit profile, credential, or privilege.
 
 ## Acceptance criteria
 
-- [ ] A fresh gateway permits exactly one administrator creation during the
+- [x] A fresh gateway permits exactly one administrator creation during the
       first process-hour without a setup code, DSM session, or platform header.
-- [ ] Setup expiry denies creation until restart; restart reopens setup only
+- [x] Setup expiry denies creation until restart; restart reopens setup only
       when the database remains uninitialized.
-- [ ] Concurrent setup requests produce one administrator, one session, and no
+- [x] Concurrent setup requests produce one administrator, one session, and no
       partial or overwritten account state.
-- [ ] Password plaintext and browser session tokens cannot be found in the
+- [x] Password plaintext and browser session tokens cannot be found in the
       database, backup, logs, audit output, or API responses.
-- [ ] Valid login creates an expiring HttpOnly/SameSite session; invalid login,
+- [x] Valid login creates an expiring HttpOnly/SameSite session; invalid login,
       expired/revoked sessions, CSRF-like simple cross-origin requests, and
       bounded rate-limit overflow fail closed.
-- [ ] Logout, password change, and revoke-other-sessions have the documented
+- [x] Logout, password change, and revoke-other-sessions have the documented
       effect, including revocation across gateway restart.
-- [ ] Profile, credential, MCP-token, approval, and audit APIs accept the local
+- [x] Profile, credential, MCP-token, approval, and audit APIs accept the local
       admin session and no longer accept legacy admin bearer tokens or DSM
       platform assertions.
-- [ ] Generic Linux and Synology use the identical image and first-run UI with
+- [x] Generic Linux and Synology use the identical image and first-run UI with
       no bootstrap or platform key mount and no DSM authentication adapter.
-- [ ] The host NAS is absent after initialization and can be used only after
+- [x] The host NAS is absent after initialization and can be used only after
       explicit profile creation plus that profile's own DSM Web Login.
-- [ ] Schema migration and pre-migration backup are tested; non-empty legacy
+- [x] Schema migration and pre-migration backup are tested; non-empty legacy
       platform/token-admin state never silently opens unauthenticated setup.
-- [ ] `go test ./... -count=1`, `go vet ./...`, amd64 image build, generic
+- [x] `go test ./... -count=1`, `go vet ./...`, amd64 image build, generic
       Docker lifecycle smoke, SPK validation, and offline-image validation pass.
-- [ ] User documentation explains the one-hour setup window, restart behavior,
+- [x] User documentation explains the one-hour setup window, restart behavior,
       unexpected initialized state, reset consequences, login sessions, and
       explicit host-NAS enrollment.
 
@@ -144,3 +144,28 @@ paused until this item passes so it does not certify the superseded adapter.
 ## Handoff
 
 Fill this only when pausing incomplete work.
+
+## Completion notes
+
+- State schema 4 stores one normalized local administrator and an Argon2id
+  verifier. Random 12-hour browser-session secrets are stored only as SHA-256
+  digests; session count and password hashing concurrency are bounded.
+- The admin HTTP surface now provides one-hour setup, login/logout, password
+  change, and session revocation with Secure/HttpOnly/SameSite cookies,
+  same-origin JSON mutation checks, and in-memory setup/login rate limiting.
+- The gateway and UI no longer accept bootstrap bearer tokens, DSM identity
+  assertions, or platform headers. The Synology authentication adapter and key
+  were removed. Generic Linux and Synology now run the same image and local
+  setup/login flow; every NAS, including the host NAS, requires an explicit
+  profile and that NAS's own DSM Web Login.
+- `go test ./... -count=1`, `go vet ./...`, and `git diff --check` pass. Two
+  `linux/amd64` builds were identical at image ID
+  `sha256:23bc4034b70d97d347ca87dfe0fa193bddfa5d1dba190bcd73207318bf5fa1d6`.
+  The hardened Docker smoke test passed setup, readiness, cookie security,
+  secret non-disclosure, and session persistence across restart.
+- Two deterministic offline SPK builds were byte-identical at SHA-256
+  `9d576f03f350fa9950eaffaef3cf010bf71144f2de5f11ff19080bf0cff45186`;
+  the embedded image archive SHA-256 was
+  `acc85497bf8a13688129b98ffe314dae190c28270f82722971cd4c0d4ab5b88b`,
+  and the offline x86_64 SPK structure/security validator passed. Real DSM
+  lifecycle and portal certification remains explicitly owned by WI-017.

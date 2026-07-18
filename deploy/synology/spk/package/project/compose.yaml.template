@@ -22,18 +22,12 @@ services:
         source: ${DSMCTL_MASTER_KEY}
         target: /run/secrets/master.key
         read_only: true
-      - type: bind
-        source: ${DSMCTL_ASSERTION_KEY}
-        target: /run/secrets/platform.key
-        read_only: true
     tmpfs:
       - /tmp:size=16m,mode=1777,uid=${DSMCTL_UID},gid=${DSMCTL_GID}
     command:
       - --listen=0.0.0.0:8080
       - --state=/data/gateway.db
       - --master-key-file=/run/secrets/master.key
-      - --platform-assertion-key-file=/run/secrets/platform.key
-      - --platform-assertion-audience=dsmctl-synology-admin
       - --allowed-hosts=127.0.0.1,localhost
       - --trusted-proxies=172.16.0.0/12
     logging:

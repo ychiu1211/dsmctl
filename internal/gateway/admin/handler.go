@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/ychiu1211/dsmctl/internal/credentials"
-	"github.com/ychiu1211/dsmctl/internal/gateway/platformauth"
 	"github.com/ychiu1211/dsmctl/internal/gateway/state"
 	"github.com/ychiu1211/dsmctl/internal/remotepolicy"
 	"github.com/ychiu1211/dsmctl/internal/runtime"
@@ -26,23 +25,30 @@ import (
 )
 
 const (
-	maxAdminBody   = int64(1 << 20)
-	enrollmentTTL  = 5 * time.Minute
-	networkTimeout = 10 * time.Second
+	maxAdminBody        = int64(1 << 20)
+	enrollmentTTL       = 5 * time.Minute
+	networkTimeout      = 10 * time.Second
+	defaultSetupWindow  = time.Hour
+	administratorCookie = "dsmctl_admin_session"
+	requestHeader       = "X-DSMCTL-Request"
 )
 
 type Options struct {
-	Repository       *state.Repository
-	Manager          *runtime.Manager
-	PublicURL        string
-	PlatformVerifier *platformauth.Verifier
+	Repository  *state.Repository
+	Manager     *runtime.Manager
+	PublicURL   string
+	Now         func() time.Time
+	SetupWindow time.Duration
 }
 
 type Handler struct {
-	repository       *state.Repository
-	manager          *runtime.Manager
-	publicURL        string
-	platformVerifier *platformauth.Verifier
+	repository    *state.Repository
+	manager       *runtime.Manager
+	publicURL     string
+	now           func() time.Time
+	setupDeadline time.Time
+	setupAttempts *attemptLimiter
+	loginAttempts *attemptLimiter
 
 	pendingMu sync.Mutex
 	pending   map[string]pendingEnrollment
@@ -55,6 +61,7 @@ type pendingEnrollment struct {
 }
 
 type actorContextKey struct{}
+type sessionTokenContextKey struct{}
 
 type profileInput struct {
 	state.ProfileInput
@@ -83,7 +90,25 @@ func New(options Options) (*Handler, error) {
 		}
 		publicURL = parsed.Scheme + "://" + parsed.Host
 	}
-	return &Handler{repository: options.Repository, manager: options.Manager, publicURL: publicURL, platformVerifier: options.PlatformVerifier, pending: make(map[string]pendingEnrollment)}, nil
+	now := options.Now
+	if now == nil {
+		now = time.Now
+	}
+	setupWindow := options.SetupWindow
+	if setupWindow == 0 {
+		setupWindow = defaultSetupWindow
+	}
+	if setupWindow < 0 {
+		return nil, errors.New("administrator setup window must not be negative")
+	}
+	startedAt := now().UTC()
+	return &Handler{
+		repository: options.Repository, manager: options.Manager, publicURL: publicURL,
+		now: now, setupDeadline: startedAt.Add(setupWindow),
+		setupAttempts: newAttemptLimiter(now, 10, time.Minute),
+		loginAttempts: newAttemptLimiter(now, 5, time.Minute),
+		pending:       make(map[string]pendingEnrollment),
+	}, nil
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
@@ -94,6 +119,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		req.Body = http.MaxBytesReader(w, req.Body, maxAdminBody)
+		if req.Method != http.MethodGet && req.Method != http.MethodHead {
+			if err := h.validateBrowserMutation(req); err != nil {
+				writeError(w, http.StatusForbidden, "forbidden browser request")
+				return
+			}
+		}
 	}
 	switch req.URL.Path {
 	case "/admin", "/admin/":
@@ -105,22 +136,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
 		_, _ = io.WriteString(w, indexHTML)
 		return
-	case "/admin/api/bootstrap":
-		if h.platformVerifier != nil {
-			http.NotFound(w, req)
-			return
-		}
-		h.bootstrap(w, req)
+	case "/admin/api/setup/status":
+		h.setupStatus(w, req)
+		return
+	case "/admin/api/setup":
+		h.setup(w, req)
+		return
+	case "/admin/api/login":
+		h.login(w, req)
 		return
 	}
 	if !strings.HasPrefix(req.URL.Path, "/admin/api/") {
 		http.NotFound(w, req)
 		return
 	}
-	actorID, err := h.authenticate(req)
+	actorID, sessionToken, err := h.authenticate(req)
 	if err != nil {
 		_ = h.repository.AppendAudit(req.Context(), state.AuditEvent{CorrelationID: correlationID(req), ActorType: "gateway_admin", Action: adminAuditAction(req), Outcome: "denied", Reason: "denied"})
-		w.Header().Set("WWW-Authenticate", `Bearer realm="dsmctl-gateway-admin"`)
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -133,7 +165,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 	recorder := &auditResponseWriter{ResponseWriter: w, status: http.StatusOK}
-	req = req.WithContext(context.WithValue(req.Context(), actorContextKey{}, actorID))
+	requestContext := context.WithValue(req.Context(), actorContextKey{}, actorID)
+	requestContext = context.WithValue(requestContext, sessionTokenContextKey{}, sessionToken)
+	req = req.WithContext(requestContext)
 	h.serveAuthenticated(recorder, req)
 	outcome := "success"
 	if recorder.status >= 400 {
@@ -147,12 +181,20 @@ func (h *Handler) serveAuthenticated(w http.ResponseWriter, req *http.Request) {
 		h.status(w, req)
 		return
 	}
-	if req.URL.Path == "/admin/api/admin-token/rotate" {
-		if h.platformVerifier != nil {
-			http.NotFound(w, req)
-			return
-		}
-		h.rotateAdminToken(w, req)
+	if req.URL.Path == "/admin/api/session" {
+		h.session(w, req)
+		return
+	}
+	if req.URL.Path == "/admin/api/logout" {
+		h.logout(w, req)
+		return
+	}
+	if req.URL.Path == "/admin/api/password" {
+		h.changePassword(w, req)
+		return
+	}
+	if req.URL.Path == "/admin/api/sessions/revoke-others" {
+		h.revokeOtherSessions(w, req)
 		return
 	}
 	if req.URL.Path == "/admin/api/mcp-tokens" || strings.HasPrefix(req.URL.Path, "/admin/api/mcp-tokens/") {
@@ -182,53 +224,88 @@ func (h *Handler) serveAuthenticated(w http.ResponseWriter, req *http.Request) {
 	http.NotFound(w, req)
 }
 
-func (h *Handler) authenticate(req *http.Request) (string, error) {
-	if h.platformVerifier != nil {
-		identity, err := h.platformVerifier.Verify(req.Context(), req.Header.Get(platformauth.HeaderName))
-		if err != nil {
-			return "", err
-		}
-		return "dsm:" + identity.Subject, nil
+func (h *Handler) authenticate(req *http.Request) (string, string, error) {
+	cookie, err := req.Cookie(administratorCookie)
+	if err != nil || strings.TrimSpace(cookie.Value) == "" {
+		return "", "", state.ErrUnauthorized
 	}
-	parts := strings.Fields(req.Header.Get("Authorization"))
-	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-		return "", state.ErrUnauthorized
+	session, err := h.repository.AuthenticateAdministratorSession(req.Context(), cookie.Value)
+	if err != nil {
+		return "", "", err
 	}
-	if err := h.repository.AuthenticateAdministrator(req.Context(), parts[1]); err != nil {
-		return "", err
-	}
-	return "local-admin", nil
+	return "local:" + session.Username, cookie.Value, nil
 }
 
-func (h *Handler) bootstrap(w http.ResponseWriter, req *http.Request) {
+func (h *Handler) setupStatus(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet {
+		methodNotAllowed(w, http.MethodGet)
+		return
+	}
+	status, err := h.repository.AdministratorStatus(req.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read administrator status")
+		return
+	}
+	if status.Initialized {
+		writeJSON(w, http.StatusOK, map[string]any{"state": "initialized", "initialized_at": status.InitializedAt})
+		return
+	}
+	if !h.now().UTC().Before(h.setupDeadline) {
+		writeJSON(w, http.StatusOK, map[string]any{"state": "setup_expired"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"state": "setup_available", "setup_expires_at": h.setupDeadline})
+}
+
+func (h *Handler) setup(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
 		methodNotAllowed(w, http.MethodPost)
 		return
 	}
-	if err := h.repository.AppendAudit(req.Context(), state.AuditEvent{CorrelationID: correlationID(req), ActorType: "bootstrap", Action: "admin.bootstrap", Outcome: "started"}); err != nil {
+	status, err := h.repository.AdministratorStatus(req.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read administrator status")
+		return
+	}
+	if status.Initialized {
+		writeError(w, http.StatusConflict, "gateway is already initialized")
+		return
+	}
+	if !h.now().UTC().Before(h.setupDeadline) {
+		writeError(w, http.StatusGone, "administrator setup window expired; restart the uninitialized gateway")
+		return
+	}
+	if !h.setupAttempts.Allow(remoteAttemptKey(req, "setup")) {
+		writeError(w, http.StatusTooManyRequests, "too many setup attempts")
+		return
+	}
+	if err := h.repository.AppendAudit(req.Context(), state.AuditEvent{CorrelationID: correlationID(req), ActorType: "gateway_setup", Action: "admin.setup", Outcome: "started"}); err != nil {
 		writeError(w, http.StatusServiceUnavailable, "audit storage unavailable")
 		return
 	}
 	var input struct {
-		Token string `json:"token"`
+		Username string `json:"username"`
+		Password string `json:"password"`
 	}
 	if err := decodeJSON(req, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		_ = h.repository.AppendAudit(req.Context(), state.AuditEvent{CorrelationID: correlationID(req), ActorType: "gateway_setup", Action: "admin.setup", Outcome: "failure"})
 		return
 	}
-	token, err := h.repository.EstablishAdministrator(req.Context(), input.Token)
-	input.Token = ""
+	token, session, err := h.repository.CreateAdministrator(req.Context(), input.Username, input.Password)
+	input.Password = ""
 	if err != nil {
-		status := http.StatusUnauthorized
-		if errors.Is(err, state.ErrBootstrapConsumed) {
-			status = http.StatusConflict
+		responseStatus := http.StatusBadRequest
+		if errors.Is(err, state.ErrAlreadyInitialized) {
+			responseStatus = http.StatusConflict
 		}
-		writeError(w, status, "bootstrap failed")
-		_ = h.repository.AppendAudit(req.Context(), state.AuditEvent{CorrelationID: correlationID(req), ActorType: "bootstrap", Action: "admin.bootstrap", Outcome: "failure"})
+		writeError(w, responseStatus, err.Error())
+		_ = h.repository.AppendAudit(req.Context(), state.AuditEvent{CorrelationID: correlationID(req), ActorType: "gateway_setup", Action: "admin.setup", Outcome: "failure"})
 		return
 	}
-	_ = h.repository.AppendAudit(req.Context(), state.AuditEvent{CorrelationID: correlationID(req), ActorType: "gateway_admin", ActorID: "local-admin", Action: "admin.bootstrap", Outcome: "success"})
-	writeJSON(w, http.StatusCreated, map[string]string{"admin_token": token})
+	h.setAdministratorCookie(w, req, token, session.ExpiresAt)
+	_ = h.repository.AppendAudit(req.Context(), state.AuditEvent{CorrelationID: correlationID(req), ActorType: "gateway_admin", ActorID: "local:" + session.Username, Action: "admin.setup", Outcome: "success"})
+	writeJSON(w, http.StatusCreated, map[string]any{"session": session})
 }
 
 func (h *Handler) status(w http.ResponseWriter, req *http.Request) {
@@ -320,19 +397,6 @@ func (h *Handler) profile(w http.ResponseWriter, req *http.Request) {
 		}
 		http.NotFound(w, req)
 	}
-}
-
-func (h *Handler) rotateAdminToken(w http.ResponseWriter, req *http.Request) {
-	if req.Method != http.MethodPost {
-		methodNotAllowed(w, http.MethodPost)
-		return
-	}
-	token, err := h.repository.RotateAdministrator(req.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "rotate administrator token")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"admin_token": token})
 }
 
 func (h *Handler) mcpTokens(w http.ResponseWriter, req *http.Request) {
@@ -892,22 +956,11 @@ func (h *Handler) startWebLogin(w http.ResponseWriter, req *http.Request, name s
 	cfg, _ := h.repository.Snapshot(req.Context())
 	opener := h.publicURL
 	if opener == "" {
-		scheme := "http"
-		host := req.Host
-		if req.TLS != nil {
-			scheme = "https"
-		}
+		external, _ := url.Parse(h.externalOrigin(req))
+		scheme, host := external.Scheme, external.Host
 		prefix := ""
-		if h.platformVerifier != nil {
-			if forwarded := strings.TrimSpace(req.Header.Get("X-Forwarded-Proto")); forwarded == "http" || forwarded == "https" {
-				scheme = forwarded
-			}
-			if forwarded := strings.TrimSpace(req.Header.Get("X-Forwarded-Host")); forwarded != "" && !strings.ContainsAny(forwarded, "\r\n/\\") {
-				host = forwarded
-			}
-			if forwarded := strings.TrimSpace(req.Header.Get("X-Forwarded-Prefix")); forwarded != "" && strings.HasPrefix(forwarded, "/") && !strings.ContainsAny(forwarded, "\r\n\\?") {
-				prefix = strings.TrimRight(forwarded, "/")
-			}
+		if forwarded := strings.TrimSpace(req.Header.Get("X-Forwarded-Prefix")); forwarded != "" && strings.HasPrefix(forwarded, "/") && !strings.ContainsAny(forwarded, "\r\n\\?") {
+			prefix = strings.TrimRight(forwarded, "/")
 		}
 		opener = scheme + "://" + host + prefix
 	}
@@ -921,9 +974,9 @@ func (h *Handler) startWebLogin(w http.ResponseWriter, req *http.Request, name s
 		writeError(w, http.StatusInternalServerError, "create enrollment")
 		return
 	}
-	expires := time.Now().Add(enrollmentTTL)
+	expires := h.now().Add(enrollmentTTL)
 	h.pendingMu.Lock()
-	h.prunePendingLocked(time.Now())
+	h.prunePendingLocked(h.now())
 	h.pending[id] = pendingEnrollment{ProfileName: name, Enrollment: enrollment, ExpiresAt: expires}
 	h.pendingMu.Unlock()
 	parsedNAS, _ := url.Parse(profile.URL)
@@ -949,7 +1002,7 @@ func (h *Handler) completeWebLogin(w http.ResponseWriter, req *http.Request, nam
 	pending, ok := h.pending[input.EnrollmentID]
 	delete(h.pending, input.EnrollmentID)
 	h.pendingMu.Unlock()
-	if !ok || pending.ProfileName != name || time.Now().After(pending.ExpiresAt) {
+	if !ok || pending.ProfileName != name || h.now().After(pending.ExpiresAt) {
 		writeError(w, http.StatusGone, "web-login enrollment expired or was already used")
 		return
 	}
@@ -1069,14 +1122,20 @@ func adminAuditAction(req *http.Request) string {
 	switch {
 	case path == "/admin/api/status":
 		return "admin.status"
+	case path == "/admin/api/session":
+		return "admin.session"
+	case path == "/admin/api/logout":
+		return "admin.logout"
+	case path == "/admin/api/password":
+		return "admin.password"
+	case path == "/admin/api/sessions/revoke-others":
+		return "admin.sessions.revoke"
 	case strings.HasPrefix(path, "/admin/api/mcp-tokens"):
 		return "token.lifecycle"
 	case path == "/admin/api/approvals":
 		return "approval.lifecycle"
 	case strings.HasPrefix(path, "/admin/api/audit"):
 		return "audit.query"
-	case path == "/admin/api/admin-token/rotate":
-		return "admin.rotate"
 	case strings.Contains(path, "/credentials/") || strings.Contains(path, "/weblogin/"):
 		return "credential.manage"
 	case strings.Contains(path, "/secrets") || strings.HasPrefix(path, "/admin/api/orphan-secrets"):

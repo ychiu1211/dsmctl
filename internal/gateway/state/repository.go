@@ -5,7 +5,6 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/binary"
@@ -28,23 +27,29 @@ import (
 )
 
 var (
-	bucketMeta         = []byte("meta")
-	bucketProfiles     = []byte("profiles")
-	bucketSecrets      = []byte("secrets")
-	bucketMigrations   = []byte("migrations")
-	bucketMCPTokens    = []byte("mcp_tokens")
-	bucketTokenDigests = []byte("mcp_token_digests")
-	bucketApprovals    = []byte("approvals")
-	bucketAudit        = []byte("audit")
+	bucketMeta          = []byte("meta")
+	bucketProfiles      = []byte("profiles")
+	bucketSecrets       = []byte("secrets")
+	bucketMigrations    = []byte("migrations")
+	bucketMCPTokens     = []byte("mcp_tokens")
+	bucketTokenDigests  = []byte("mcp_token_digests")
+	bucketApprovals     = []byte("approvals")
+	bucketAudit         = []byte("audit")
+	bucketAdminSessions = []byte("admin_sessions")
 
-	keySchemaVersion   = []byte("schema_version")
-	keyDefaultProfile  = []byte("default_profile")
-	keyKeyCheck        = []byte("master_key_check")
-	keyBootstrapDigest = []byte("bootstrap_digest")
-	keyBootstrapUsed   = []byte("bootstrap_used")
-	keyAdminDigest     = []byte("admin_digest")
-	keyAdminMode       = []byte("admin_mode")
-	keyRevisionCounter = []byte("profile_revision_counter")
+	keySchemaVersion  = []byte("schema_version")
+	keyDefaultProfile = []byte("default_profile")
+	keyKeyCheck       = []byte("master_key_check")
+	// These four keys are retained only to identify and remove pre-release
+	// schema-3 bootstrap/platform administration during migration.
+	keyBootstrapDigest    = []byte("bootstrap_digest")
+	keyBootstrapUsed      = []byte("bootstrap_used")
+	keyAdminDigest        = []byte("admin_digest")
+	keyAdminMode          = []byte("admin_mode")
+	keyAdminUsername      = []byte("admin_username")
+	keyAdminPassword      = []byte("admin_password_hash")
+	keyAdminInitializedAt = []byte("admin_initialized_at")
+	keyRevisionCounter    = []byte("profile_revision_counter")
 )
 
 const keyCheckPlaintext = "dsmctl-gateway-master-key-v1"
@@ -79,6 +84,9 @@ type Repository struct {
 	closeOnce    sync.Once
 	closeErr     error
 	auditFailure func() error
+	now          func() time.Time
+	passwordHash PasswordHashParameters
+	hashSlots    chan struct{}
 }
 
 type OpenOptions struct {
@@ -90,6 +98,10 @@ type OpenOptions struct {
 	// authorization tests prove that mutating requests fail before admission
 	// when their mandatory audit record cannot be persisted.
 	AuditFailure func() error
+	// Now and PasswordHashParameters are deterministic test seams. Production
+	// callers leave them unset.
+	Now                    func() time.Time
+	PasswordHashParameters *PasswordHashParameters
 }
 
 // ReadMasterKey reads an exact 32-byte AES-256 key. It deliberately does not
@@ -139,7 +151,19 @@ func OpenWithOptions(path string, masterKey []byte, options OpenOptions) (*Repos
 	if err != nil {
 		return nil, fmt.Errorf("open gateway state: %w", err)
 	}
-	repository := &Repository{db: db, aead: aead, path: path, environment: credentials.NewEnvironment(), auditFailure: options.AuditFailure}
+	now := options.Now
+	if now == nil {
+		now = time.Now
+	}
+	passwordHash := DefaultPasswordHashParameters
+	if options.PasswordHashParameters != nil {
+		passwordHash = *options.PasswordHashParameters
+	}
+	if err := passwordHash.validate(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	repository := &Repository{db: db, aead: aead, path: path, environment: credentials.NewEnvironment(), auditFailure: options.AuditFailure, now: now, passwordHash: passwordHash, hashSlots: make(chan struct{}, 2)}
 	if err := repository.initialize(existed, options); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -179,12 +203,21 @@ func (r *Repository) initialize(existed bool, options OpenOptions) error {
 			return fmt.Errorf("back up gateway state before migration: %w", err)
 		}
 	}
+	if version > 0 && version < SchemaVersion {
+		legacyAdmin, managedData, err := r.legacyAdministrationState()
+		if err != nil {
+			return err
+		}
+		if legacyAdmin && managedData {
+			return errors.New("legacy gateway administrator state contains managed data; automatic local-administrator reset is refused (restore the pre-migration backup or explicitly reset the pre-release state)")
+		}
+	}
 	if err := r.db.Update(func(tx *bolt.Tx) error {
 		meta, err := tx.CreateBucketIfNotExists(bucketMeta)
 		if err != nil {
 			return err
 		}
-		for _, name := range [][]byte{bucketProfiles, bucketSecrets, bucketMigrations, bucketMCPTokens, bucketTokenDigests, bucketApprovals, bucketAudit} {
+		for _, name := range [][]byte{bucketProfiles, bucketSecrets, bucketMigrations, bucketMCPTokens, bucketTokenDigests, bucketApprovals, bucketAudit, bucketAdminSessions} {
 			if _, err := tx.CreateBucketIfNotExists(name); err != nil {
 				return err
 			}
@@ -221,12 +254,14 @@ func (r *Repository) initialize(existed bool, options OpenOptions) error {
 				return err
 			}
 		}
-		if len(meta.Get(keyAdminMode)) == 0 && len(meta.Get(keyAdminDigest)) > 0 {
-			if err := meta.Put(keyAdminMode, []byte(AdminModeLocal)); err != nil {
-				return err
+		if version < SchemaVersion {
+			for _, key := range [][]byte{keyBootstrapDigest, keyBootstrapUsed, keyAdminDigest, keyAdminMode} {
+				if err := meta.Delete(key); err != nil {
+					return err
+				}
 			}
 		}
-		return tx.Bucket(bucketMigrations).Put(encodeUint64(SchemaVersion), []byte(time.Now().UTC().Format(time.RFC3339Nano)))
+		return tx.Bucket(bucketMigrations).Put(encodeUint64(SchemaVersion), []byte(r.now().UTC().Format(time.RFC3339Nano)))
 	}); err != nil {
 		return fmt.Errorf("migrate gateway state: %w", err)
 	}
@@ -247,8 +282,11 @@ func (r *Repository) Ready(ctx context.Context) error {
 		if meta == nil || decodeUint64(meta.Get(keySchemaVersion)) != SchemaVersion {
 			return errors.New("gateway schema is not ready")
 		}
-		if !administratorInitialized(meta) {
-			return ErrBootstrapRequired
+		if !administratorConfigured(meta) {
+			return ErrAdministratorRequired
+		}
+		if err := validateAdministratorRecord(meta); err != nil {
+			return err
 		}
 		return nil
 	})
@@ -267,9 +305,11 @@ func (r *Repository) Health(ctx context.Context) (Health, error) {
 		}
 		health.SchemaVersion = int(decodeUint64(meta.Get(keySchemaVersion)))
 		health.ProfileCount = profiles.Stats().KeyN
-		health.AdminMode = string(meta.Get(keyAdminMode))
-		health.Initialized = administratorInitialized(meta)
-		health.Ready = health.SchemaVersion == SchemaVersion && health.Initialized
+		if administratorConfigured(meta) {
+			health.AdminMode = AdminModeLocal
+		}
+		health.Initialized = administratorConfigured(meta)
+		health.Ready = health.SchemaVersion == SchemaVersion && health.Initialized && validateAdministratorRecord(meta) == nil
 		return nil
 	})
 	return health, err
@@ -483,141 +523,25 @@ func (r *Repository) Snapshot(ctx context.Context) (*config.Config, error) {
 	return cfg, nil
 }
 
-func (r *Repository) ConfigureBootstrap(ctx context.Context, token string) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if len(token) < 32 || strings.IndexFunc(token, func(r rune) bool { return r == ' ' || r == '\n' || r == '\r' || r == '\t' }) >= 0 {
-		return errors.New("bootstrap token must be at least 32 non-whitespace bytes")
-	}
-	digest := sha256.Sum256([]byte(token))
-	return r.db.Update(func(tx *bolt.Tx) error {
-		meta := tx.Bucket(bucketMeta)
-		if string(meta.Get(keyAdminMode)) == AdminModePlatform {
-			return errors.New("generic bootstrap is disabled for platform administration")
-		}
-		if len(meta.Get(keyAdminDigest)) > 0 || len(meta.Get(keyBootstrapUsed)) > 0 {
-			return nil
-		}
-		if err := meta.Put(keyAdminMode, []byte(AdminModeLocal)); err != nil {
-			return err
-		}
-		current := meta.Get(keyBootstrapDigest)
-		if len(current) > 0 && subtle.ConstantTimeCompare(current, digest[:]) != 1 {
-			return errors.New("bootstrap token does not match the token that initialized this state")
-		}
-		if len(current) == 0 {
-			return meta.Put(keyBootstrapDigest, digest[:])
-		}
-		return nil
-	})
-}
-
-// EstablishAdministrator consumes the generic bootstrap token exactly once
-// and returns a newly generated administrator bearer token. Only its SHA-256
-// digest is persisted.
-func (r *Repository) EstablishAdministrator(ctx context.Context, bootstrapToken string) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	adminToken, err := randomToken(32)
-	if err != nil {
-		return "", err
-	}
-	bootstrapDigest := sha256.Sum256([]byte(bootstrapToken))
-	adminDigest := sha256.Sum256([]byte(adminToken))
-	err = r.db.Update(func(tx *bolt.Tx) error {
-		meta := tx.Bucket(bucketMeta)
-		if string(meta.Get(keyAdminMode)) == AdminModePlatform {
-			return ErrUnauthorized
-		}
-		if len(meta.Get(keyAdminDigest)) > 0 || len(meta.Get(keyBootstrapUsed)) > 0 {
-			return ErrBootstrapConsumed
-		}
-		expected := meta.Get(keyBootstrapDigest)
-		if len(expected) == 0 {
-			return ErrBootstrapRequired
-		}
-		if subtle.ConstantTimeCompare(expected, bootstrapDigest[:]) != 1 {
-			return ErrUnauthorized
-		}
-		if err := meta.Put(keyAdminDigest, adminDigest[:]); err != nil {
-			return err
-		}
-		if err := meta.Put(keyBootstrapUsed, []byte{1}); err != nil {
-			return err
-		}
-		return meta.Delete(keyBootstrapDigest)
-	})
-	if err != nil {
-		return "", err
-	}
-	return adminToken, nil
-}
-
-func (r *Repository) AuthenticateAdministrator(ctx context.Context, token string) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	digest := sha256.Sum256([]byte(token))
-	return r.db.View(func(tx *bolt.Tx) error {
-		meta := tx.Bucket(bucketMeta)
-		if string(meta.Get(keyAdminMode)) == AdminModePlatform {
-			return ErrUnauthorized
-		}
-		expected := meta.Get(keyAdminDigest)
-		if len(expected) != sha256.Size || subtle.ConstantTimeCompare(expected, digest[:]) != 1 {
-			return ErrUnauthorized
-		}
-		return nil
-	})
-}
-
-func (r *Repository) RotateAdministrator(ctx context.Context) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	token, err := randomToken(32)
-	if err != nil {
-		return "", err
-	}
-	digest := sha256.Sum256([]byte(token))
-	err = r.db.Update(func(tx *bolt.Tx) error {
-		meta := tx.Bucket(bucketMeta)
-		if string(meta.Get(keyAdminMode)) == AdminModePlatform {
-			return ErrUnauthorized
-		}
-		return meta.Put(keyAdminDigest, digest[:])
-	})
-	return token, err
-}
-
-// EnablePlatformAdministration selects an external, signed administrator
-// identity for a fresh deployment. It is deliberately irreversible through
-// the runtime API so a local bootstrap secret cannot be used to downgrade a
-// Synology installation after the package has initialized it.
-func (r *Repository) EnablePlatformAdministration(ctx context.Context) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return r.db.Update(func(tx *bolt.Tx) error {
-		meta := tx.Bucket(bucketMeta)
-		mode := string(meta.Get(keyAdminMode))
-		if mode == AdminModePlatform {
-			return nil
-		}
-		if mode != "" || len(meta.Get(keyAdminDigest)) > 0 || len(meta.Get(keyBootstrapDigest)) > 0 || len(meta.Get(keyBootstrapUsed)) > 0 {
-			return errors.New("gateway state already uses local administration")
-		}
-		return meta.Put(keyAdminMode, []byte(AdminModePlatform))
-	})
-}
-
 func administratorInitialized(meta *bolt.Bucket) bool {
-	if string(meta.Get(keyAdminMode)) == AdminModePlatform {
-		return true
+	return len(meta.Get(keyAdminUsername)) > 0 && len(meta.Get(keyAdminPassword)) > 0 && len(meta.Get(keyAdminInitializedAt)) > 0
+}
+
+func administratorConfigured(meta *bolt.Bucket) bool {
+	return len(meta.Get(keyAdminUsername)) > 0 || len(meta.Get(keyAdminPassword)) > 0 || len(meta.Get(keyAdminInitializedAt)) > 0
+}
+
+func validateAdministratorRecord(meta *bolt.Bucket) error {
+	if _, err := normalizeAdministratorUsername(string(meta.Get(keyAdminUsername))); err != nil {
+		return errors.New("gateway local administrator record is invalid")
 	}
-	return len(meta.Get(keyAdminDigest)) == sha256.Size
+	if _, _, _, err := parsePasswordVerifier(string(meta.Get(keyAdminPassword))); err != nil {
+		return errors.New("gateway local administrator password verifier is invalid")
+	}
+	if _, err := time.Parse(time.RFC3339Nano, string(meta.Get(keyAdminInitializedAt))); err != nil {
+		return errors.New("gateway local administrator initialization time is invalid")
+	}
+	return nil
 }
 
 func readProfile(tx *bolt.Tx, name string) (profileRecord, error) {

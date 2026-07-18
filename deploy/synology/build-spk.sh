@@ -12,7 +12,7 @@ image_reference="$2"
 output_dir="$3"
 [[ "$package_version" =~ ^[0-9]+([._-][0-9]+)+$ ]] || { echo "Package version must contain only numeric components and ._- delimiters" >&2; exit 2; }
 
-for command in docker go tar gzip base64 sed sha256sum; do
+for command in docker tar gzip base64 sed sha256sum; do
   command -v "$command" >/dev/null || { echo "missing required command: $command" >&2; exit 1; }
 done
 
@@ -41,14 +41,6 @@ printf '%s\n' "Apache License 2.0; see https://www.apache.org/licenses/LICENSE-2
 cp -R "$template/package/." "$package_stage/"
 sed "s/__VERSION__/$package_version/g" "$template/package/project/compose.yaml.template" > "$package_stage/project/compose.yaml"
 rm "$package_stage/project/compose.yaml.template"
-mkdir -p "$package_stage/bin"
-(
-  cd "$repo_root"
-  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false \
-    -ldflags="-s -w -buildid= -X github.com/ychiu1211/dsmctl/internal/buildinfo.Version=$package_version -X github.com/ychiu1211/dsmctl/internal/buildinfo.Revision=$revision" \
-    -o "$package_stage/bin/dsmctl-synology-auth" ./cmd/dsmctl-synology-auth
-)
-
 docker tag "$image_reference" "dsmctl-gateway:$package_version"
 docker save -o "$work/image.raw.tar" "dsmctl-gateway:$package_version"
 mkdir "$work/image"
@@ -58,7 +50,7 @@ cat > "$package_stage/image-metadata.json" <<EOF
 {"image_id":"$image_id","image_reference":"dsmctl-gateway:$package_version","platform":"linux/amd64","revision":"$revision","version":"$package_version"}
 EOF
 
-chmod 0755 "$package_stage/bin/dsmctl-synology-auth" "$stage/scripts/"*
+chmod 0755 "$stage/scripts/"*
 tar --sort=name --mtime="@$source_epoch" --owner=0 --group=0 --numeric-owner -C "$package_stage" -cf - . | gzip -n > "$stage/package.tgz"
 spk="$output_dir/dsmctl-gateway-$package_version-x86_64.spk"
 tar --sort=name --mtime="@$source_epoch" --owner=0 --group=0 --numeric-owner -C "$stage" -cf "$spk" .

@@ -1,9 +1,5 @@
 {
   "defaults": {
     "run-as": "package"
-  },
-  "executable": [{
-    "relpath": "bin/dsmctl-synology-auth",
-    "run-as": "package"
-  }]
+  }
 }

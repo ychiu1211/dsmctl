@@ -2,6 +2,6 @@
   "step_title": "dsmctl Gateway security boundary",
   "items": [{
     "type": "textfield",
-    "desc": "The package binds its container and DSM-auth adapter only to loopback. Web Station registers /dsmctl as the HTTPS portal. No firewall, router, certificate, QuickConnect, or VPN setting is changed."
+    "desc": "The package binds its container only to loopback. Web Station registers /dsmctl as the HTTPS portal. Open it within one hour after start to create the Gateway administrator. No firewall, router, certificate, QuickConnect, or VPN setting is changed."
   }]
 }]

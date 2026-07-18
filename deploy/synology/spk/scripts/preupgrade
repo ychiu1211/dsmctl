@@ -7,7 +7,7 @@ mkdir -p "$backup_dir"
 if [ -f "${SYNOPKG_PKGVAR}/gateway.db" ]; then
     cp -p "${SYNOPKG_PKGVAR}/gateway.db" "$backup_dir/gateway.db"
 fi
-for key in master.key platform.key; do
+for key in master.key; do
     if [ -f "${SYNOPKG_PKGHOME:?}/secrets/$key" ]; then
         cp -p "${SYNOPKG_PKGHOME}/secrets/$key" "$backup_dir/$key"
     fi

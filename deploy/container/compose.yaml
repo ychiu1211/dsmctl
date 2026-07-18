@@ -36,7 +36,6 @@ services:
       - --listen=0.0.0.0:8080
       - --state=/data/gateway.db
       - --master-key-file=/run/secrets/master.key
-      - --bootstrap-file=/run/secrets/bootstrap
       - --allowed-hosts=${DSMCTL_ALLOWED_HOSTS:-localhost,127.0.0.1}
       - --allowed-origins=${DSMCTL_ALLOWED_ORIGINS:-http://localhost:18765,http://127.0.0.1:18765}
       - --trusted-proxies=${DSMCTL_TRUSTED_PROXIES:-}
