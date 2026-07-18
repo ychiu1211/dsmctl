@@ -15,6 +15,9 @@ type DriveAdminTeamFolders = driveadmin.TeamFolders
 type DriveAdminLog = driveadmin.Log
 type DriveAdminLogQuery = driveadmin.LogQuery
 type DriveAdminCapabilities = driveadmin.Capabilities
+type DriveServerConfig = driveadmin.ServerConfig
+type DriveServerConfigChange = driveadmin.ServerConfigChange
+type DriveConfigMutationResult = driveops.ConfigMutationResult
 
 // driveAdminEvidenceLocked reports the installed SynologyDrive package as
 // observed by the catalog refresh that ran in preparePackageScopedTargetLocked.
@@ -105,6 +108,51 @@ func (c *Client) DriveAdminLog(ctx context.Context, query DriveAdminLogQuery) (D
 	return log, nil
 }
 
+// DriveServerConfig reads the Drive server database configuration.
+func (c *Client) DriveServerConfig(ctx context.Context) (DriveServerConfig, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.preparePackageScopedTargetLocked(ctx, driveops.APINames()...); err != nil {
+		return DriveServerConfig{}, fmt.Errorf("prepare Drive Admin target: %w", err)
+	}
+	evidence := c.driveAdminEvidenceLocked()
+	config, _, err := driveops.ExecuteConfigRead(ctx, c.target, lockedExecutor{client: c})
+	if err != nil {
+		return DriveServerConfig{}, driveAdminReadError("server config", evidence, err)
+	}
+	config.Package = evidence
+	c.target.AddCapability(driveops.ConfigReadCapabilityName)
+	return config, nil
+}
+
+// ApplyDriveServerConfigChange submits the coupled vmtouch pair, merged from the
+// freshly read configuration so an unspecified half is preserved.
+func (c *Client) ApplyDriveServerConfigChange(ctx context.Context, change DriveServerConfigChange) (DriveConfigMutationResult, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.preparePackageScopedTargetLocked(ctx, driveops.APINames()...); err != nil {
+		return DriveConfigMutationResult{}, fmt.Errorf("prepare Drive Admin mutation target: %w", err)
+	}
+	current, _, err := driveops.ExecuteConfigRead(ctx, c.target, lockedExecutor{client: c})
+	if err != nil {
+		return DriveConfigMutationResult{}, driveAdminReadError("server config", c.driveAdminEvidenceLocked(), err)
+	}
+	input := driveops.ConfigSetInput{VMTouchEnabled: current.VMTouchEnabled, VMTouchReserveMem: current.VMTouchReserveMem}
+	if change.VMTouchEnabled != nil {
+		input.VMTouchEnabled = *change.VMTouchEnabled
+	}
+	if change.VMTouchReserveMem != nil {
+		input.VMTouchReserveMem = *change.VMTouchReserveMem
+	}
+	result, _, err := driveops.ExecuteConfigSet(ctx, c.target, lockedExecutor{client: c}, input)
+	if err != nil {
+		return DriveConfigMutationResult{}, fmt.Errorf("apply Drive server config: %w", err)
+	}
+	return result, nil
+}
+
 // DriveAdminCapabilities reports each Drive Admin operation's selection plus
 // the installed-package evidence the selection used. A missing or too-old
 // SynologyDrive package makes only this module unsupported.
@@ -122,6 +170,26 @@ func (c *Client) DriveAdminCapabilities(ctx context.Context) (DriveAdminCapabili
 	c.addDriveAdminCapabilitiesLocked(selections)
 	capabilities := driveAdminCapabilitiesFromSelections(selections)
 	capabilities.Package = c.driveAdminEvidenceLocked()
+
+	// Config read/set are selected separately so they do not disturb the stable
+	// driveops.Select() order used by the Admin Console reads.
+	configRead, err := driveops.SelectConfigRead(c.target)
+	if err != nil && !compatibility.IsUnsupported(err) {
+		return DriveAdminCapabilities{}, CompatibilityReport{}, fmt.Errorf("select Drive config read backend: %w", err)
+	}
+	configSet, err := driveops.SelectConfigSet(c.target)
+	if err != nil && !compatibility.IsUnsupported(err) {
+		return DriveAdminCapabilities{}, CompatibilityReport{}, fmt.Errorf("select Drive config set backend: %w", err)
+	}
+	capabilities.ConfigRead = configRead.Supported
+	capabilities.ConfigSet = configSet.Supported
+	if configRead.Supported {
+		c.target.AddCapability(driveops.ConfigReadCapabilityName)
+	}
+	if configSet.Supported {
+		c.target.AddCapability(driveops.ConfigSetCapabilityName)
+	}
+	selections = append(selections, configRead, configSet)
 	return capabilities, c.target.Report(selections...), nil
 }
 

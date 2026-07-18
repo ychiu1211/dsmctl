@@ -17,7 +17,110 @@ func newDriveCommand(opts *options) *cobra.Command {
 		Use:   "drive",
 		Short: "Manage the Synology Drive Server package",
 	}
-	command.AddCommand(newDriveAdminCommand(opts))
+	command.AddCommand(newDriveAdminCommand(opts), newDriveConfigCommand(opts))
+	return command
+}
+
+func newDriveConfigCommand(opts *options) *cobra.Command {
+	command := &cobra.Command{
+		Use:   "config",
+		Short: "Inspect and manage the Drive server database configuration (vmtouch)",
+	}
+	command.AddCommand(
+		newDriveConfigStateCommand(opts),
+		newDriveConfigPlanCommand(opts),
+		newDriveConfigApplyCommand(opts),
+	)
+	return command
+}
+
+func newDriveConfigStateCommand(opts *options) *cobra.Command {
+	var jsonOutput bool
+	command := &cobra.Command{
+		Use:   "state",
+		Short: "Show the Drive server database configuration",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			service, err := loadService(opts.configPath)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.GetDriveServerConfig(cmd.Context(), opts.nas)
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				return encodeIndentedJSON(cmd.OutOrStdout(), result)
+			}
+			cfg := result.Config
+			writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+			fmt.Fprintf(writer, "NAS:\t%s\n", result.NAS)
+			fmt.Fprintf(writer, "Package:\t%s %s (%s)\n", cfg.Package.ID, valueOrDash(cfg.Package.Version), packageRunState(cfg.Package.Installed, cfg.Package.Running))
+			fmt.Fprintf(writer, "Database volume (read-only):\t%s\n", valueOrDash(cfg.VolumePath))
+			fmt.Fprintf(writer, "vmtouch (pin DB in memory):\t%s\n", yesNo(cfg.VMTouchEnabled))
+			fmt.Fprintf(writer, "vmtouch reserved memory (MB):\t%d\n", cfg.VMTouchReserveMem)
+			return writer.Flush()
+		},
+	}
+	command.Flags().BoolVar(&jsonOutput, "json", false, "output structured JSON")
+	return command
+}
+
+func newDriveConfigPlanCommand(opts *options) *cobra.Command {
+	var inputPath, outputPath string
+	command := &cobra.Command{
+		Use:   "plan",
+		Short: "Validate a Drive server config patch and emit an approval plan",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var request driveadmin.ServerConfigChange
+			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
+				return fmt.Errorf("read Drive config change: %w", err)
+			}
+			service, err := loadService(opts.configPath)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			plan, err := service.PlanDriveConfigChange(cmd.Context(), opts.nas, request)
+			if err != nil {
+				return err
+			}
+			return encodeJSONOutput(cmd, outputPath, plan)
+		},
+	}
+	command.Flags().StringVarP(&inputPath, "file", "f", "-", "Drive config change JSON file, or - for stdin")
+	command.Flags().StringVarP(&outputPath, "output", "o", "-", "plan JSON file, or - for stdout")
+	return command
+}
+
+func newDriveConfigApplyCommand(opts *options) *cobra.Command {
+	var inputPath, approvalHash string
+	command := &cobra.Command{
+		Use:   "apply",
+		Short: "Apply a Drive server config plan after hash and stale-state validation",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var plan application.DriveConfigPlan
+			if err := decodeJSONInput(cmd, inputPath, &plan); err != nil {
+				return fmt.Errorf("read Drive config plan: %w", err)
+			}
+			service, err := loadService(opts.configPath)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.ApplyDriveConfigPlan(cmd.Context(), plan, approvalHash)
+			if err != nil {
+				return err
+			}
+			return encodeIndentedJSON(cmd.OutOrStdout(), result)
+		},
+	}
+	command.Flags().StringVarP(&inputPath, "file", "f", "-", "Drive config plan JSON file, or - for stdin")
+	command.Flags().StringVar(&approvalHash, "approve", "", "exact SHA-256 hash printed by the Drive config plan")
+	_ = command.MarkFlagRequired("approve")
 	return command
 }
 

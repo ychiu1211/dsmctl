@@ -62,8 +62,8 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools() error = %v", err)
 	}
-	if len(tools.Tools) != 73 {
-		t.Fatalf("ListTools() returned %d tools, want 73", len(tools.Tools))
+	if len(tools.Tools) != 76 {
+		t.Fatalf("ListTools() returned %d tools, want 76", len(tools.Tools))
 	}
 	readOnlyTools := map[string]bool{
 		"discover_lan_devices":                false,
@@ -122,6 +122,8 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"get_drive_admin_connections":         false,
 		"get_drive_admin_team_folders":        false,
 		"get_drive_admin_logs":                false,
+		"get_drive_config":                    false,
+		"plan_drive_config_change":            false,
 	}
 	mutationTools := map[string]bool{
 		"apply_account_plan":            false,
@@ -136,6 +138,7 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"apply_rsync_service_plan":      false,
 		"apply_tftp_service_plan":       false,
 		"apply_photos_plan":             false,
+		"apply_drive_config_plan":       false,
 		"apply_package_plan":            false,
 		"apply_resource_recording_plan": false,
 	}

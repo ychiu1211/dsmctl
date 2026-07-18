@@ -627,6 +627,29 @@ type getDriveAdminLogsOutput struct {
 	Log synology.DriveAdminLog `json:"log" jsonschema:"Drive server log entries for the requested page"`
 }
 
+type getDriveConfigOutput struct {
+	NAS    string                     `json:"nas" jsonschema:"NAS profile used for the request"`
+	Config synology.DriveServerConfig `json:"config" jsonschema:"Normalized Drive server database configuration"`
+}
+
+type planDriveConfigChangeInput struct {
+	NAS     string                        `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request driveadmin.ServerConfigChange `json:"request" jsonschema:"Patch-only Drive server config intent"`
+}
+
+type planDriveConfigChangeOutput struct {
+	Plan application.DriveConfigPlan `json:"plan" jsonschema:"Validated plan bound to the complete observed config and approval hash"`
+}
+
+type applyDriveConfigPlanInput struct {
+	Plan         application.DriveConfigPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_drive_config_change"`
+	ApprovalHash string                     `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved Drive config plan"`
+}
+
+type applyDriveConfigPlanOutput struct {
+	Result application.DriveConfigApplyResult `json:"result" jsonschema:"Drive config mutation result after stale-state and postcondition checks"`
+}
+
 func New(service *application.Service, version string) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "dsmctl", Version: version}, nil)
 
@@ -1594,6 +1617,45 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getDriveAdminLogsOutput{}, err
 		}
 		return nil, getDriveAdminLogsOutput{NAS: result.NAS, Log: result.Log}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_drive_config",
+		Title:       "Get Drive server config",
+		Description: "Read the Synology Drive server database configuration: the database volume (read-only), whether the database is pinned in memory (vmtouch), and the reserved memory. Never changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDriveAdminInput) (*mcp.CallToolResult, getDriveConfigOutput, error) {
+		result, err := service.GetDriveServerConfig(ctx, input.NAS)
+		if err != nil {
+			return nil, getDriveConfigOutput{}, err
+		}
+		return nil, getDriveConfigOutput{NAS: result.NAS, Config: result.Config}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_drive_config_change",
+		Title:       "Plan a Drive server config change",
+		Description: "Validate one patch-only Drive server database config request (the vmtouch memory-pinning pair), read the current config, and return a hash-bound approval plan. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planDriveConfigChangeInput) (*mcp.CallToolResult, planDriveConfigChangeOutput, error) {
+		plan, err := service.PlanDriveConfigChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planDriveConfigChangeOutput{}, err
+		}
+		return nil, planDriveConfigChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_drive_config_plan",
+		Title:       "Apply an approved Drive server config plan",
+		Description: "Apply an unmodified Drive server config plan only while its approval hash and complete observed config still match, then verify the requested postcondition.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyDriveConfigPlanInput) (*mcp.CallToolResult, applyDriveConfigPlanOutput, error) {
+		result, err := service.ApplyDriveConfigPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applyDriveConfigPlanOutput{}, err
+		}
+		return nil, applyDriveConfigPlanOutput{Result: result}, nil
 	})
 
 	return server
