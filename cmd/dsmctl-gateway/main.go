@@ -68,11 +68,17 @@ func run(arguments []string, logger *slog.Logger) error {
 		return errors.New("max-body-bytes must be at least 1")
 	}
 
-	token, err := gateway.ReadDevelopmentToken(*tokenPath)
-	if err != nil {
-		return err
+	managed := strings.TrimSpace(*statePath) != ""
+	var token string
+	var tokenDigest [sha256.Size]byte
+	var err error
+	if !managed {
+		token, err = gateway.ReadDevelopmentToken(*tokenPath)
+		if err != nil {
+			return err
+		}
+		tokenDigest = gateway.DevelopmentTokenDigest(token)
 	}
-	tokenDigest := gateway.DevelopmentTokenDigest(token)
 	proxies, err := parsePrefixes(splitCSV(*trustedProxies))
 	if err != nil {
 		return err
@@ -86,14 +92,15 @@ func run(arguments []string, logger *slog.Logger) error {
 		ready        func(context.Context) error
 		closeState   func() error
 		mode         string
+		repository   *gatewaystate.Repository
 	)
-	if strings.TrimSpace(*statePath) != "" {
+	if managed {
 		masterKey, err := gatewaystate.ReadMasterKey(*masterKeyPath)
 		if err != nil {
 			return err
 		}
 		masterDigest := sha256.Sum256(masterKey)
-		repository, err := gatewaystate.Open(*statePath, masterKey)
+		repository, err = gatewaystate.Open(*statePath, masterKey)
 		for index := range masterKey {
 			masterKey[index] = 0
 		}
@@ -131,6 +138,7 @@ func run(arguments []string, logger *slog.Logger) error {
 			application.WithConfigSource(repository),
 			application.WithCredentialStore(repository),
 			application.WithSecretReferenceResolver(repository),
+			application.WithRemoteApplyAuthorizer(repository),
 		)
 		adminApplication, err := admin.New(admin.Options{Repository: repository, Manager: manager, PublicURL: *adminPublicURL})
 		if err != nil {
@@ -139,8 +147,8 @@ func run(arguments []string, logger *slog.Logger) error {
 			return err
 		}
 		adminHandler = adminApplication
-		ready = managedReadiness(repository, *masterKeyPath, masterDigest, *tokenPath, tokenDigest)
-		mode = "managed-read-only"
+		ready = managedReadiness(repository, *masterKeyPath, masterDigest)
+		mode = "managed"
 	} else {
 		cfg, err = loadRequiredConfig(*configPath)
 		if err != nil {
@@ -152,8 +160,11 @@ func run(arguments []string, logger *slog.Logger) error {
 		ready = localReadiness(*configPath, *tokenPath, tokenDigest)
 		mode = "development-read-only"
 	}
-	mcpServer := mcpserver.NewReadOnly(service, buildinfo.Version)
-	httpServer, err := gateway.New(gateway.Options{
+	var mcpServer = mcpserver.NewReadOnly(service, buildinfo.Version)
+	if managed {
+		mcpServer = mcpserver.NewRemote(service, buildinfo.Version, repository)
+	}
+	gatewayOptions := gateway.Options{
 		MCPServer:      mcpServer,
 		AdminHandler:   adminHandler,
 		BearerToken:    token,
@@ -173,7 +184,12 @@ func run(arguments []string, logger *slog.Logger) error {
 		},
 		Logger:          logger,
 		ShutdownTimeout: *shutdownTimeout,
-	})
+	}
+	if managed {
+		gatewayOptions.MCPAuthenticator = repository
+		gatewayOptions.MCPAuditor = repository
+	}
+	httpServer, err := gateway.New(gatewayOptions)
 	if err != nil {
 		_ = service.Close(context.Background())
 		if closeState != nil {
@@ -200,7 +216,7 @@ func run(arguments []string, logger *slog.Logger) error {
 	return httpServer.Serve(ctx, listener)
 }
 
-func managedReadiness(repository *gatewaystate.Repository, masterKeyPath string, expectedMasterKey [sha256.Size]byte, tokenPath string, expectedToken [sha256.Size]byte) func(context.Context) error {
+func managedReadiness(repository *gatewaystate.Repository, masterKeyPath string, expectedMasterKey [sha256.Size]byte) func(context.Context) error {
 	return func(ctx context.Context) error {
 		if err := repository.Ready(ctx); err != nil {
 			return err
@@ -215,13 +231,6 @@ func managedReadiness(repository *gatewaystate.Repository, masterKeyPath string,
 		}
 		if subtle.ConstantTimeCompare(expectedMasterKey[:], actualMasterKey[:]) != 1 {
 			return errors.New("master key file changed; restart the gateway")
-		}
-		current, err := gateway.ReadDevelopmentToken(tokenPath)
-		if err != nil {
-			return err
-		}
-		if !gateway.DevelopmentTokenMatches(expectedToken, current) {
-			return errors.New("development token file changed; restart the gateway")
 		}
 		return nil
 	}

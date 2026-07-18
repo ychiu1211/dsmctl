@@ -104,6 +104,9 @@ func (s *Service) ApplyStoragePlan(ctx context.Context, plan StoragePlan, approv
 	if err := validateStoragePlan(plan, approvalHash); err != nil {
 		return StorageApplyResult{}, err
 	}
+	if err := s.authorizeRemoteApply(ctx, plan.NAS, plan.ProfileRevision, plan.Hash, plan.Risk); err != nil {
+		return StorageApplyResult{}, err
+	}
 	if err := ensureStorageBackendScope(plan.Request); err != nil {
 		return StorageApplyResult{}, err
 	}

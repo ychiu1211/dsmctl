@@ -64,6 +64,9 @@ func (s *Service) ApplyResourceRecordingPlan(ctx context.Context, plan ResourceR
 	if err := validateResourceRecordingPlan(plan, approvalHash); err != nil {
 		return ResourceRecordingApplyResult{}, err
 	}
+	if err := s.authorizeRemoteApply(ctx, plan.NAS, plan.ProfileRevision, plan.Hash, plan.Risk); err != nil {
+		return ResourceRecordingApplyResult{}, err
+	}
 	if err := s.verifyProfileRevision(ctx, plan.NAS, plan.ProfileRevision); err != nil {
 		return ResourceRecordingApplyResult{}, err
 	}

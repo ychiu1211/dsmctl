@@ -4,7 +4,7 @@
 
 - `dsmctl`: a command-line interface for administrators.
 - `dsmctl-mcp`: a stdio MCP server for AI clients.
-- `dsmctl-gateway`: a portable amd64 Streamable HTTP MCP gateway; its current developer mode is read-only.
+- `dsmctl-gateway`: a portable amd64 Streamable HTTP MCP gateway; managed mode supports dynamic multi-NAS administration, scoped tokens, out-of-band high-risk approval, and redacted audit, while static developer mode stays read-only.
 
 The first milestone implements one complete connection slice: configure multiple NAS profiles, authenticate with password and DSM two-factor authentication, maintain independent sessions, and read basic system information. Management modules now cover storage and SAN inventory, guarded storage-pool, volume, and SAN lifecycles, local user/group/share management, effective-access explanation, a focused read-only Control Panel time module, guarded global SMB/NFS File Services, and Package Center inventory, settings, and guarded package lifecycle through the same CLI/MCP/application stack. Functionality provided by installed packages is managed through package-scoped operations that re-check the installed package version before every command; the read-only Synology Drive Admin module is the first consumer.
 
@@ -183,7 +183,7 @@ dsmctl-mcp --config C:\path\to\config.json
 ```
 
 The portable HTTP developer gateway, its loopback-only Compose project, and
-its read-only security boundary are documented in [the gateway guide](docs/gateway.md).
+its managed remote security boundary are documented in [the gateway guide](docs/gateway.md).
 
 Available tools:
 

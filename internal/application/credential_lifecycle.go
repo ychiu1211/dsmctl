@@ -65,6 +65,7 @@ func (s *Service) GetAuthStatus(ctx context.Context, requestedNAS string) (AuthS
 		return AuthStatusResult{}, err
 	}
 	summaries := cfg.Summaries(credentials.DefaultEnvironmentVariable)
+	summaries = filterRemoteSummaries(ctx, summaries)
 	requested := strings.TrimSpace(requestedNAS)
 	if requested != "" {
 		var match *config.Summary

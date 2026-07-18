@@ -11,8 +11,10 @@ import (
 )
 
 const (
-	SchemaVersion = 1
-	MaxProfiles   = 32
+	SchemaVersion        = 2
+	MaxProfiles          = 32
+	MaxMCPTokenNameBytes = 64
+	DefaultApprovalTTL   = 10 * time.Minute
 
 	TLSSystemCA          = "system_ca"
 	TLSPinnedFingerprint = "pinned_fingerprint"
@@ -24,6 +26,8 @@ var (
 	ErrBootstrapRequired = errors.New("gateway administrator bootstrap is required")
 	ErrBootstrapConsumed = errors.New("gateway administrator bootstrap was already consumed")
 	ErrUnauthorized      = errors.New("gateway administrator authentication failed")
+	ErrTokenUnauthorized = errors.New("MCP bearer token authentication failed")
+	ErrApprovalRequired  = errors.New("an exact unexpired administrator approval is required")
 )
 
 // Profile is the non-secret, persistent connection definition exposed by the

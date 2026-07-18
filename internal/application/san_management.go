@@ -100,6 +100,9 @@ func (s *Service) ApplySANPlan(ctx context.Context, plan SANPlan, approvalHash s
 	if err := validateSANPlan(plan, approvalHash); err != nil {
 		return SANApplyResult{}, err
 	}
+	if err := s.authorizeRemoteApply(ctx, plan.NAS, plan.ProfileRevision, plan.Hash, plan.Risk); err != nil {
+		return SANApplyResult{}, err
+	}
 	if err := s.verifyProfileRevision(ctx, plan.NAS, plan.ProfileRevision); err != nil {
 		return SANApplyResult{}, err
 	}

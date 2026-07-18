@@ -108,6 +108,9 @@ func (s *Service) ApplyIdentityPlan(ctx context.Context, plan IdentityPlan, appr
 	if err := validateIdentityPlan(plan, approveHash); err != nil {
 		return IdentityApplyResult{}, err
 	}
+	if err := s.authorizeRemoteApply(ctx, plan.NAS, plan.ProfileRevision, plan.Hash, plan.Risk); err != nil {
+		return IdentityApplyResult{}, err
+	}
 	if err := s.verifyProfileRevision(ctx, plan.NAS, plan.ProfileRevision); err != nil {
 		return IdentityApplyResult{}, err
 	}
@@ -193,6 +196,9 @@ func (s *Service) PlanShareChange(ctx context.Context, requestedNAS string, requ
 
 func (s *Service) ApplySharePlan(ctx context.Context, plan SharePlan, approveHash string) (ShareApplyResult, error) {
 	if err := validateSharePlan(plan, approveHash); err != nil {
+		return ShareApplyResult{}, err
+	}
+	if err := s.authorizeRemoteApply(ctx, plan.NAS, plan.ProfileRevision, plan.Hash, plan.Risk); err != nil {
 		return ShareApplyResult{}, err
 	}
 	if err := s.verifyProfileRevision(ctx, plan.NAS, plan.ProfileRevision); err != nil {

@@ -28,10 +28,14 @@ import (
 )
 
 var (
-	bucketMeta       = []byte("meta")
-	bucketProfiles   = []byte("profiles")
-	bucketSecrets    = []byte("secrets")
-	bucketMigrations = []byte("migrations")
+	bucketMeta         = []byte("meta")
+	bucketProfiles     = []byte("profiles")
+	bucketSecrets      = []byte("secrets")
+	bucketMigrations   = []byte("migrations")
+	bucketMCPTokens    = []byte("mcp_tokens")
+	bucketTokenDigests = []byte("mcp_token_digests")
+	bucketApprovals    = []byte("approvals")
+	bucketAudit        = []byte("audit")
 
 	keySchemaVersion   = []byte("schema_version")
 	keyDefaultProfile  = []byte("default_profile")
@@ -67,12 +71,13 @@ type sealedSecret struct {
 }
 
 type Repository struct {
-	db          *bolt.DB
-	aead        cipher.AEAD
-	path        string
-	environment *credentials.Environment
-	closeOnce   sync.Once
-	closeErr    error
+	db           *bolt.DB
+	aead         cipher.AEAD
+	path         string
+	environment  *credentials.Environment
+	closeOnce    sync.Once
+	closeErr     error
+	auditFailure func() error
 }
 
 type OpenOptions struct {
@@ -80,6 +85,10 @@ type OpenOptions struct {
 	// migration transaction. Returning an error proves rollback and backup
 	// behavior without shipping a deliberately broken schema migration.
 	BeforeMigrationCommit func(from, to uint64) error
+	// AuditFailure is a test seam. Production callers leave it nil. It lets
+	// authorization tests prove that mutating requests fail before admission
+	// when their mandatory audit record cannot be persisted.
+	AuditFailure func() error
 }
 
 // ReadMasterKey reads an exact 32-byte AES-256 key. It deliberately does not
@@ -129,7 +138,7 @@ func OpenWithOptions(path string, masterKey []byte, options OpenOptions) (*Repos
 	if err != nil {
 		return nil, fmt.Errorf("open gateway state: %w", err)
 	}
-	repository := &Repository{db: db, aead: aead, path: path, environment: credentials.NewEnvironment()}
+	repository := &Repository{db: db, aead: aead, path: path, environment: credentials.NewEnvironment(), auditFailure: options.AuditFailure}
 	if err := repository.initialize(existed, options); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -174,7 +183,7 @@ func (r *Repository) initialize(existed bool, options OpenOptions) error {
 		if err != nil {
 			return err
 		}
-		for _, name := range [][]byte{bucketProfiles, bucketSecrets, bucketMigrations} {
+		for _, name := range [][]byte{bucketProfiles, bucketSecrets, bucketMigrations, bucketMCPTokens, bucketTokenDigests, bucketApprovals, bucketAudit} {
 			if _, err := tx.CreateBucketIfNotExists(name); err != nil {
 				return err
 			}

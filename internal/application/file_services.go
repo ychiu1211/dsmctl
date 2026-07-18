@@ -123,6 +123,9 @@ func (s *Service) ApplyFileServicePlan(ctx context.Context, plan FileServicePlan
 	if err := validateFileServicePlan(plan, approvalHash); err != nil {
 		return FileServiceApplyResult{}, err
 	}
+	if err := s.authorizeRemoteApply(ctx, plan.NAS, plan.ProfileRevision, plan.Hash, plan.Risk); err != nil {
+		return FileServiceApplyResult{}, err
+	}
 	if err := s.verifyProfileRevision(ctx, plan.NAS, plan.ProfileRevision); err != nil {
 		return FileServiceApplyResult{}, err
 	}

@@ -26,6 +26,8 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/ychiu1211/dsmctl/internal/remotepolicy"
 )
 
 const (
@@ -34,27 +36,33 @@ const (
 	defaultShutdownTimeout = 10 * time.Second
 )
 
-// Options configures the gateway HTTP boundary. BearerToken is required for
-// the WI-014 development read-only mode; durable token policy belongs to
-// WI-016.
+// Options configures the gateway HTTP boundary. BearerToken is required only
+// for the WI-014 static read-only mode. Managed mode supplies an
+// MCPAuthenticator backed by persistent scoped-token state instead.
 type Options struct {
-	MCPServer      *mcp.Server
-	AdminHandler   http.Handler
-	BearerToken    string
-	AllowedHosts   []string
-	AllowedOrigins []string
-	TrustedProxies []netip.Prefix
-	MaxBodyBytes   int64
-	MaxConcurrent  int
-	Ready          func(context.Context) error
-	Close          func(context.Context) error
-	Logger         *slog.Logger
+	MCPServer        *mcp.Server
+	MCPAuthenticator MCPAuthenticator
+	MCPAuditor       remotepolicy.Auditor
+	AdminHandler     http.Handler
+	BearerToken      string
+	AllowedHosts     []string
+	AllowedOrigins   []string
+	TrustedProxies   []netip.Prefix
+	MaxBodyBytes     int64
+	MaxConcurrent    int
+	Ready            func(context.Context) error
+	Close            func(context.Context) error
+	Logger           *slog.Logger
 
 	ReadHeaderTimeout time.Duration
 	ReadTimeout       time.Duration
 	WriteTimeout      time.Duration
 	IdleTimeout       time.Duration
 	ShutdownTimeout   time.Duration
+}
+
+type MCPAuthenticator interface {
+	AuthenticateMCPToken(context.Context, string) (remotepolicy.Principal, error)
 }
 
 // Server is a configured gateway HTTP server.
@@ -71,8 +79,10 @@ func New(options Options) (*Server, error) {
 	if options.MCPServer == nil {
 		return nil, errors.New("MCP server is required")
 	}
-	if err := ValidateDevelopmentToken(options.BearerToken); err != nil {
-		return nil, err
+	if options.MCPAuthenticator == nil {
+		if err := ValidateDevelopmentToken(options.BearerToken); err != nil {
+			return nil, err
+		}
 	}
 	allowedHosts, err := normalizeHosts(options.AllowedHosts)
 	if err != nil {
@@ -110,13 +120,17 @@ func New(options Options) (*Server, error) {
 			JSONResponse: true,
 		},
 	)
-	tokenDigest := sha256.Sum256([]byte(options.BearerToken))
 	semaphore := make(chan struct{}, maxConcurrent)
+	protectedMCP := limitConcurrent(semaphore, requireMCPRequest(maxBodyBytes, mcpHandler))
+	if options.MCPAuthenticator != nil {
+		protectedMCP = authenticateMCP(options.MCPAuthenticator, options.MCPAuditor, newIdentityLimiter(), protectedMCP)
+	} else {
+		tokenDigest := sha256.Sum256([]byte(options.BearerToken))
+		protectedMCP = requireBearer(tokenDigest, protectedMCP)
+	}
 
 	mux := http.NewServeMux()
-	mux.Handle("/mcp", requireBearer(tokenDigest,
-		limitConcurrent(semaphore,
-			requireMCPRequest(maxBodyBytes, mcpHandler))))
+	mux.Handle("/mcp", protectedMCP)
 	mux.HandleFunc("/healthz", healthHandler)
 	mux.HandleFunc("/readyz", readinessHandler(ready, logger))
 	if options.AdminHandler != nil {
@@ -248,6 +262,77 @@ func requireBearer(expected [sha256.Size]byte, next http.Handler) http.Handler {
 func unauthorized(w http.ResponseWriter) {
 	w.Header().Set("WWW-Authenticate", `Bearer realm="dsmctl-gateway"`)
 	writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+}
+
+type identityLimiter struct {
+	mu      sync.Mutex
+	windows map[string]identityWindow
+}
+
+type identityWindow struct {
+	Started time.Time
+	Count   int
+}
+
+func newIdentityLimiter() *identityLimiter {
+	return &identityLimiter{windows: make(map[string]identityWindow)}
+}
+
+func (l *identityLimiter) Allow(id string, now time.Time) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	window := l.windows[id]
+	if window.Started.IsZero() || now.Sub(window.Started) >= time.Minute {
+		window = identityWindow{Started: now}
+	}
+	if window.Count >= 120 {
+		l.windows[id] = window
+		return false
+	}
+	window.Count++
+	l.windows[id] = window
+	if len(l.windows) > 1024 {
+		for key, item := range l.windows {
+			if now.Sub(item.Started) >= 2*time.Minute {
+				delete(l.windows, key)
+			}
+		}
+	}
+	return true
+}
+
+func authenticateMCP(authenticator MCPAuthenticator, auditor remotepolicy.Auditor, limiter *identityLimiter, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		parts := strings.Fields(req.Header.Get("Authorization"))
+		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+			auditMCPHTTP(req.Context(), auditor, "", "denied", "invalid_token")
+			unauthorized(w)
+			return
+		}
+		raw := parts[1]
+		principal, err := authenticator.AuthenticateMCPToken(req.Context(), raw)
+		raw = ""
+		if err != nil {
+			auditMCPHTTP(req.Context(), auditor, "", "denied", "invalid_token")
+			unauthorized(w)
+			return
+		}
+		if !limiter.Allow(principal.TokenID, time.Now()) {
+			auditMCPHTTP(req.Context(), auditor, principal.TokenID, "denied", "rate_limited")
+			w.Header().Set("Retry-After", "60")
+			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "rate_limited"})
+			return
+		}
+		ctx := remotepolicy.WithPrincipal(req.Context(), principal)
+		next.ServeHTTP(w, req.WithContext(ctx))
+	})
+}
+
+func auditMCPHTTP(ctx context.Context, auditor remotepolicy.Auditor, actorID, outcome, reason string) {
+	if auditor == nil {
+		return
+	}
+	_ = auditor.AppendAudit(ctx, remotepolicy.AuditEvent{CorrelationID: remotepolicy.CorrelationID(ctx), ActorType: "mcp_token", ActorID: actorID, Action: "mcp.authenticate", Outcome: outcome, Reason: reason})
 }
 
 func requireMCPRequest(maxBodyBytes int64, next http.Handler) http.Handler {
@@ -395,6 +480,7 @@ func correlateAndLog(logger *slog.Logger, trustedProxies []netip.Prefix, next ht
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		requestID := newRequestID()
 		ctx := context.WithValue(req.Context(), requestIDKey{}, requestID)
+		ctx = remotepolicy.WithCorrelationID(ctx, requestID)
 		req = req.WithContext(ctx)
 		w.Header().Set("X-Request-ID", requestID)
 		recorder := &responseRecorder{ResponseWriter: w, status: http.StatusOK}

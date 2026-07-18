@@ -18,6 +18,7 @@ import (
 
 	"github.com/ychiu1211/dsmctl/internal/credentials"
 	"github.com/ychiu1211/dsmctl/internal/gateway/state"
+	"github.com/ychiu1211/dsmctl/internal/remotepolicy"
 	"github.com/ychiu1211/dsmctl/internal/runtime"
 	"github.com/ychiu1211/dsmctl/internal/synology"
 	"github.com/ychiu1211/dsmctl/internal/weblogin"
@@ -108,16 +109,47 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	if err := h.authenticate(req); err != nil {
+		_ = h.repository.AppendAudit(req.Context(), state.AuditEvent{CorrelationID: correlationID(req), ActorType: "gateway_admin", Action: adminAuditAction(req), Outcome: "denied", Reason: "denied"})
 		w.Header().Set("WWW-Authenticate", `Bearer realm="dsmctl-gateway-admin"`)
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
+	action := adminAuditAction(req)
+	mutating := req.Method != http.MethodGet && req.Method != http.MethodHead
+	if mutating {
+		if err := h.repository.AppendAudit(req.Context(), state.AuditEvent{CorrelationID: correlationID(req), ActorType: "gateway_admin", ActorID: "local-admin", Action: action, Outcome: "started"}); err != nil {
+			writeError(w, http.StatusServiceUnavailable, "audit storage unavailable")
+			return
+		}
+	}
+	recorder := &auditResponseWriter{ResponseWriter: w, status: http.StatusOK}
+	h.serveAuthenticated(recorder, req)
+	outcome := "success"
+	if recorder.status >= 400 {
+		outcome = "failure"
+	}
+	_ = h.repository.AppendAudit(req.Context(), state.AuditEvent{CorrelationID: correlationID(req), ActorType: "gateway_admin", ActorID: "local-admin", Action: action, Outcome: outcome})
+}
+
+func (h *Handler) serveAuthenticated(w http.ResponseWriter, req *http.Request) {
 	if req.URL.Path == "/admin/api/status" {
 		h.status(w, req)
 		return
 	}
 	if req.URL.Path == "/admin/api/admin-token/rotate" {
 		h.rotateAdminToken(w, req)
+		return
+	}
+	if req.URL.Path == "/admin/api/mcp-tokens" || strings.HasPrefix(req.URL.Path, "/admin/api/mcp-tokens/") {
+		h.mcpTokens(w, req)
+		return
+	}
+	if req.URL.Path == "/admin/api/approvals" {
+		h.approvals(w, req)
+		return
+	}
+	if req.URL.Path == "/admin/api/audit" || req.URL.Path == "/admin/api/audit/export" {
+		h.audit(w, req)
 		return
 	}
 	if req.URL.Path == "/admin/api/orphan-secrets" || strings.HasPrefix(req.URL.Path, "/admin/api/orphan-secrets/") {
@@ -148,6 +180,10 @@ func (h *Handler) bootstrap(w http.ResponseWriter, req *http.Request) {
 		methodNotAllowed(w, http.MethodPost)
 		return
 	}
+	if err := h.repository.AppendAudit(req.Context(), state.AuditEvent{CorrelationID: correlationID(req), ActorType: "bootstrap", Action: "admin.bootstrap", Outcome: "started"}); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "audit storage unavailable")
+		return
+	}
 	var input struct {
 		Token string `json:"token"`
 	}
@@ -163,8 +199,10 @@ func (h *Handler) bootstrap(w http.ResponseWriter, req *http.Request) {
 			status = http.StatusConflict
 		}
 		writeError(w, status, "bootstrap failed")
+		_ = h.repository.AppendAudit(req.Context(), state.AuditEvent{CorrelationID: correlationID(req), ActorType: "bootstrap", Action: "admin.bootstrap", Outcome: "failure"})
 		return
 	}
+	_ = h.repository.AppendAudit(req.Context(), state.AuditEvent{CorrelationID: correlationID(req), ActorType: "gateway_admin", ActorID: "local-admin", Action: "admin.bootstrap", Outcome: "success"})
 	writeJSON(w, http.StatusCreated, map[string]string{"admin_token": token})
 }
 
@@ -270,6 +308,164 @@ func (h *Handler) rotateAdminToken(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"admin_token": token})
+}
+
+func (h *Handler) mcpTokens(w http.ResponseWriter, req *http.Request) {
+	relative := strings.TrimPrefix(req.URL.Path, "/admin/api/mcp-tokens")
+	if relative == "" || relative == "/" {
+		switch req.Method {
+		case http.MethodGet:
+			tokens, err := h.repository.MCPTokens(req.Context())
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "list MCP tokens")
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"tokens": tokens})
+		case http.MethodPost:
+			var input state.MCPTokenInput
+			if err := decodeJSON(req, &input); err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			issued, err := h.repository.CreateMCPToken(req.Context(), input)
+			if err != nil {
+				writeRepositoryError(w, err)
+				return
+			}
+			writeJSON(w, http.StatusCreated, issued)
+		default:
+			methodNotAllowed(w, http.MethodGet, http.MethodPost)
+		}
+		return
+	}
+	parts := strings.Split(strings.TrimPrefix(relative, "/"), "/")
+	id, err := url.PathUnescape(parts[0])
+	if err != nil || id == "" {
+		writeError(w, http.StatusBadRequest, "invalid token identifier")
+		return
+	}
+	action := ""
+	if len(parts) > 1 {
+		action = parts[1]
+	}
+	switch action {
+	case "":
+		if req.Method == http.MethodGet {
+			token, err := h.repository.MCPToken(req.Context(), id)
+			if err != nil {
+				writeRepositoryError(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, token)
+			return
+		}
+		if req.Method == http.MethodDelete {
+			token, err := h.repository.RevokeMCPToken(req.Context(), id)
+			if err != nil {
+				writeRepositoryError(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, token)
+			return
+		}
+		methodNotAllowed(w, http.MethodGet, http.MethodDelete)
+	case "rotate":
+		if req.Method != http.MethodPost {
+			methodNotAllowed(w, http.MethodPost)
+			return
+		}
+		issued, err := h.repository.RotateMCPToken(req.Context(), id)
+		if err != nil {
+			writeRepositoryError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, issued)
+	case "expire":
+		if req.Method != http.MethodPost {
+			methodNotAllowed(w, http.MethodPost)
+			return
+		}
+		var input struct {
+			ExpiresAt time.Time `json:"expires_at"`
+		}
+		if err := decodeJSON(req, &input); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		token, err := h.repository.ExpireMCPToken(req.Context(), id, input.ExpiresAt)
+		if err != nil {
+			writeRepositoryError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, token)
+	default:
+		http.NotFound(w, req)
+	}
+}
+
+func (h *Handler) approvals(w http.ResponseWriter, req *http.Request) {
+	switch req.Method {
+	case http.MethodGet:
+		items, err := h.repository.Approvals(req.Context(), req.URL.Query().Get("include_consumed") == "true")
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "list approvals")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"approvals": items})
+	case http.MethodPost:
+		var input struct {
+			PlanHash          string `json:"plan_hash"`
+			NAS               string `json:"nas"`
+			ProfileRevision   uint64 `json:"profile_revision"`
+			RequestingTokenID string `json:"requesting_token_id"`
+			TTLSeconds        int    `json:"ttl_seconds,omitempty"`
+		}
+		if err := decodeJSON(req, &input); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		approval, err := h.repository.CreateApproval(req.Context(), state.ApprovalInput{PlanHash: input.PlanHash, NAS: input.NAS, ProfileRevision: input.ProfileRevision, RequestingTokenID: input.RequestingTokenID, TTL: time.Duration(input.TTLSeconds) * time.Second}, "local-admin")
+		if err != nil {
+			writeRepositoryError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, approval)
+	default:
+		methodNotAllowed(w, http.MethodGet, http.MethodPost)
+	}
+}
+
+func (h *Handler) audit(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet {
+		methodNotAllowed(w, http.MethodGet)
+		return
+	}
+	limit, _ := strconv.Atoi(req.URL.Query().Get("limit"))
+	var after time.Time
+	if value := req.URL.Query().Get("after"); value != "" {
+		parsed, err := time.Parse(time.RFC3339, value)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "after must be RFC3339")
+			return
+		}
+		after = parsed
+	}
+	events, err := h.repository.AuditEvents(req.Context(), state.AuditQuery{After: after, Limit: limit, ActorID: req.URL.Query().Get("actor_id"), Action: req.URL.Query().Get("action")})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read audit events")
+		return
+	}
+	if req.URL.Path == "/admin/api/audit/export" {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.Header().Set("Content-Disposition", `attachment; filename="dsmctl-audit.jsonl"`)
+		w.WriteHeader(http.StatusOK)
+		encoder := json.NewEncoder(w)
+		for index := len(events) - 1; index >= 0; index-- {
+			_ = encoder.Encode(events[index])
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"events": events})
 }
 
 func (h *Handler) orphanSecrets(w http.ResponseWriter, req *http.Request) {
@@ -798,4 +994,54 @@ func randomID() (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(value), nil
+}
+
+type auditResponseWriter struct {
+	http.ResponseWriter
+	status      int
+	wroteHeader bool
+}
+
+func (w *auditResponseWriter) WriteHeader(status int) {
+	if w.wroteHeader {
+		return
+	}
+	w.wroteHeader = true
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *auditResponseWriter) Write(value []byte) (int, error) {
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(value)
+}
+
+func adminAuditAction(req *http.Request) string {
+	path := req.URL.Path
+	switch {
+	case path == "/admin/api/status":
+		return "admin.status"
+	case strings.HasPrefix(path, "/admin/api/mcp-tokens"):
+		return "token.lifecycle"
+	case path == "/admin/api/approvals":
+		return "approval.lifecycle"
+	case strings.HasPrefix(path, "/admin/api/audit"):
+		return "audit.query"
+	case path == "/admin/api/admin-token/rotate":
+		return "admin.rotate"
+	case strings.Contains(path, "/credentials/") || strings.Contains(path, "/weblogin/"):
+		return "credential.manage"
+	case strings.Contains(path, "/secrets") || strings.HasPrefix(path, "/admin/api/orphan-secrets"):
+		return "secret.manage"
+	case strings.HasPrefix(path, "/admin/api/profiles"):
+		return "profile.manage"
+	default:
+		return "admin.request"
+	}
+}
+
+func correlationID(req *http.Request) string {
+	return remotepolicy.CorrelationID(req.Context())
 }

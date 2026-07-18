@@ -61,13 +61,8 @@ func TestParsePrefixesRejectsAddressesWithoutMask(t *testing.T) {
 func TestManagedReadinessRequiresBootstrapAndMountedKeys(t *testing.T) {
 	directory := t.TempDir()
 	masterPath := filepath.Join(directory, "master.key")
-	tokenPath := filepath.Join(directory, "mcp-token")
 	masterKey := bytes.Repeat([]byte{5}, 32)
-	token := "0123456789abcdef0123456789abcdef"
 	if err := os.WriteFile(masterPath, masterKey, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(tokenPath, []byte(token), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	repository, err := gatewaystate.Open(filepath.Join(directory, "gateway.db"), masterKey)
@@ -79,7 +74,7 @@ func TestManagedReadinessRequiresBootstrapAndMountedKeys(t *testing.T) {
 	if err := repository.ConfigureBootstrap(context.Background(), bootstrap); err != nil {
 		t.Fatal(err)
 	}
-	ready := managedReadiness(repository, masterPath, sha256.Sum256(masterKey), tokenPath, gateway.DevelopmentTokenDigest(token))
+	ready := managedReadiness(repository, masterPath, sha256.Sum256(masterKey))
 	if err := ready(context.Background()); err == nil {
 		t.Fatal("managed readiness accepted an unbootstrapped administrator")
 	}

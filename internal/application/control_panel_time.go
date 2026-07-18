@@ -89,6 +89,9 @@ func (s *Service) ApplyControlPanelTimePlan(ctx context.Context, plan ControlPan
 	if err := validateControlPanelTimePlan(plan, approvalHash); err != nil {
 		return ControlPanelTimeApplyResult{}, err
 	}
+	if err := s.authorizeRemoteApply(ctx, plan.NAS, plan.ProfileRevision, plan.Hash, plan.Risk); err != nil {
+		return ControlPanelTimeApplyResult{}, err
+	}
 	if err := s.verifyProfileRevision(ctx, plan.NAS, plan.ProfileRevision); err != nil {
 		return ControlPanelTimeApplyResult{}, err
 	}

@@ -9,6 +9,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/domain/identity"
 	"github.com/ychiu1211/dsmctl/internal/domain/resmon"
 	"github.com/ychiu1211/dsmctl/internal/domain/syslog"
+	"github.com/ychiu1211/dsmctl/internal/remotepolicy"
 	"github.com/ychiu1211/dsmctl/internal/runtime"
 	"github.com/ychiu1211/dsmctl/internal/synology"
 )
@@ -19,6 +20,7 @@ type Service struct {
 	manager          *runtime.Manager
 	secretReferences credentials.ReferenceResolver
 	credentialStore  CredentialStore
+	remoteApply      RemoteApplyAuthorizer
 }
 
 type SystemInfoResult struct {
@@ -124,6 +126,17 @@ type ResourceMonitorCapabilitiesResult struct {
 
 type ServiceOption func(*Service)
 
+// RemoteApplyAuthorizer is the mandatory second authorization boundary for a
+// request carrying a remote gateway principal. Local CLI and stdio contexts do
+// not carry such a principal and retain their existing behavior.
+type RemoteApplyAuthorizer interface {
+	AdmitRemoteApply(ctx context.Context, tokenID, nas string, profileRevision uint64, planHash, risk string) error
+}
+
+func WithRemoteApplyAuthorizer(authorizer RemoteApplyAuthorizer) ServiceOption {
+	return func(service *Service) { service.remoteApply = authorizer }
+}
+
 func WithSecretReferenceResolver(resolver credentials.ReferenceResolver) ServiceOption {
 	return func(service *Service) {
 		if resolver != nil {
@@ -163,7 +176,51 @@ func (s *Service) ListNASContext(ctx context.Context) ([]config.Summary, error) 
 	if err != nil {
 		return nil, err
 	}
-	return cfg.Summaries(credentials.DefaultEnvironmentVariable), nil
+	return filterRemoteSummaries(ctx, cfg.Summaries(credentials.DefaultEnvironmentVariable)), nil
+}
+
+func filterRemoteSummaries(ctx context.Context, summaries []config.Summary) []config.Summary {
+	principal, remote := remotepolicy.PrincipalFromContext(ctx)
+	if !remote {
+		return summaries
+	}
+	filtered := make([]config.Summary, 0, len(summaries))
+	for _, summary := range summaries {
+		if principal.AllowsNAS(summary.Name) {
+			filtered = append(filtered, summary)
+		}
+	}
+	return filtered
+}
+
+// AuthorizeRemoteTarget resolves an omitted NAS exactly as the application
+// would, then applies the caller's explicit allowlist without revealing which
+// hidden profile (if any) caused the denial.
+func (s *Service) AuthorizeRemoteTarget(ctx context.Context, requested string) (string, error) {
+	principal, remote := remotepolicy.PrincipalFromContext(ctx)
+	if !remote {
+		return requested, nil
+	}
+	cfg, err := s.configSnapshot(ctx)
+	if err != nil {
+		return "", remotepolicy.ErrDenied
+	}
+	name, _, err := cfg.Resolve(requested)
+	if err != nil || !principal.AllowsNAS(name) {
+		return "", remotepolicy.ErrDenied
+	}
+	return name, nil
+}
+
+func (s *Service) authorizeRemoteApply(ctx context.Context, nas string, revision uint64, hash, risk string) error {
+	principal, remote := remotepolicy.PrincipalFromContext(ctx)
+	if !remote {
+		return nil
+	}
+	if s.remoteApply == nil || !principal.HasScope(remotepolicy.ScopeApply) || !principal.AllowsNAS(nas) {
+		return remotepolicy.ErrDenied
+	}
+	return s.remoteApply.AdmitRemoteApply(ctx, principal.TokenID, nas, revision, hash, risk)
 }
 
 func (s *Service) configSnapshot(ctx context.Context) (*config.Config, error) {

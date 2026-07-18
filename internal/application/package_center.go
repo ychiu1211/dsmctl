@@ -123,6 +123,9 @@ func (s *Service) ApplyPackagePlan(ctx context.Context, plan PackagePlan, approv
 	if err := validatePackagePlan(plan, approvalHash); err != nil {
 		return PackageApplyResult{}, err
 	}
+	if err := s.authorizeRemoteApply(ctx, plan.NAS, plan.ProfileRevision, plan.Hash, plan.Risk); err != nil {
+		return PackageApplyResult{}, err
+	}
 	if err := s.verifyProfileRevision(ctx, plan.NAS, plan.ProfileRevision); err != nil {
 		return PackageApplyResult{}, err
 	}

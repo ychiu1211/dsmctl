@@ -6,11 +6,13 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/flynn/noise"
@@ -111,6 +113,97 @@ func TestProfileMutationEvictsOnlyChangedNAS(t *testing.T) {
 	}
 	if !manager.SessionInfo("lab").ClientCached {
 		t.Fatal("unrelated NAS client was evicted")
+	}
+}
+
+func TestMCPTokenApprovalAndAuditAdministration(t *testing.T) {
+	handler, repository, manager, bootstrap := newTestHandler(t)
+	defer manager.Close(context.Background())
+	adminToken, err := repository.EstablishAdministrator(context.Background(), bootstrap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile, err := repository.CreateProfile(context.Background(), state.ProfileInput{Name: "office", URL: "https://office.example"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := performJSON(handler, http.MethodPost, "/admin/api/mcp-tokens", `{"name":"automation","scopes":["nas.apply"],"nas_allowlist":["office"]}`, adminToken)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create token status=%d body=%s", created.Code, created.Body.String())
+	}
+	var issued state.IssuedMCPToken
+	if err := json.Unmarshal(created.Body.Bytes(), &issued); err != nil {
+		t.Fatal(err)
+	}
+	if issued.BearerToken == "" || issued.Token.ID == "" {
+		t.Fatalf("issued = %#v", issued)
+	}
+	listed := performJSON(handler, http.MethodGet, "/admin/api/mcp-tokens", "", adminToken)
+	if listed.Code != http.StatusOK || strings.Contains(listed.Body.String(), issued.BearerToken) {
+		t.Fatalf("list tokens=%d %s", listed.Code, listed.Body.String())
+	}
+	hash := strings.Repeat("a", 64)
+	approvalBody := fmt.Sprintf(`{"plan_hash":%q,"nas":"office","profile_revision":%d,"requesting_token_id":%q}`, hash, profile.Revision, issued.Token.ID)
+	approved := performJSON(handler, http.MethodPost, "/admin/api/approvals", approvalBody, adminToken)
+	if approved.Code != http.StatusCreated {
+		t.Fatalf("create approval=%d %s", approved.Code, approved.Body.String())
+	}
+	audit := performJSON(handler, http.MethodGet, "/admin/api/audit?limit=50", "", adminToken)
+	if audit.Code != http.StatusOK || !strings.Contains(audit.Body.String(), "token.lifecycle") || !strings.Contains(audit.Body.String(), "approval.lifecycle") || strings.Contains(audit.Body.String(), issued.BearerToken) {
+		t.Fatalf("audit=%d %s", audit.Code, audit.Body.String())
+	}
+	export := performJSON(handler, http.MethodGet, "/admin/api/audit/export?limit=50", "", adminToken)
+	if export.Code != http.StatusOK || export.Header().Get("Content-Type") != "application/x-ndjson" {
+		t.Fatalf("audit export=%d headers=%v", export.Code, export.Header())
+	}
+	revoked := performJSON(handler, http.MethodDelete, "/admin/api/mcp-tokens/"+issued.Token.ID, "", adminToken)
+	if revoked.Code != http.StatusOK || !strings.Contains(revoked.Body.String(), "revoked_at") {
+		t.Fatalf("revoke=%d %s", revoked.Code, revoked.Body.String())
+	}
+}
+
+func TestMutatingAdminRequestFailsBeforeMutationWhenAuditUnavailable(t *testing.T) {
+	fail := atomic.Bool{}
+	repository, err := state.OpenWithOptions(filepath.Join(t.TempDir(), "gateway.db"), bytes.Repeat([]byte{4}, 32), state.OpenOptions{AuditFailure: func() error {
+		if fail.Load() {
+			return errors.New("offline")
+		}
+		return nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	bootstrap := "bootstrap-token-0123456789abcdef0123456789"
+	if err := repository.ConfigureBootstrap(context.Background(), bootstrap); err != nil {
+		t.Fatal(err)
+	}
+	adminToken, err := repository.EstablishAdministrator(context.Background(), bootstrap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.CreateProfile(context.Background(), state.ProfileInput{Name: "office", URL: "https://office.example"}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := repository.Snapshot(context.Background())
+	manager := runtime.NewManager(cfg, repository, runtime.WithConfigSource(repository))
+	defer manager.Close(context.Background())
+	handler, err := New(Options{Repository: repository, Manager: manager})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fail.Store(true)
+	response := performJSON(handler, http.MethodPost, "/admin/api/mcp-tokens", `{"name":"must-not-exist","nas_allowlist":["office"]}`, adminToken)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	fail.Store(false)
+	tokens, err := repository.MCPTokens(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tokens) != 0 {
+		t.Fatalf("mutation ran despite audit failure: %#v", tokens)
 	}
 }
 

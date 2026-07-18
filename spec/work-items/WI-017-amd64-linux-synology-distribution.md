@@ -1,7 +1,7 @@
 ---
 id: WI-017
 title: Ship generic Linux and Synology x86_64 distributions
-status: blocked
+status: ready
 priority: P1
 owner: ""
 depends_on: [WI-014, WI-015, WI-016]

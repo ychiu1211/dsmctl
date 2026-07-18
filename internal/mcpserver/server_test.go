@@ -65,6 +65,11 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 	if len(tools.Tools) != 49 {
 		t.Fatalf("ListTools() returned %d tools, want 49", len(tools.Tools))
 	}
+	for _, tool := range tools.Tools {
+		if scope, ok := ToolScope(tool.Name); !ok || scope == "" {
+			t.Errorf("MCP tool %q has no enforceable remote authorization class", tool.Name)
+		}
+	}
 	readOnlyTools := map[string]bool{
 		"discover_lan_devices":                false,
 		"explain_effective_access":            false,

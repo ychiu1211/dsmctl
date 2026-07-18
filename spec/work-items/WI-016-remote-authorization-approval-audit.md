@@ -1,7 +1,7 @@
 ---
 id: WI-016
 title: Enforce remote authorization, approval, and audit
-status: in_progress
+status: done
 priority: P0
 owner: "gateway-policy"
 depends_on: [WI-014, WI-015]
@@ -75,26 +75,26 @@ approval outside the MCP conversation.
 
 ## Acceptance criteria
 
-- [ ] Missing, malformed, expired, and revoked credentials are rejected before
+- [x] Missing, malformed, expired, and revoked credentials are rejected before
       MCP initialization or tool execution.
-- [ ] A new token can read only its allowlisted NAS profiles and cannot call
+- [x] A new token can read only its allowlisted NAS profiles and cannot call
       plan, apply, or admin use cases.
-- [ ] Plan and apply scopes can be granted independently and are re-evaluated
+- [x] Plan and apply scopes can be granted independently and are re-evaluated
       on every request.
-- [ ] A high-risk apply without an exact unexpired approval is denied before
+- [x] A high-risk apply without an exact unexpired approval is denied before
       any DSM mutation method can run.
-- [ ] Approval is bound to plan hash, NAS profile revision, requesting token,
+- [x] Approval is bound to plan hash, NAS profile revision, requesting token,
       and administrator; mismatches, expiry, replay, and concurrent duplicates
       fail closed.
-- [ ] A failed/stale/postcondition apply still consumes its admitted approval.
-- [ ] Medium-risk remote applies follow the documented scope policy and retain
+- [x] A failed/stale/postcondition apply still consumes its admitted approval.
+- [x] Medium-risk remote applies follow the documented scope policy and retain
       all existing plan/hash/precondition checks.
-- [ ] Audit events cover token lifecycle, profile/credential administration,
+- [x] Audit events cover token lifecycle, profile/credential administration,
       plan, approval, apply, denial, and outcome with correlation IDs.
-- [ ] Automated secret-canary tests prove that audit/log/error/MCP output omit
+- [x] Automated secret-canary tests prove that audit/log/error/MCP output omit
       passwords, OTPs, trusted-device IDs, bearer tokens, cookies, SynoTokens,
       SIDs, master keys, and ciphertext payloads.
-- [ ] Local CLI and stdio plan/apply tests retain their existing behavior.
+- [x] Local CLI and stdio plan/apply tests retain their existing behavior.
 
 ## Verification
 
@@ -115,3 +115,33 @@ with active management work such as WI-013.
 ## Handoff
 
 Fill this only when pausing incomplete work.
+
+## Completion notes
+
+- Gateway state schema 2 stores MCP token metadata plus SHA-256 digests only,
+  approval records, and an immutable closed-schema audit stream. Audit
+  retention is bounded to 10,000 events and 30 days; schema-1 migration creates
+  and verifies a pre-migration backup.
+- Managed HTTP authentication runs before MCP initialization, attaches a stable
+  token principal, and rate-limits each token identity to 120 requests per
+  minute. All 49 MCP tools are classified and filtered by independent
+  `nas.read`, `nas.plan`, `nas.apply`, and `nas.admin` scopes.
+- NAS allowlists are enforced before application execution. The application
+  apply boundary then rechecks active token state, scope, allowlist, profile
+  revision, and risk. High-risk approvals are atomically consumed with the
+  mandatory admission audit before application precondition reads; low- and
+  medium-risk applies require `nas.apply` and keep every existing canonical
+  plan/hash/stable-ID/precondition/postcondition guard.
+- `/admin/` and its API manage token create/list/rotate/revoke/expiry,
+  out-of-band ten-minute approvals, and redacted audit query/JSONL export.
+  Mutating admin requests persist a start audit record before executing and
+  fail closed when audit storage is unavailable.
+- `go test ./... -count=1` and `go vet ./...` pass. Tests cover every MCP tool
+  authorization class, hidden-target filtering, expired/revoked tokens,
+  duplicate approval races, failed-apply consumption, audit failure/retention,
+  schema migration, and secret canaries. No live DSM mutation was run.
+- Docker Desktop built and exercised `dsmctl-gateway:wi016` as
+  `linux/amd64`, non-root `10001:10001`. Bootstrap, profile/token persistence,
+  pre-initialize denial, authenticated initialize, restart without bootstrap,
+  and absence of plaintext tokens in `gateway.db` all passed. Image ID:
+  `sha256:91e12501ac4dc935fa4a4455ae3eb105079a6a4639ededa4664d1d18febcc6a5`.

@@ -8,10 +8,11 @@ image, not a separate DSM-specific build.
 
 The managed gateway stores up to 32 NAS profiles in a transactional embedded
 database and exposes an authenticated administration page at `/admin/`.
-Profiles and credentials take effect without restarting the process. Its MCP
-surface remains read-only until WI-016 supplies scoped remote tokens,
-out-of-band approvals, and auditing; all `plan_*` and `apply_*` tools are still
-omitted in this intermediate build.
+Profiles, credentials, MCP tokens, and authorization changes take effect
+without restarting the process. Managed mode exposes the complete MCP tool
+surface through per-token NAS allowlists and independent `nas.read`,
+`nas.plan`, `nas.apply`, and `nas.admin` scopes. The static WI-014 developer
+mode remains read-only.
 
 ## Session model
 
@@ -36,9 +37,8 @@ cd deploy/container
 mkdir -p data secrets
 openssl rand 32 > secrets/master.key
 openssl rand -hex 32 > secrets/bootstrap
-openssl rand -hex 32 > secrets/dev-token
 chmod 700 data secrets
-chmod 600 secrets/master.key secrets/bootstrap secrets/dev-token
+chmod 600 secrets/master.key secrets/bootstrap
 sudo chown -R 10001:10001 data secrets
 docker compose up --build
 ```
@@ -68,11 +68,36 @@ the exact browser origin to `DSMCTL_ALLOWED_ORIGINS` before starting Compose.
 If a reverse proxy changes the public origin used by the browser, pass
 `--admin-public-url=https://gateway.example` as well.
 
-The MCP URL is `http://127.0.0.1:18765/mcp`. Send the contents of
-`secrets/dev-token` as `Authorization: Bearer <token>`. This credential remains
-an explicit read-only bridge until WI-016. `/healthz` is local process liveness
-and never contacts DSM. `/readyz` verifies the state schema, established admin,
-mounted master key, and MCP token; it does not poll the NAS fleet.
+The MCP URL is `http://127.0.0.1:18765/mcp`. Send an MCP token created on the
+administration page as
+`Authorization: Bearer <token>`. The plaintext is shown only at creation or
+rotation; the database stores its SHA-256 digest. Missing, malformed, expired,
+and revoked tokens are rejected before MCP initialization, and request limits
+are tracked independently by token identity. `/healthz` is local process
+liveness and never contacts DSM. `/readyz` verifies the state schema,
+established admin, and mounted master key; it does not poll the NAS fleet.
+
+`nas.read` exposes only read tools and filters profile/fleet/credential views to
+the token's NAS allowlist. `nas.plan` and `nas.apply` are independent: a token
+may prepare plans without applying, or apply a previously delivered canonical
+plan without gaining general read access. `nas.admin` currently admits LAN
+discovery because that operation can reveal devices outside the configured
+allowlist. Every request re-evaluates token status, scope, and target.
+
+Low- and medium-risk remote plans require `nas.apply` and retain the existing
+plan hash, profile revision, stable-ID, precondition, protected-resource, and
+postcondition checks. High-risk plans additionally require a matching approval
+created out of band on `/admin/`. It is bound to one plan hash, NAS profile
+revision, requesting token, and local administrator, expires after at most ten
+minutes, and is atomically consumed once before application precondition reads.
+A stale or failed apply never restores a consumed approval.
+
+The administration page can query and download the immutable, redacted audit
+stream as JSONL. Records use a closed scalar schema and never include request
+bodies, authorization headers, passwords, OTPs, trusted-device values,
+SynoTokens, SIDs, cookies, master keys, or encrypted vault payloads. Retention
+is bounded to 10,000 events and 30 days. A mandatory audit write failure blocks
+admin mutations and remote apply admission before DSM mutation.
 
 To put a trusted reverse proxy in front of the loopback listener, explicitly
 set:
@@ -97,7 +122,6 @@ dsmctl-gateway \
   --state=/srv/dsmctl/gateway.db \
   --master-key-file=/run/secrets/master.key \
   --bootstrap-file=/run/secrets/bootstrap \
-  --dev-read-only-token-file=/run/secrets/dsmctl-token \
   --allowed-hosts=localhost,127.0.0.1
 ```
 
