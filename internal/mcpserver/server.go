@@ -335,6 +335,26 @@ type applyPhotosPlanOutput struct {
 	Result application.PhotosApplyResult `json:"result" jsonschema:"Photos mutation result after stale-state and postcondition checks"`
 }
 
+type getSurveillanceInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getSurveillanceCapabilitiesOutput struct {
+	NAS          string                            `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.SurveillanceCapabilities `json:"capabilities" jsonschema:"Surveillance operations exposed by dsmctl, with installed-package evidence"`
+	Report       synology.CompatibilityReport      `json:"report" jsonschema:"Discovered APIs, installed packages, and selected Surveillance backends"`
+}
+
+type getSurveillanceInfoOutput struct {
+	NAS  string                    `json:"nas" jsonschema:"NAS profile used for the request"`
+	Info synology.SurveillanceInfo `json:"info" jsonschema:"Normalized Surveillance Station system information"`
+}
+
+type getSurveillanceCamerasOutput struct {
+	NAS     string                       `json:"nas" jsonschema:"NAS profile used for the request"`
+	Cameras synology.SurveillanceCameras `json:"cameras" jsonschema:"Configured cameras reported by Surveillance Station"`
+}
+
 type getStorageInput struct {
 	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
 }
@@ -1621,6 +1641,45 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getDriveAdminLogsOutput{}, err
 		}
 		return nil, getDriveAdminLogsOutput{NAS: result.NAS, Log: result.Log}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_surveillance_capabilities",
+		Title:       "Get Surveillance Station capabilities",
+		Description: "Report whether Surveillance Station system info and the camera list can be read on the selected NAS, plus the installed package evidence.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getSurveillanceInput) (*mcp.CallToolResult, getSurveillanceCapabilitiesOutput, error) {
+		result, err := service.GetSurveillanceCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getSurveillanceCapabilitiesOutput{}, err
+		}
+		return nil, getSurveillanceCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_surveillance_info",
+		Title:       "Get Surveillance Station info",
+		Description: "Read Surveillance Station system information (version, hostname, camera count, max cameras, license count, timezone) without changing DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getSurveillanceInput) (*mcp.CallToolResult, getSurveillanceInfoOutput, error) {
+		result, err := service.GetSurveillanceInfo(ctx, input.NAS)
+		if err != nil {
+			return nil, getSurveillanceInfoOutput{}, err
+		}
+		return nil, getSurveillanceInfoOutput{NAS: result.NAS, Info: result.Info}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_surveillance_cameras",
+		Title:       "List Surveillance Station cameras",
+		Description: "List the cameras configured in Surveillance Station (id, name, IP, vendor, model, enabled) without changing DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getSurveillanceInput) (*mcp.CallToolResult, getSurveillanceCamerasOutput, error) {
+		result, err := service.GetSurveillanceCameras(ctx, input.NAS)
+		if err != nil {
+			return nil, getSurveillanceCamerasOutput{}, err
+		}
+		return nil, getSurveillanceCamerasOutput{NAS: result.NAS, Cameras: result.Cameras}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

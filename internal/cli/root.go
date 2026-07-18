@@ -39,6 +39,7 @@ func New(version string) *cobra.Command {
 		newSANCommand(opts),
 		newShareCommand(opts),
 		newStorageCommand(opts),
+		newSurveillanceCommand(opts),
 		newSystemCommand(opts),
 	)
 	return root

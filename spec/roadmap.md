@@ -73,6 +73,7 @@ flowchart LR
 | [WI-031](work-items/WI-031-drive-server-config.md) | P2 | `done` | C | WI-022 | Guarded Synology Drive server database config (vmtouch pair) via `SYNO.SynologyDrive.Config`; first Drive write, CLI + MCP, live-verified. |
 | [WI-032](work-items/WI-032-gateway-local-administrator.md) | P0 | `done` | G | WI-015, WI-016 | Replace bootstrap/platform administration with a portable one-hour local-account setup and browser sessions. |
 | [WI-033](work-items/WI-033-gateway-admin-ui-redesign.md) | P1 | `done` | G | WI-032 | Redesign the local Gateway administration UI as a polished, responsive NAS control application. |
+| [WI-034](work-items/WI-034-surveillance-station.md) | P2 | `done` | C | WI-019, WI-022, WI-029 | Read-only Surveillance Station module (system info + camera list), package-gated; installed via the dependency-aware CLI installer. |
 
 Parallel groups indicate likely file overlap. Items in different groups may run
 at the same time after checking their `touches` lists. Only one agent should
