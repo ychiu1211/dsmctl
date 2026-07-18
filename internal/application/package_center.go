@@ -89,29 +89,40 @@ const packageInstallAPIVersion = "dsmctl.io/v1alpha1"
 // PackageInstallPlan is a hash-bound install intent resolved against the online
 // catalog and the current inventory.
 type PackageInstallPlan struct {
-	APIVersion      string `json:"api_version" jsonschema:"Plan schema version"`
-	NAS             string `json:"nas" jsonschema:"NAS profile selected during planning"`
-	PackageID       string `json:"package_id" jsonschema:"Package identifier to install"`
-	Name            string `json:"name" jsonschema:"Human-readable package name"`
-	Version         string `json:"version" jsonschema:"Offered version to install"`
-	Size            int64  `json:"size" jsonschema:"Download size in bytes"`
-	DownloadLink    string `json:"download_link" jsonschema:"Resolved download URL"`
-	Checksum        string `json:"checksum" jsonschema:"Resolved package checksum (md5)"`
-	Beta            bool   `json:"beta" jsonschema:"Whether the offered build is a beta"`
-	QuickInstall    bool   `json:"quick_install" jsonschema:"Whether quick install (no wizard) is used"`
-	VolumePath      string `json:"volume_path" jsonschema:"Target install volume path"`
-	RunAfterInstall bool   `json:"run_after_install" jsonschema:"Whether the package starts after install"`
-	Risk            string `json:"risk" jsonschema:"Plan risk level"`
-	Warnings        []string `json:"warnings" jsonschema:"Install warnings"`
-	Summary         []string `json:"summary" jsonschema:"Human-readable operations"`
-	Hash            string `json:"hash" jsonschema:"SHA-256 approval hash covering the resolved install intent"`
+	APIVersion      string               `json:"api_version" jsonschema:"Plan schema version"`
+	NAS             string               `json:"nas" jsonschema:"NAS profile selected during planning"`
+	PackageID       string               `json:"package_id" jsonschema:"Target package identifier to install"`
+	Name            string               `json:"name" jsonschema:"Human-readable target package name"`
+	Version         string               `json:"version" jsonschema:"Offered target version to install"`
+	VolumePath      string               `json:"volume_path" jsonschema:"Target install volume path"`
+	RunAfterInstall bool                 `json:"run_after_install" jsonschema:"Whether the packages start after install"`
+	Dependencies    []string             `json:"dependencies,omitempty" jsonschema:"Missing dependency packages that will be installed first, in order"`
+	Steps           []PackageInstallStep `json:"steps" jsonschema:"Ordered install steps: missing dependencies first, target last"`
+	Risk            string               `json:"risk" jsonschema:"Plan risk level"`
+	Warnings        []string             `json:"warnings" jsonschema:"Install warnings"`
+	Summary         []string             `json:"summary" jsonschema:"Human-readable operations"`
+	Hash            string               `json:"hash" jsonschema:"SHA-256 approval hash covering the resolved install intent"`
+}
+
+// PackageInstallStep is one package to install (a dependency or the target),
+// with the catalog-resolved download metadata.
+type PackageInstallStep struct {
+	PackageID    string `json:"package_id" jsonschema:"Package identifier"`
+	Name         string `json:"name" jsonschema:"Human-readable package name"`
+	Version      string `json:"version" jsonschema:"Offered version"`
+	Size         int64  `json:"size" jsonschema:"Download size in bytes"`
+	DownloadLink string `json:"download_link" jsonschema:"Resolved download URL"`
+	Checksum     string `json:"checksum" jsonschema:"Resolved package checksum (md5)"`
+	Beta         bool   `json:"beta" jsonschema:"Whether the offered build is a beta"`
+	QuickInstall bool   `json:"quick_install" jsonschema:"Whether quick install (no wizard) is used"`
+	Dependency   bool   `json:"dependency" jsonschema:"Whether this step is a dependency of the target"`
 }
 
 // PackageInstallApplyResult reports the outcome of a completed install.
 type PackageInstallApplyResult struct {
 	NAS      string                          `json:"nas" jsonschema:"NAS profile used for apply"`
 	PlanHash string                          `json:"plan_hash" jsonschema:"Approved plan hash"`
-	Result   synology.PackageInstallResult   `json:"result" jsonschema:"Install outcome confirmed by inventory"`
+	Results  []synology.PackageInstallResult `json:"results" jsonschema:"Per-package install outcomes confirmed by inventory, in install order"`
 }
 
 func (s *Service) PlanPackageInstall(ctx context.Context, requestedNAS, packageID, volumePath string, runAfterInstall, quickInstall bool) (PackageInstallPlan, error) {
@@ -133,40 +144,55 @@ func planPackageInstallWithClient(ctx context.Context, nas string, client packag
 	if err != nil {
 		return PackageInstallPlan{}, authenticationError(nas, err)
 	}
+	installed := make(map[string]bool, len(state.Packages))
 	for _, pkg := range state.Packages {
-		if pkg.ID == packageID {
-			return PackageInstallPlan{}, fmt.Errorf("package %q is already installed", packageID)
-		}
+		installed[pkg.ID] = true
+	}
+	if installed[packageID] {
+		return PackageInstallPlan{}, fmt.Errorf("package %q is already installed", packageID)
 	}
 	catalog, err := client.PackageCatalog(ctx)
 	if err != nil {
 		return PackageInstallPlan{}, authenticationError(nas, err)
 	}
-	var offered *packagecenter.AvailablePackage
+	offeredByID := make(map[string]*packagecenter.AvailablePackage, len(catalog.Packages))
 	for i := range catalog.Packages {
-		if catalog.Packages[i].ID == packageID {
-			offered = &catalog.Packages[i]
-			break
+		offeredByID[catalog.Packages[i].ID] = &catalog.Packages[i]
+	}
+
+	// Resolve the dependency closure (deps-first) from the catalog deppkgs, so
+	// missing dependencies are installed before the target — this is the precheck
+	// DSM's UI would show as "install <dependency> first".
+	ordered, err := resolveInstallOrder(packageID, offeredByID, installed)
+	if err != nil {
+		return PackageInstallPlan{}, err
+	}
+
+	plan := PackageInstallPlan{
+		APIVersion: packageInstallAPIVersion, NAS: nas, PackageID: packageID, VolumePath: volumePath, RunAfterInstall: runAfterInstall,
+		Risk:     "high",
+		Warnings: []string{"installing downloads and runs third-party software on the NAS"},
+	}
+	target := offeredByID[packageID]
+	plan.Name, plan.Version = target.Name, target.Version
+	for _, pkg := range ordered {
+		isDep := pkg.ID != packageID
+		plan.Steps = append(plan.Steps, PackageInstallStep{
+			PackageID: pkg.ID, Name: pkg.Name, Version: pkg.Version, Size: pkg.Size,
+			DownloadLink: pkg.DownloadLink, Checksum: pkg.Checksum,
+			Beta: pkg.Beta, QuickInstall: pkg.QuickInstall || quickInstall, Dependency: isDep,
+		})
+		if isDep {
+			plan.Dependencies = append(plan.Dependencies, pkg.ID)
+			plan.Summary = append(plan.Summary, fmt.Sprintf("install dependency %s %s", pkg.ID, pkg.Version))
+		}
+		if pkg.Beta {
+			plan.Warnings = append(plan.Warnings, fmt.Sprintf("%s is a beta version", pkg.ID))
 		}
 	}
-	if offered == nil {
-		return PackageInstallPlan{}, fmt.Errorf("package %q is not offered by the online package server", packageID)
-	}
-	if offered.DownloadLink == "" {
-		return PackageInstallPlan{}, fmt.Errorf("package %q has no download link in the catalog", packageID)
-	}
-	plan := PackageInstallPlan{
-		APIVersion: packageInstallAPIVersion, NAS: nas, PackageID: offered.ID, Name: offered.Name,
-		Version: offered.Version, Size: offered.Size, DownloadLink: offered.DownloadLink, Checksum: offered.Checksum,
-		Beta: offered.Beta, QuickInstall: offered.QuickInstall || quickInstall, VolumePath: volumePath, RunAfterInstall: runAfterInstall,
-		Risk: "high",
-		Warnings: []string{
-			"installing downloads and runs third-party software on the NAS",
-		},
-		Summary: []string{fmt.Sprintf("install %s %s to %s", offered.ID, offered.Version, volumePath)},
-	}
-	if offered.Beta {
-		plan.Warnings = append(plan.Warnings, "the offered build is a beta version")
+	plan.Summary = append(plan.Summary, fmt.Sprintf("install %s %s to %s", target.ID, target.Version, volumePath))
+	if len(plan.Dependencies) > 0 {
+		plan.Warnings = append(plan.Warnings, fmt.Sprintf("%s requires %d dependency package(s) that will be installed first: %s", packageID, len(plan.Dependencies), strings.Join(plan.Dependencies, ", ")))
 	}
 	plan.Hash, err = packageInstallPlanHash(plan)
 	if err != nil {
@@ -175,12 +201,58 @@ func planPackageInstallWithClient(ctx context.Context, nas string, client packag
 	return plan, nil
 }
 
+// resolveInstallOrder returns the target and its missing dependencies in
+// install order (dependencies first, target last), using the catalog's deppkgs.
+// A required dependency that is neither installed nor offered is a hard error —
+// the precheck failure DSM would raise.
+func resolveInstallOrder(targetID string, offered map[string]*packagecenter.AvailablePackage, installed map[string]bool) ([]*packagecenter.AvailablePackage, error) {
+	var order []*packagecenter.AvailablePackage
+	visiting := map[string]bool{}
+	visited := map[string]bool{}
+	var visit func(id string, requiredBy string) error
+	visit = func(id string, requiredBy string) error {
+		if visited[id] || installed[id] {
+			return nil
+		}
+		if visiting[id] {
+			return fmt.Errorf("dependency cycle detected at package %q", id)
+		}
+		pkg, ok := offered[id]
+		if !ok {
+			if requiredBy == "" {
+				return fmt.Errorf("package %q is not offered by the online package server", id)
+			}
+			return fmt.Errorf("package %q requires %q, which is not installed and not offered by the online package server", requiredBy, id)
+		}
+		if pkg.DownloadLink == "" {
+			return fmt.Errorf("package %q has no download link in the catalog", id)
+		}
+		visiting[id] = true
+		for _, dep := range pkg.Dependencies {
+			if err := visit(dep, id); err != nil {
+				return err
+			}
+		}
+		visiting[id] = false
+		visited[id] = true
+		order = append(order, pkg)
+		return nil
+	}
+	if err := visit(targetID, ""); err != nil {
+		return nil, err
+	}
+	return order, nil
+}
+
 func (s *Service) ApplyPackageInstallPlan(ctx context.Context, plan PackageInstallPlan, approvalHash string) (PackageInstallApplyResult, error) {
 	if strings.TrimSpace(approvalHash) == "" || approvalHash != plan.Hash {
 		return PackageInstallApplyResult{}, fmt.Errorf("approval hash does not match the install plan")
 	}
 	if plan.APIVersion != packageInstallAPIVersion || strings.TrimSpace(plan.NAS) == "" || strings.TrimSpace(plan.PackageID) == "" {
 		return PackageInstallApplyResult{}, fmt.Errorf("invalid install plan metadata")
+	}
+	if len(plan.Steps) == 0 {
+		return PackageInstallApplyResult{}, fmt.Errorf("install plan has no steps")
 	}
 	expectedHash, err := packageInstallPlanHash(plan)
 	if err != nil {
@@ -196,14 +268,20 @@ func (s *Service) ApplyPackageInstallPlan(ctx context.Context, plan PackageInsta
 	if name != plan.NAS {
 		return PackageInstallApplyResult{}, fmt.Errorf("install plan NAS %q resolved to different profile %q", plan.NAS, name)
 	}
-	result, err := client.PackageInstall(ctx, synology.PackageInstallInput{
-		Name: plan.PackageID, URL: plan.DownloadLink, Checksum: plan.Checksum, Filesize: plan.Size,
-		Beta: plan.Beta, QuickInstall: plan.QuickInstall, VolumePath: plan.VolumePath, RunAfterInstall: plan.RunAfterInstall,
-	})
-	if err != nil {
-		return PackageInstallApplyResult{}, authenticationError(plan.NAS, err)
+	// Install each step in order (dependencies first, target last). A failed
+	// dependency aborts before the target is attempted.
+	results := make([]synology.PackageInstallResult, 0, len(plan.Steps))
+	for _, step := range plan.Steps {
+		result, err := client.PackageInstall(ctx, synology.PackageInstallInput{
+			Name: step.PackageID, URL: step.DownloadLink, Checksum: step.Checksum, Filesize: step.Size,
+			Beta: step.Beta, QuickInstall: step.QuickInstall, VolumePath: plan.VolumePath, RunAfterInstall: plan.RunAfterInstall,
+		})
+		if err != nil {
+			return PackageInstallApplyResult{NAS: plan.NAS, PlanHash: plan.Hash, Results: results}, authenticationError(plan.NAS, fmt.Errorf("install %s: %w", step.PackageID, err))
+		}
+		results = append(results, result)
 	}
-	return PackageInstallApplyResult{NAS: plan.NAS, PlanHash: plan.Hash, Result: result}, nil
+	return PackageInstallApplyResult{NAS: plan.NAS, PlanHash: plan.Hash, Results: results}, nil
 }
 
 func packageInstallPlanHash(plan PackageInstallPlan) (string, error) {

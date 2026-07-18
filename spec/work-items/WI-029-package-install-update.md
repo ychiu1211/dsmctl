@@ -35,7 +35,16 @@ Implemented (install):
 - Guarded online install: plan resolves the catalog entry, rejects a package that
   is already installed or not offered, and hashes the resolved intent; apply
   starts `SYNO.Core.Package.Installation` `install` (server download+install
-  task), polls `status` by task id, and confirms completion via the inventory.
+  task) and confirms completion via the inventory (the download taskid is not
+  queryable via `status`, which needs its own id).
+- **Dependency-aware install (precheck):** the catalog decodes each package's
+  `deppkgs`, and the plan resolves the full dependency closure (deps-first) from
+  it, listing missing dependencies as ordered install steps; apply installs each
+  dependency before the target. A required dependency that is neither installed
+  nor offered is a hard precheck error (the "install X first" message DSM's UI
+  shows). This is what lets a package like Surveillance Station install headlessly
+  (it requires SurveillanceVideoExtension first). Per-package install timeout is
+  30 minutes for large packages.
 - CLI `package available` and `package install <id> --volume <path> [--approve]`.
 
 Implemented (update check):

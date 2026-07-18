@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 
 	"github.com/ychiu1211/dsmctl/internal/domain/packagecenter"
 	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
@@ -90,7 +91,28 @@ func decodeAvailablePackage(raw map[string]json.RawMessage) packagecenter.Availa
 		Beta:         firstBool(raw, "beta"),
 		Size:         firstInt(raw, "size", "filesize", "download_size"),
 		QuickInstall: firstBool(raw, "qinst"),
+		Dependencies: decodeDependencies(raw, "deppkgs"),
 	}
+}
+
+// decodeDependencies extracts the required package identifiers from the catalog
+// deppkgs object ({"PkgID": {">=": "1.0"}, ...}). Order is stable (sorted) so the
+// plan hash is deterministic.
+func decodeDependencies(raw map[string]json.RawMessage, name string) []string {
+	value, ok := raw[name]
+	if !ok {
+		return nil
+	}
+	var deps map[string]json.RawMessage
+	if err := json.Unmarshal(value, &deps); err != nil || len(deps) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(deps))
+	for id := range deps {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 func firstString(raw map[string]json.RawMessage, names ...string) string {

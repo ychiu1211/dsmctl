@@ -106,10 +106,11 @@ type AvailablePackage struct {
 	Beta            bool   `json:"beta,omitempty" jsonschema:"Whether the offered build is a beta"`
 	Size            int64  `json:"size,omitempty" jsonschema:"Download size in bytes when reported"`
 	DownloadLink    string `json:"download_link,omitempty" jsonschema:"Package download URL used by the guarded install"`
-	Checksum        string `json:"checksum,omitempty" jsonschema:"Package checksum (md5) when reported"`
-	QuickInstall    bool   `json:"quick_install" jsonschema:"Whether the package supports quick install (no configuration wizard)"`
-	Installed       bool   `json:"installed" jsonschema:"Whether this package is already installed"`
-	UpdateAvailable bool   `json:"update_available" jsonschema:"Whether an installed package has a newer offered version"`
+	Checksum        string   `json:"checksum,omitempty" jsonschema:"Package checksum (md5) when reported"`
+	QuickInstall    bool     `json:"quick_install" jsonschema:"Whether the package supports quick install (no configuration wizard)"`
+	Dependencies    []string `json:"dependencies,omitempty" jsonschema:"Package identifiers this package requires (from the catalog deppkgs)"`
+	Installed       bool     `json:"installed" jsonschema:"Whether this package is already installed"`
+	UpdateAvailable bool     `json:"update_available" jsonschema:"Whether an installed package has a newer offered version"`
 }
 
 // Catalog is a point-in-time view of packages offered by the online package

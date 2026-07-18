@@ -197,7 +197,7 @@ func (c *Client) PackageInstall(ctx context.Context, input PackageInstallInput) 
 	// is best-effort: it surfaces an explicit task error fast, but a status call
 	// that errors (e.g. the task was cleared) is not itself fatal. 150 MB
 	// packages can take a few minutes; cap the wait and report a timeout.
-	deadline := time.Now().Add(15 * time.Minute)
+	deadline := time.Now().Add(30 * time.Minute)
 	for {
 		select {
 		case <-ctx.Done():
