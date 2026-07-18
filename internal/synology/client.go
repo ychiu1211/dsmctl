@@ -54,6 +54,17 @@ type Options struct {
 	// keys. It returns the new session ID and SynoToken.
 	Resume func(ctx context.Context) (sid, synoToken string, err error)
 
+	// SaveSession, when set, persists a session established by the password
+	// fallback so later processes reuse it instead of logging in again. It runs
+	// after a successful login (not resume, which persists itself) and is
+	// best-effort: a persistence failure never fails the login.
+	SaveSession func(ctx context.Context, sid, synoToken string) error
+
+	// PasswordFunc resolves the account password lazily, only when a login is
+	// actually needed. A seeded client uses it as a fallback when a session can
+	// no longer be resumed, so reusing a live session never resolves a password.
+	PasswordFunc func(ctx context.Context) (string, error)
+
 	// PreserveSessionOnClose keeps the DSM session alive when the client is
 	// closed: Close drops the in-memory session instead of calling
 	// SYNO.API.Auth logout. Set it for clients seeded from a persisted
@@ -75,6 +86,8 @@ type Client struct {
 	otp             OTPProvider
 	saveDeviceID    DeviceIDSaver
 	resume          func(ctx context.Context) (string, string, error)
+	saveSession     func(ctx context.Context, sid, synoToken string) error
+	passwordFunc    func(ctx context.Context) (string, error)
 	httpClient      *http.Client
 	preserveSession bool
 
@@ -121,6 +134,8 @@ func NewClient(options Options) (*Client, error) {
 		otp:             options.OTPProvider,
 		saveDeviceID:    options.SaveDeviceID,
 		resume:          options.Resume,
+		saveSession:     options.SaveSession,
+		passwordFunc:    options.PasswordFunc,
 		httpClient:      httpClient,
 		preserveSession: options.PreserveSessionOnClose,
 		target:          compatibility.NewTarget(),
@@ -182,6 +197,13 @@ func (c *Client) ensureAPIsLocked(ctx context.Context, names ...string) error {
 func (c *Client) loginLocked(ctx context.Context) error {
 	if c.sid != "" {
 		return nil
+	}
+	if c.password == "" && c.passwordFunc != nil {
+		// Resolve the password lazily, only now that a login is unavoidable, so
+		// reusing a live session never touches credentials.
+		if resolved, err := c.passwordFunc(ctx); err == nil {
+			c.password = resolved
+		}
 	}
 	if c.password == "" {
 		return errors.New("DSM session is unavailable and no password is configured to re-authenticate; run 'dsmctl auth login' to sign in again")
@@ -281,6 +303,11 @@ func (c *Client) acceptLoginLocked(ctx context.Context, data json.RawMessage) er
 			}
 		}
 	}
+	if c.saveSession != nil {
+		// Best-effort: persist the freshly logged-in session so later processes
+		// reuse it. A persistence failure must not fail an otherwise good login.
+		_ = c.saveSession(ctx, c.sid, c.synoToken)
+	}
 	return nil
 }
 
@@ -297,12 +324,18 @@ func (c *Client) Authenticate(ctx context.Context) error {
 func (c *Client) reestablishLocked(ctx context.Context) error {
 	if c.resume != nil {
 		sid, synoToken, err := c.resume(ctx)
-		if err != nil {
+		if err == nil {
+			c.sid = sid
+			c.synoToken = synoToken
+			return nil
+		}
+		// The stored session could not be resumed (DSM evicted it after its
+		// idle timeout, so the server refuses a Noise resume). If a password is
+		// available, recover automatically with a fresh login instead of forcing
+		// an interactive sign-in; otherwise report the resume failure.
+		if c.password == "" && c.passwordFunc == nil {
 			return err
 		}
-		c.sid = sid
-		c.synoToken = synoToken
-		return nil
 	}
 	return c.loginLocked(ctx)
 }

@@ -285,6 +285,70 @@ func TestClientReportsSessionEndedWhenResumeFails(t *testing.T) {
 	}
 }
 
+func TestSeededClientFallsBackToPasswordWhenResumeFails(t *testing.T) {
+	var loginCount int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Errorf("ParseForm() error = %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Form.Get("api") + "." + r.Form.Get("method") {
+		case "SYNO.API.Info.query":
+			fmt.Fprint(w, `{"success":true,"data":{"SYNO.API.Auth":{"path":"entry.cgi","minVersion":1,"maxVersion":7},"SYNO.Core.System":{"path":"entry.cgi","minVersion":1,"maxVersion":3}}}`)
+		case "SYNO.API.Auth.login":
+			loginCount++
+			if r.Form.Get("passwd") != "secret" {
+				t.Errorf("login passwd = %q", r.Form.Get("passwd"))
+			}
+			fmt.Fprint(w, `{"success":true,"data":{"sid":"fresh-sid","synotoken":"fresh-token"}}`)
+		case "SYNO.Core.System.info":
+			switch r.Form.Get("_sid") {
+			case "fresh-sid":
+				fmt.Fprint(w, `{"success":true,"data":{"model":"DS923+"}}`)
+			default:
+				fmt.Fprint(w, `{"success":false,"error":{"code":119}}`)
+			}
+		default:
+			t.Errorf("unexpected request %s.%s", r.Form.Get("api"), r.Form.Get("method"))
+			fmt.Fprint(w, `{"success":false,"error":{"code":102}}`)
+		}
+	}))
+	defer server.Close()
+
+	var savedSID string
+	client, err := NewClient(Options{
+		BaseURL:                server.URL,
+		Username:               "admin",
+		Password:               "secret",
+		SessionID:              "stale-sid",
+		HTTPClient:             server.Client(),
+		PreserveSessionOnClose: true,
+		Resume: func(context.Context) (string, string, error) {
+			return "", "", errors.New("session timed out; cannot resume")
+		},
+		SaveSession: func(_ context.Context, sid, _ string) error {
+			savedSID = sid
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	info, err := client.SystemInfo(context.Background())
+	if err != nil {
+		t.Fatalf("SystemInfo() error = %v", err)
+	}
+	if info.Model != "DS923+" {
+		t.Fatalf("SystemInfo() model = %q", info.Model)
+	}
+	if loginCount != 1 {
+		t.Fatalf("loginCount = %d, want 1 password fallback login", loginCount)
+	}
+	if savedSID != "fresh-sid" {
+		t.Fatalf("SaveSession sid = %q, want fresh-sid", savedSID)
+	}
+}
+
 func TestPreferredVersionClampsToAdvertisedRange(t *testing.T) {
 	for _, test := range []struct {
 		name string
