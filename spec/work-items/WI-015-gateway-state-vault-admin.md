@@ -1,9 +1,9 @@
 ---
 id: WI-015
 title: Add persistent gateway profiles, vault, and administration
-status: ready
+status: in_progress
 priority: P0
-owner: ""
+owner: "gateway-admin"
 depends_on: [WI-014]
 parallel_group: F
 touches:
