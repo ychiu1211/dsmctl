@@ -91,3 +91,35 @@ func TestManagedReadinessRequiresBootstrapAndMountedKeys(t *testing.T) {
 		t.Fatal("managed readiness accepted a changed master key file")
 	}
 }
+
+func TestPlatformReadinessRequiresBothMountedKeys(t *testing.T) {
+	directory := t.TempDir()
+	masterPath := filepath.Join(directory, "master.key")
+	platformPath := filepath.Join(directory, "platform.key")
+	masterKey := bytes.Repeat([]byte{5}, 32)
+	platformKey := bytes.Repeat([]byte{7}, 32)
+	if err := os.WriteFile(masterPath, masterKey, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(platformPath, platformKey, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	repository, err := gatewaystate.Open(filepath.Join(directory, "gateway.db"), masterKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	if err := repository.EnablePlatformAdministration(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	ready := platformReadiness(repository, masterPath, sha256.Sum256(masterKey), platformPath, sha256.Sum256(platformKey))
+	if err := ready(context.Background()); err != nil {
+		t.Fatalf("platform readiness = %v", err)
+	}
+	if err := os.WriteFile(platformPath, bytes.Repeat([]byte{8}, 32), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ready(context.Background()); err == nil {
+		t.Fatal("platform readiness accepted a changed assertion key file")
+	}
+}

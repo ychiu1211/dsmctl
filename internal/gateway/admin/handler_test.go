@@ -18,6 +18,7 @@ import (
 	"github.com/flynn/noise"
 
 	"github.com/ychiu1211/dsmctl/internal/config"
+	"github.com/ychiu1211/dsmctl/internal/gateway/platformauth"
 	"github.com/ychiu1211/dsmctl/internal/gateway/state"
 	"github.com/ychiu1211/dsmctl/internal/runtime"
 )
@@ -78,6 +79,49 @@ func TestBootstrapAndAuthenticatedProfileCRUD(t *testing.T) {
 	}
 	if !strings.Contains(listed.Body.String(), `"password_stored":true`) {
 		t.Fatalf("credential presence missing from list: %s", listed.Body.String())
+	}
+}
+
+func TestPlatformAdministrationRequiresSignedOneTimeAssertion(t *testing.T) {
+	repository, err := state.Open(filepath.Join(t.TempDir(), "gateway.db"), bytes.Repeat([]byte{8}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	if err := repository.EnablePlatformAdministration(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := repository.Snapshot(context.Background())
+	manager := runtime.NewManager(cfg, repository, runtime.WithConfigSource(repository), runtime.WithDeviceStore(repository), runtime.WithSessionStore(repository))
+	defer manager.Close(context.Background())
+	key := bytes.Repeat([]byte{9}, 32)
+	signer, _ := platformauth.NewSigner(key, platformauth.DefaultAudience)
+	verifier, _ := platformauth.NewVerifier(key, platformauth.DefaultAudience)
+	handler, err := New(Options{Repository: repository, Manager: manager, PlatformVerifier: verifier})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response := performJSON(handler, http.MethodPost, "/admin/api/bootstrap", `{}`, ""); response.Code != http.StatusNotFound {
+		t.Fatalf("platform bootstrap status = %d", response.Code)
+	}
+	if response := performJSON(handler, http.MethodGet, "/admin/api/status", "", "local-token"); response.Code != http.StatusUnauthorized {
+		t.Fatalf("local token status = %d", response.Code)
+	}
+	assertion, err := signer.Sign("administrator")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/admin/api/status", nil)
+	request.Header.Set(platformauth.HeaderName, assertion)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("signed assertion status = %d body=%s", response.Code, response.Body.String())
+	}
+	replayed := httptest.NewRecorder()
+	handler.ServeHTTP(replayed, request.Clone(context.Background()))
+	if replayed.Code != http.StatusUnauthorized {
+		t.Fatalf("replayed assertion status = %d", replayed.Code)
 	}
 }
 

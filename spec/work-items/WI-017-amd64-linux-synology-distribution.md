@@ -112,7 +112,7 @@ secured reverse-proxy endpoint, and pass the same gateway behavior suite.
       confirmation.
 - [ ] Release artifacts include SPK/image/Compose checksums, SBOM, embedded
       image digest, supported DSM/model matrix, and security configuration.
-- [ ] Installation and user documentation covers multi-NAS routing, why
+- [x] Installation and user documentation covers multi-NAS routing, why
       container `localhost` is not the host NAS, TLS pinning, backup limits,
       token rotation, approvals, and recovery from a missing key.
 
@@ -138,4 +138,27 @@ overlap WI-010 reliability/release hardening if that item is later specified.
 
 ## Handoff
 
-Fill this only when pausing incomplete work.
+Implementation and local verification are complete; real Synology hardware
+certification remains before this item can truthfully move to `done`.
+
+- Last known good state: the core supports irreversible platform-admin mode,
+  short-lived audience-bound replay-protected assertions, and the external
+  loopback DSM auth adapter. Generic Linux assets, deterministic offline SPK
+  assets, lifecycle scripts, release workflow, supported matrix, and user docs
+  are present.
+- Verification: `go test ./... -count=1` and `go vet ./...` pass. The same
+  `linux/amd64` image passed generic bootstrap/restart and platform-mode
+  no-bootstrap/restart Docker lifecycles. Two fixed-input builds produced image
+  ID `sha256:8a762b0ec480204d85ece83826ca1845d706f43c7d6ed78e0f3a3efd39e05055`;
+  SPKs built independently from those images were byte-identical at SHA-256
+  `6bb0cc4181cbb37e1cdfbe1757852f45ce1fc5ebf91efd9fa0c7c7f3a16b4124`.
+  Offline image load, Compose parsing, SPK structure/security validation,
+  shell/JSON syntax, icon dimensions, mounted-key non-disclosure, and container
+  security inspection passed.
+- Blocker: install/start/stop/reboot/portal/upgrade/uninstall and behavior tests
+  still require authorized real Intel and AMD x86_64 Synology systems across
+  the DSM versions claimed in `deploy/synology/SUPPORTED.md`. No ordinary
+  Docker result is recorded as a Container Manager or DSM portal pass.
+- Temporary resources: none. Test containers and temporary state/artifact
+  directories were removed; local Docker test image tags remain available for
+  follow-up without containing gateway secrets.

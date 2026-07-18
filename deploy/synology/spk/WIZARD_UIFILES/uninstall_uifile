@@ -1,0 +1,15 @@
+[{
+  "step_title": "Persistent data",
+  "items": [{
+    "type": "multiselect",
+    "subitems": [{
+      "key": "wizard_delete_data",
+      "desc": "Permanently delete gateway state, NAS credentials, tokens, audit data, backups, and encryption keys",
+      "defaultValue": false
+    }]
+  }, {
+    "type": "textfield",
+    "key": "wizard_confirm_delete",
+    "desc": "If deletion is selected, type DELETE. Leave blank to retain recoverable data for reinstall."
+  }]
+}]

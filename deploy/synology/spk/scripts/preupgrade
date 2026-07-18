@@ -1,0 +1,17 @@
+#!/bin/sh
+set -eu
+
+umask 077
+backup_dir="${SYNOPKG_PKGVAR:?}/backups/pre-upgrade-${SYNOPKG_OLD_PKGVER:-unknown}-$(date +%Y%m%d%H%M%S)"
+mkdir -p "$backup_dir"
+if [ -f "${SYNOPKG_PKGVAR}/gateway.db" ]; then
+    cp -p "${SYNOPKG_PKGVAR}/gateway.db" "$backup_dir/gateway.db"
+fi
+for key in master.key platform.key; do
+    if [ -f "${SYNOPKG_PKGHOME:?}/secrets/$key" ]; then
+        cp -p "${SYNOPKG_PKGHOME}/secrets/$key" "$backup_dir/$key"
+    fi
+done
+chmod -R go-rwx "$backup_dir"
+echo "Pre-upgrade recovery copy: $backup_dir" > "${SYNOPKG_TEMP_LOGFILE:-/dev/null}"
+exit 0

@@ -1,0 +1,43 @@
+services:
+  gateway:
+    image: dsmctl-gateway:__VERSION__
+    platform: linux/amd64
+    restart: unless-stopped
+    user: "${DSMCTL_UID}:${DSMCTL_GID}"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: 1.0
+    ports:
+      - "127.0.0.1:18765:8080"
+    volumes:
+      - type: bind
+        source: ${DSMCTL_DATA_DIR}
+        target: /data
+      - type: bind
+        source: ${DSMCTL_MASTER_KEY}
+        target: /run/secrets/master.key
+        read_only: true
+      - type: bind
+        source: ${DSMCTL_ASSERTION_KEY}
+        target: /run/secrets/platform.key
+        read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777,uid=${DSMCTL_UID},gid=${DSMCTL_GID}
+    command:
+      - --listen=0.0.0.0:8080
+      - --state=/data/gateway.db
+      - --master-key-file=/run/secrets/master.key
+      - --platform-assertion-key-file=/run/secrets/platform.key
+      - --platform-assertion-audience=dsmctl-synology-admin
+      - --allowed-hosts=127.0.0.1,localhost
+      - --trusted-proxies=172.16.0.0/12
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/ychiu1211/dsmctl/internal/credentials"
+	"github.com/ychiu1211/dsmctl/internal/gateway/platformauth"
 	"github.com/ychiu1211/dsmctl/internal/gateway/state"
 	"github.com/ychiu1211/dsmctl/internal/remotepolicy"
 	"github.com/ychiu1211/dsmctl/internal/runtime"
@@ -31,15 +32,17 @@ const (
 )
 
 type Options struct {
-	Repository *state.Repository
-	Manager    *runtime.Manager
-	PublicURL  string
+	Repository       *state.Repository
+	Manager          *runtime.Manager
+	PublicURL        string
+	PlatformVerifier *platformauth.Verifier
 }
 
 type Handler struct {
-	repository *state.Repository
-	manager    *runtime.Manager
-	publicURL  string
+	repository       *state.Repository
+	manager          *runtime.Manager
+	publicURL        string
+	platformVerifier *platformauth.Verifier
 
 	pendingMu sync.Mutex
 	pending   map[string]pendingEnrollment
@@ -50,6 +53,8 @@ type pendingEnrollment struct {
 	Enrollment  *weblogin.Enrollment
 	ExpiresAt   time.Time
 }
+
+type actorContextKey struct{}
 
 type profileInput struct {
 	state.ProfileInput
@@ -78,7 +83,7 @@ func New(options Options) (*Handler, error) {
 		}
 		publicURL = parsed.Scheme + "://" + parsed.Host
 	}
-	return &Handler{repository: options.Repository, manager: options.Manager, publicURL: publicURL, pending: make(map[string]pendingEnrollment)}, nil
+	return &Handler{repository: options.Repository, manager: options.Manager, publicURL: publicURL, platformVerifier: options.PlatformVerifier, pending: make(map[string]pendingEnrollment)}, nil
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
@@ -101,6 +106,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		_, _ = io.WriteString(w, indexHTML)
 		return
 	case "/admin/api/bootstrap":
+		if h.platformVerifier != nil {
+			http.NotFound(w, req)
+			return
+		}
 		h.bootstrap(w, req)
 		return
 	}
@@ -108,7 +117,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		http.NotFound(w, req)
 		return
 	}
-	if err := h.authenticate(req); err != nil {
+	actorID, err := h.authenticate(req)
+	if err != nil {
 		_ = h.repository.AppendAudit(req.Context(), state.AuditEvent{CorrelationID: correlationID(req), ActorType: "gateway_admin", Action: adminAuditAction(req), Outcome: "denied", Reason: "denied"})
 		w.Header().Set("WWW-Authenticate", `Bearer realm="dsmctl-gateway-admin"`)
 		writeError(w, http.StatusUnauthorized, "unauthorized")
@@ -117,18 +127,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	action := adminAuditAction(req)
 	mutating := req.Method != http.MethodGet && req.Method != http.MethodHead
 	if mutating {
-		if err := h.repository.AppendAudit(req.Context(), state.AuditEvent{CorrelationID: correlationID(req), ActorType: "gateway_admin", ActorID: "local-admin", Action: action, Outcome: "started"}); err != nil {
+		if err := h.repository.AppendAudit(req.Context(), state.AuditEvent{CorrelationID: correlationID(req), ActorType: "gateway_admin", ActorID: actorID, Action: action, Outcome: "started"}); err != nil {
 			writeError(w, http.StatusServiceUnavailable, "audit storage unavailable")
 			return
 		}
 	}
 	recorder := &auditResponseWriter{ResponseWriter: w, status: http.StatusOK}
+	req = req.WithContext(context.WithValue(req.Context(), actorContextKey{}, actorID))
 	h.serveAuthenticated(recorder, req)
 	outcome := "success"
 	if recorder.status >= 400 {
 		outcome = "failure"
 	}
-	_ = h.repository.AppendAudit(req.Context(), state.AuditEvent{CorrelationID: correlationID(req), ActorType: "gateway_admin", ActorID: "local-admin", Action: action, Outcome: outcome})
+	_ = h.repository.AppendAudit(req.Context(), state.AuditEvent{CorrelationID: correlationID(req), ActorType: "gateway_admin", ActorID: actorID, Action: action, Outcome: outcome})
 }
 
 func (h *Handler) serveAuthenticated(w http.ResponseWriter, req *http.Request) {
@@ -137,6 +148,10 @@ func (h *Handler) serveAuthenticated(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	if req.URL.Path == "/admin/api/admin-token/rotate" {
+		if h.platformVerifier != nil {
+			http.NotFound(w, req)
+			return
+		}
 		h.rotateAdminToken(w, req)
 		return
 	}
@@ -167,12 +182,22 @@ func (h *Handler) serveAuthenticated(w http.ResponseWriter, req *http.Request) {
 	http.NotFound(w, req)
 }
 
-func (h *Handler) authenticate(req *http.Request) error {
+func (h *Handler) authenticate(req *http.Request) (string, error) {
+	if h.platformVerifier != nil {
+		identity, err := h.platformVerifier.Verify(req.Context(), req.Header.Get(platformauth.HeaderName))
+		if err != nil {
+			return "", err
+		}
+		return "dsm:" + identity.Subject, nil
+	}
 	parts := strings.Fields(req.Header.Get("Authorization"))
 	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-		return state.ErrUnauthorized
+		return "", state.ErrUnauthorized
 	}
-	return h.repository.AuthenticateAdministrator(req.Context(), parts[1])
+	if err := h.repository.AuthenticateAdministrator(req.Context(), parts[1]); err != nil {
+		return "", err
+	}
+	return "local-admin", nil
 }
 
 func (h *Handler) bootstrap(w http.ResponseWriter, req *http.Request) {
@@ -424,7 +449,7 @@ func (h *Handler) approvals(w http.ResponseWriter, req *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		approval, err := h.repository.CreateApproval(req.Context(), state.ApprovalInput{PlanHash: input.PlanHash, NAS: input.NAS, ProfileRevision: input.ProfileRevision, RequestingTokenID: input.RequestingTokenID, TTL: time.Duration(input.TTLSeconds) * time.Second}, "local-admin")
+		approval, err := h.repository.CreateApproval(req.Context(), state.ApprovalInput{PlanHash: input.PlanHash, NAS: input.NAS, ProfileRevision: input.ProfileRevision, RequestingTokenID: input.RequestingTokenID, TTL: time.Duration(input.TTLSeconds) * time.Second}, administratorActor(req.Context()))
 		if err != nil {
 			writeRepositoryError(w, err)
 			return
@@ -433,6 +458,14 @@ func (h *Handler) approvals(w http.ResponseWriter, req *http.Request) {
 	default:
 		methodNotAllowed(w, http.MethodGet, http.MethodPost)
 	}
+}
+
+func administratorActor(ctx context.Context) string {
+	actor, _ := ctx.Value(actorContextKey{}).(string)
+	if actor == "" {
+		return "unknown-admin"
+	}
+	return actor
 }
 
 func (h *Handler) audit(w http.ResponseWriter, req *http.Request) {
@@ -860,10 +893,23 @@ func (h *Handler) startWebLogin(w http.ResponseWriter, req *http.Request, name s
 	opener := h.publicURL
 	if opener == "" {
 		scheme := "http"
+		host := req.Host
 		if req.TLS != nil {
 			scheme = "https"
 		}
-		opener = scheme + "://" + req.Host
+		prefix := ""
+		if h.platformVerifier != nil {
+			if forwarded := strings.TrimSpace(req.Header.Get("X-Forwarded-Proto")); forwarded == "http" || forwarded == "https" {
+				scheme = forwarded
+			}
+			if forwarded := strings.TrimSpace(req.Header.Get("X-Forwarded-Host")); forwarded != "" && !strings.ContainsAny(forwarded, "\r\n/\\") {
+				host = forwarded
+			}
+			if forwarded := strings.TrimSpace(req.Header.Get("X-Forwarded-Prefix")); forwarded != "" && strings.HasPrefix(forwarded, "/") && !strings.ContainsAny(forwarded, "\r\n\\?") {
+				prefix = strings.TrimRight(forwarded, "/")
+			}
+		}
+		opener = scheme + "://" + host + prefix
 	}
 	enrollment, start, err := weblogin.BeginEnrollment(profile.URL, opener+"/admin/", weblogin.Options{HTTPClient: runtime.HTTPClient(cfg.NAS[name])})
 	if err != nil {

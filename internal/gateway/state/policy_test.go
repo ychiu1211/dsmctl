@@ -266,3 +266,75 @@ func TestSchemaOneStateMigratesToAuthorizationBucketsWithBackup(t *testing.T) {
 		t.Fatalf("schema-one backups = %v", backups)
 	}
 }
+
+func TestSchemaTwoUpgradePreservesManagedStateAndSelectsLocalAdminMode(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "gateway.db")
+	key := bytes.Repeat([]byte{5}, 32)
+	repository, err := Open(path, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	bootstrap := "bootstrap-token-0123456789abcdef0123456789"
+	if err := repository.ConfigureBootstrap(ctx, bootstrap); err != nil {
+		t.Fatal(err)
+	}
+	adminToken, err := repository.EstablishAdministrator(ctx, bootstrap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.CreateProfile(ctx, ProfileInput{Name: "office", URL: "https://office.example"}); err != nil {
+		t.Fatal(err)
+	}
+	issued, err := repository.CreateMCPToken(ctx, MCPTokenInput{Name: "reader", NASAllowlist: []string{"office"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.AppendAudit(ctx, AuditEvent{ActorType: "test", ActorID: "schema-two", Action: "upgrade.prepare", Outcome: "success"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := bolt.Open(path, 0o600, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Update(func(tx *bolt.Tx) error {
+		meta := tx.Bucket(bucketMeta)
+		if err := meta.Put(keySchemaVersion, encodeUint64(2)); err != nil {
+			return err
+		}
+		return meta.Delete(keyAdminMode)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	repository, err = Open(path, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	if err := repository.AuthenticateAdministrator(ctx, adminToken); err != nil {
+		t.Fatalf("administrator token was not preserved: %v", err)
+	}
+	health, err := repository.Health(ctx)
+	if err != nil || health.AdminMode != AdminModeLocal || health.ProfileCount != 1 {
+		t.Fatalf("migrated health = %#v, %v", health, err)
+	}
+	tokens, err := repository.MCPTokens(ctx)
+	if err != nil || len(tokens) != 1 || tokens[0].ID != issued.Token.ID {
+		t.Fatalf("migrated tokens = %#v, %v", tokens, err)
+	}
+	events, err := repository.AuditEvents(ctx, AuditQuery{Limit: 10, ActorID: "schema-two"})
+	if err != nil || len(events) != 1 {
+		t.Fatalf("migrated audit = %#v, %v", events, err)
+	}
+	backups, _ := filepath.Glob(path + ".pre-v2-*.bak")
+	if len(backups) != 1 {
+		t.Fatalf("schema-two backups = %v", backups)
+	}
+}

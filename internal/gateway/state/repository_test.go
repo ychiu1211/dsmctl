@@ -178,6 +178,46 @@ func TestWrongMasterKeyAndBootstrapFailClosed(t *testing.T) {
 	}
 }
 
+func TestPlatformAdministrationDisablesLocalBootstrap(t *testing.T) {
+	repository, _ := openTestRepository(t)
+	ctx := context.Background()
+	if err := repository.EnablePlatformAdministration(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Ready(ctx); err != nil {
+		t.Fatalf("Ready() = %v", err)
+	}
+	health, err := repository.Health(ctx)
+	if err != nil || !health.Initialized || health.AdminMode != AdminModePlatform {
+		t.Fatalf("Health() = %#v, %v", health, err)
+	}
+	bootstrap := "bootstrap-token-0123456789abcdef0123456789"
+	if err := repository.ConfigureBootstrap(ctx, bootstrap); err == nil {
+		t.Fatal("platform repository accepted generic bootstrap configuration")
+	}
+	if _, err := repository.EstablishAdministrator(ctx, bootstrap); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("EstablishAdministrator() = %v", err)
+	}
+	if err := repository.AuthenticateAdministrator(ctx, "anything"); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("AuthenticateAdministrator() = %v", err)
+	}
+	if _, err := repository.RotateAdministrator(ctx); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("RotateAdministrator() = %v", err)
+	}
+}
+
+func TestPlatformAdministrationCannotReplaceLocalAdministration(t *testing.T) {
+	repository, _ := openTestRepository(t)
+	ctx := context.Background()
+	bootstrap := "bootstrap-token-0123456789abcdef0123456789"
+	if err := repository.ConfigureBootstrap(ctx, bootstrap); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.EnablePlatformAdministration(ctx); err == nil {
+		t.Fatal("platform administration replaced configured local administration")
+	}
+}
+
 func TestApplySecretResolvesOnlyByVaultReferenceAndRetainedSecretsStayCleanable(t *testing.T) {
 	repository, _ := openTestRepository(t)
 	ctx := context.Background()

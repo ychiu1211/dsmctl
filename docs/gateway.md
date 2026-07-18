@@ -3,8 +3,10 @@
 `dsmctl-gateway` exposes the existing application layer over stateless MCP
 Streamable HTTP. The image is a platform-neutral `linux/amd64` image: it runs
 under Docker Engine, Podman, or Synology Container Manager without changing
-the binary. The future Synology SPK is a deployment wrapper around this same
-image, not a separate DSM-specific build.
+the binary. The Synology SPK is a deployment wrapper around this same image,
+not a separate DSM-specific build. Production Linux instructions live in
+`deploy/linux/README.md`; the offline package is documented in
+`docs/synology-package.md`.
 
 The managed gateway stores up to 32 NAS profiles in a transactional embedded
 database and exposes an authenticated administration page at `/admin/`.
@@ -158,4 +160,4 @@ Only `/data` and `/run/secrets` are mounted. The image has no Docker socket and
 does not use host networking. It contains no `/usr/syno` or `/var/packages`
 integration, `SYNOPKG_*` handling, DSM `authenticate.cgi` calls, Synology
 package lifecycle logic, or Container Manager control calls. Those concerns
-belong to the WI-017 Synology wrapper.
+remain outside the image in the Synology package and its loopback auth adapter.

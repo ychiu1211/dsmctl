@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+
+if [ "${SYNOPKG_DSM_ARCH:-}" != "x86_64" ]; then
+    echo "dsmctl Gateway supports only x86_64 DSM systems." > "${SYNOPKG_TEMP_LOGFILE:-/dev/stderr}"
+    exit 1
+fi
+if [ "${SYNOPKG_DSM_VERSION_MAJOR:-0}" -lt 7 ] || \
+   { [ "${SYNOPKG_DSM_VERSION_MAJOR:-0}" -eq 7 ] && [ "${SYNOPKG_DSM_VERSION_MINOR:-0}" -lt 2 ]; }; then
+    echo "DSM 7.2.1-69057 or newer is required." > "${SYNOPKG_TEMP_LOGFILE:-/dev/stderr}"
+    exit 1
+fi
+exit 0

@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+
+if [ "${wizard_delete_data:-false}" = "true" ] && [ "${wizard_confirm_delete:-}" != "DELETE" ]; then
+    echo "Type DELETE in the uninstall wizard to remove persistent credentials." > "${SYNOPKG_TEMP_LOGFILE:-/dev/stderr}"
+    exit 1
+fi
+exit 0

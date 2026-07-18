@@ -1,0 +1,108 @@
+name: Gateway release artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      package_version:
+        description: Numeric Synology version, for example 0.1.0-1
+        required: true
+  push:
+    tags:
+      - gateway-v*
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: docker/setup-buildx-action@v3
+      - name: Resolve deterministic build inputs
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            package_version="${{ inputs.package_version }}"
+          else
+            feature="${GITHUB_REF_NAME#gateway-v}"
+            package_version="${feature}-${GITHUB_RUN_NUMBER}"
+          fi
+          [[ "$package_version" =~ ^[0-9]+([._-][0-9]+)+$ ]]
+          echo "PACKAGE_VERSION=$package_version" >> "$GITHUB_ENV"
+          echo "REVISION=$GITHUB_SHA" >> "$GITHUB_ENV"
+          echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$GITHUB_SHA")" >> "$GITHUB_ENV"
+          echo "CREATED=$(git show -s --format=%cI "$GITHUB_SHA")" >> "$GITHUB_ENV"
+      - name: Test source
+        run: |
+          go test ./... -count=1
+          go vet ./...
+      - name: Build the release image and BuildKit metadata
+        shell: bash
+        run: |
+          mkdir -p dist
+          docker buildx build --platform linux/amd64 --provenance=false --load \
+            --metadata-file dist/buildkit-metadata.json \
+            --build-arg "VERSION=$PACKAGE_VERSION" \
+            --build-arg "REVISION=$REVISION" \
+            --build-arg "CREATED=$CREATED" \
+            -f deploy/container/Dockerfile \
+            -t dsmctl-gateway:release .
+          test "$(docker image inspect dsmctl-gateway:release --format '{{.Os}}/{{.Architecture}}')" = "linux/amd64"
+          test "$(docker image inspect dsmctl-gateway:release --format '{{.Config.User}}')" = "10001:10001"
+          image_id="$(docker image inspect dsmctl-gateway:release --format '{{.Id}}')"
+          cat > dist/provenance.json <<EOF
+          {"_type":"https://in-toto.io/Statement/v1","subject":[{"name":"dsmctl-gateway","digest":{"sha256":"${image_id#sha256:}"}}],"predicateType":"https://slsa.dev/provenance/v1","predicate":{"buildDefinition":{"buildType":"https://github.com/docker/buildx","externalParameters":{"platform":"linux/amd64","version":"$PACKAGE_VERSION"},"internalParameters":{"revision":"$REVISION","source_date_epoch":"$SOURCE_DATE_EPOCH"},"resolvedDependencies":[{"uri":"pkg:docker/golang@1.25.0-alpine","digest":{"sha256":"f18a072054848d87a8077455f0ac8a25886f2397f88bfdd222d6fafbb5bba440"}}]},"runDetails":{"builder":{"id":"https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"}}}}
+          EOF
+      - uses: anchore/sbom-action/download-syft@v0
+      - name: Generate SBOM and deterministic SPK twice
+        shell: bash
+        run: |
+          syft dsmctl-gateway:release -o spdx-json=dist/dsmctl-gateway.spdx.json
+          deploy/synology/build-spk.sh "$PACKAGE_VERSION" dsmctl-gateway:release dist/first
+          deploy/synology/build-spk.sh "$PACKAGE_VERSION" dsmctl-gateway:release dist/second
+          cmp "dist/first/dsmctl-gateway-$PACKAGE_VERSION-x86_64.spk" "dist/second/dsmctl-gateway-$PACKAGE_VERSION-x86_64.spk"
+          deploy/synology/validate-spk.sh "dist/first/dsmctl-gateway-$PACKAGE_VERSION-x86_64.spk"
+          cp dist/first/* dist/
+          rm -rf dist/first dist/second
+          cp deploy/synology/SUPPORTED.md dist/SUPPORTED.md
+          (cd dist && sha256sum dsmctl-gateway.spdx.json provenance.json buildkit-metadata.json SUPPORTED.md >> SHA256SUMS)
+      - name: Smoke-test generic Compose controls and persistence
+        shell: bash
+        run: |
+          smoke="$(mktemp -d)"
+          trap 'docker compose --env-file "$smoke/.env" -f deploy/linux/compose.yaml down >/dev/null 2>&1 || true; rm -rf "$smoke"' EXIT
+          mkdir "$smoke/data" "$smoke/secrets"
+          head -c 32 /dev/urandom > "$smoke/secrets/master.key"
+          printf '0123456789abcdef0123456789abcdef0123456789abcdef\n' > "$smoke/secrets/bootstrap"
+          chmod 700 "$smoke/data" "$smoke/secrets"
+          chmod 600 "$smoke/secrets/"*
+          cat > "$smoke/.env" <<EOF
+          DSMCTL_IMAGE=dsmctl-gateway:release
+          DSMCTL_UID=$(id -u)
+          DSMCTL_GID=$(id -g)
+          DSMCTL_DATA_DIR=$smoke/data
+          DSMCTL_SECRET_DIR=$smoke/secrets
+          DSMCTL_PORT=18765
+          DSMCTL_PUBLIC_ORIGIN=https://gateway.example.test
+          EOF
+          docker compose --env-file "$smoke/.env" -f deploy/linux/compose.yaml up -d
+          for attempt in $(seq 1 30); do curl -fsS http://127.0.0.1:18765/healthz && break; sleep 1; done
+          container="$(docker compose --env-file "$smoke/.env" -f deploy/linux/compose.yaml ps -q gateway)"
+          test "$(docker inspect "$container" --format '{{.HostConfig.ReadonlyRootfs}}')" = true
+          test "$(docker inspect "$container" --format '{{json .HostConfig.CapDrop}}')" = '["ALL"]'
+          docker inspect "$container" --format '{{json .HostConfig.SecurityOpt}}' | grep -q 'no-new-privileges'
+          test -z "$(docker inspect "$container" --format '{{range .Mounts}}{{if eq .Destination "/var/run/docker.sock"}}{{.Source}}{{end}}{{end}}')"
+          docker compose --env-file "$smoke/.env" -f deploy/linux/compose.yaml restart
+          test -f "$smoke/data/gateway.db"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: dsmctl-gateway-${{ env.PACKAGE_VERSION }}-amd64
+          path: dist/
+          if-no-files-found: error

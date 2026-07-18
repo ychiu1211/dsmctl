@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+
+for required in "${SYNOPKG_PKGHOME:?}/secrets/master.key" "${SYNOPKG_PKGHOME}/secrets/platform.key"; do
+    if [ ! -f "$required" ] || [ "$(wc -c < "$required" | tr -d ' ')" != "32" ]; then
+        echo "Required private key is missing or invalid: $required" > "${SYNOPKG_TEMP_LOGFILE:-/dev/stderr}"
+        exit 1
+    fi
+done
+echo "Upgrade preserved state and private keys. See ${SYNOPKG_PKGVAR}/backups for recovery copies." > "${SYNOPKG_TEMP_LOGFILE:-/dev/null}"
+exit 0

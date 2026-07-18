@@ -182,8 +182,11 @@ Run the stdio server:
 dsmctl-mcp --config C:\path\to\config.json
 ```
 
-The portable HTTP developer gateway, its loopback-only Compose project, and
-its managed remote security boundary are documented in [the gateway guide](docs/gateway.md).
+The portable HTTP gateway and its managed remote security boundary are
+documented in [the gateway guide](docs/gateway.md). Production amd64 Linux
+Compose/Podman deployment is in [deploy/linux](deploy/linux/README.md), and the
+offline x86_64 DSM package is described in
+[the Synology package guide](docs/synology-package.md).
 
 Available tools:
 

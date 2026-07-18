@@ -1,0 +1,7 @@
+[{
+  "step_title": "Gateway upgrade",
+  "items": [{
+    "type": "textfield",
+    "desc": "The database and both private keys are preserved. A recovery copy is created under the package var/backups directory before migration."
+  }]
+}]

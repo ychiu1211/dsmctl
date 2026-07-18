@@ -1,0 +1,40 @@
+services:
+  gateway:
+    image: ${DSMCTL_IMAGE:?Set DSMCTL_IMAGE to an immutable linux/amd64 repository@sha256 digest}
+    platform: linux/amd64
+    restart: unless-stopped
+    user: "${DSMCTL_UID:-10001}:${DSMCTL_GID:-10001}"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: 1.0
+    ports:
+      - "127.0.0.1:${DSMCTL_PORT:-18765}:8080"
+    volumes:
+      - type: bind
+        source: ${DSMCTL_DATA_DIR:-/opt/dsmctl/data}
+        target: /data
+      - type: bind
+        source: ${DSMCTL_SECRET_DIR:-/opt/dsmctl/secrets}
+        target: /run/secrets
+        read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777,uid=${DSMCTL_UID:-10001},gid=${DSMCTL_GID:-10001}
+    command:
+      - --listen=0.0.0.0:8080
+      - --state=/data/gateway.db
+      - --master-key-file=/run/secrets/master.key
+      - --bootstrap-file=/run/secrets/bootstrap
+      - --admin-public-url=${DSMCTL_PUBLIC_ORIGIN:?Set the HTTPS public origin used by the reverse proxy}
+      - --allowed-hosts=127.0.0.1,localhost
+      - --allowed-origins=${DSMCTL_PUBLIC_ORIGIN}
+      - --trusted-proxies=172.16.0.0/12
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

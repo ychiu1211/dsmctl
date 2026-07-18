@@ -11,10 +11,12 @@ import (
 )
 
 const (
-	SchemaVersion        = 2
+	SchemaVersion        = 3
 	MaxProfiles          = 32
 	MaxMCPTokenNameBytes = 64
 	DefaultApprovalTTL   = 10 * time.Minute
+	AdminModeLocal       = "local"
+	AdminModePlatform    = "platform"
 
 	TLSSystemCA          = "system_ca"
 	TLSPinnedFingerprint = "pinned_fingerprint"
@@ -60,10 +62,11 @@ type ProfileInput struct {
 }
 
 type Health struct {
-	SchemaVersion int  `json:"schema_version"`
-	ProfileCount  int  `json:"profile_count"`
-	Initialized   bool `json:"initialized"`
-	Ready         bool `json:"ready"`
+	SchemaVersion int    `json:"schema_version"`
+	ProfileCount  int    `json:"profile_count"`
+	Initialized   bool   `json:"initialized"`
+	Ready         bool   `json:"ready"`
+	AdminMode     string `json:"admin_mode,omitempty"`
 }
 
 type SecretMetadata struct {

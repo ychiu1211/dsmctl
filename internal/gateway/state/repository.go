@@ -43,6 +43,7 @@ var (
 	keyBootstrapDigest = []byte("bootstrap_digest")
 	keyBootstrapUsed   = []byte("bootstrap_used")
 	keyAdminDigest     = []byte("admin_digest")
+	keyAdminMode       = []byte("admin_mode")
 	keyRevisionCounter = []byte("profile_revision_counter")
 )
 
@@ -220,6 +221,11 @@ func (r *Repository) initialize(existed bool, options OpenOptions) error {
 				return err
 			}
 		}
+		if len(meta.Get(keyAdminMode)) == 0 && len(meta.Get(keyAdminDigest)) > 0 {
+			if err := meta.Put(keyAdminMode, []byte(AdminModeLocal)); err != nil {
+				return err
+			}
+		}
 		return tx.Bucket(bucketMigrations).Put(encodeUint64(SchemaVersion), []byte(time.Now().UTC().Format(time.RFC3339Nano)))
 	}); err != nil {
 		return fmt.Errorf("migrate gateway state: %w", err)
@@ -241,7 +247,7 @@ func (r *Repository) Ready(ctx context.Context) error {
 		if meta == nil || decodeUint64(meta.Get(keySchemaVersion)) != SchemaVersion {
 			return errors.New("gateway schema is not ready")
 		}
-		if len(meta.Get(keyAdminDigest)) == 0 {
+		if !administratorInitialized(meta) {
 			return ErrBootstrapRequired
 		}
 		return nil
@@ -261,7 +267,8 @@ func (r *Repository) Health(ctx context.Context) (Health, error) {
 		}
 		health.SchemaVersion = int(decodeUint64(meta.Get(keySchemaVersion)))
 		health.ProfileCount = profiles.Stats().KeyN
-		health.Initialized = len(meta.Get(keyAdminDigest)) > 0
+		health.AdminMode = string(meta.Get(keyAdminMode))
+		health.Initialized = administratorInitialized(meta)
 		health.Ready = health.SchemaVersion == SchemaVersion && health.Initialized
 		return nil
 	})
@@ -486,8 +493,14 @@ func (r *Repository) ConfigureBootstrap(ctx context.Context, token string) error
 	digest := sha256.Sum256([]byte(token))
 	return r.db.Update(func(tx *bolt.Tx) error {
 		meta := tx.Bucket(bucketMeta)
+		if string(meta.Get(keyAdminMode)) == AdminModePlatform {
+			return errors.New("generic bootstrap is disabled for platform administration")
+		}
 		if len(meta.Get(keyAdminDigest)) > 0 || len(meta.Get(keyBootstrapUsed)) > 0 {
 			return nil
+		}
+		if err := meta.Put(keyAdminMode, []byte(AdminModeLocal)); err != nil {
+			return err
 		}
 		current := meta.Get(keyBootstrapDigest)
 		if len(current) > 0 && subtle.ConstantTimeCompare(current, digest[:]) != 1 {
@@ -515,6 +528,9 @@ func (r *Repository) EstablishAdministrator(ctx context.Context, bootstrapToken 
 	adminDigest := sha256.Sum256([]byte(adminToken))
 	err = r.db.Update(func(tx *bolt.Tx) error {
 		meta := tx.Bucket(bucketMeta)
+		if string(meta.Get(keyAdminMode)) == AdminModePlatform {
+			return ErrUnauthorized
+		}
 		if len(meta.Get(keyAdminDigest)) > 0 || len(meta.Get(keyBootstrapUsed)) > 0 {
 			return ErrBootstrapConsumed
 		}
@@ -545,7 +561,11 @@ func (r *Repository) AuthenticateAdministrator(ctx context.Context, token string
 	}
 	digest := sha256.Sum256([]byte(token))
 	return r.db.View(func(tx *bolt.Tx) error {
-		expected := tx.Bucket(bucketMeta).Get(keyAdminDigest)
+		meta := tx.Bucket(bucketMeta)
+		if string(meta.Get(keyAdminMode)) == AdminModePlatform {
+			return ErrUnauthorized
+		}
+		expected := meta.Get(keyAdminDigest)
 		if len(expected) != sha256.Size || subtle.ConstantTimeCompare(expected, digest[:]) != 1 {
 			return ErrUnauthorized
 		}
@@ -563,9 +583,41 @@ func (r *Repository) RotateAdministrator(ctx context.Context) (string, error) {
 	}
 	digest := sha256.Sum256([]byte(token))
 	err = r.db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket(bucketMeta).Put(keyAdminDigest, digest[:])
+		meta := tx.Bucket(bucketMeta)
+		if string(meta.Get(keyAdminMode)) == AdminModePlatform {
+			return ErrUnauthorized
+		}
+		return meta.Put(keyAdminDigest, digest[:])
 	})
 	return token, err
+}
+
+// EnablePlatformAdministration selects an external, signed administrator
+// identity for a fresh deployment. It is deliberately irreversible through
+// the runtime API so a local bootstrap secret cannot be used to downgrade a
+// Synology installation after the package has initialized it.
+func (r *Repository) EnablePlatformAdministration(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return r.db.Update(func(tx *bolt.Tx) error {
+		meta := tx.Bucket(bucketMeta)
+		mode := string(meta.Get(keyAdminMode))
+		if mode == AdminModePlatform {
+			return nil
+		}
+		if mode != "" || len(meta.Get(keyAdminDigest)) > 0 || len(meta.Get(keyBootstrapDigest)) > 0 || len(meta.Get(keyBootstrapUsed)) > 0 {
+			return errors.New("gateway state already uses local administration")
+		}
+		return meta.Put(keyAdminMode, []byte(AdminModePlatform))
+	})
+}
+
+func administratorInitialized(meta *bolt.Bucket) bool {
+	if string(meta.Get(keyAdminMode)) == AdminModePlatform {
+		return true
+	}
+	return len(meta.Get(keyAdminDigest)) == sha256.Size
 }
 
 func readProfile(tx *bolt.Tx, name string) (profileRecord, error) {

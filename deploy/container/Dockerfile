@@ -1,9 +1,10 @@
-# syntax=docker/dockerfile:1.7
-FROM --platform=$BUILDPLATFORM golang:1.25.0-alpine AS build
+# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
+FROM --platform=$BUILDPLATFORM golang:1.25.0-alpine@sha256:f18a072054848d87a8077455f0ac8a25886f2397f88bfdd222d6fafbb5bba440 AS build
 
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
 ARG VERSION=dev
+ARG REVISION=unknown
 
 WORKDIR /src
 COPY go.mod go.sum ./
@@ -12,16 +13,21 @@ COPY cmd ./cmd
 COPY internal ./internal
 RUN test "${TARGETOS}/${TARGETARCH}" = "linux/amd64" && \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -trimpath \
-      -ldflags="-s -w -X github.com/ychiu1211/dsmctl/internal/buildinfo.Version=${VERSION}" \
+    go build -trimpath -buildvcs=false \
+      -ldflags="-s -w -buildid= -X github.com/ychiu1211/dsmctl/internal/buildinfo.Version=${VERSION} -X github.com/ychiu1211/dsmctl/internal/buildinfo.Revision=${REVISION}" \
       -o /out/dsmctl-gateway ./cmd/dsmctl-gateway
 
 FROM scratch
 
 ARG VERSION=dev
+ARG REVISION=unknown
+ARG CREATED=1970-01-01T00:00:00Z
 LABEL org.opencontainers.image.title="dsmctl gateway" \
       org.opencontainers.image.description="Portable managed MCP gateway for Synology DSM fleets" \
       org.opencontainers.image.version=$VERSION \
+      org.opencontainers.image.revision=$REVISION \
+      org.opencontainers.image.created=$CREATED \
+      org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.source="https://github.com/ychiu1211/dsmctl"
 
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt

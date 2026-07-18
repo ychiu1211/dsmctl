@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+
+if [ "${SYNOPKG_PKG_STATUS:-}" != "UNINSTALL" ] || [ "${wizard_delete_data:-false}" != "true" ]; then
+    exit 0
+fi
+expected_var="/var/packages/${SYNOPKG_PKGNAME:?}/var"
+expected_home="/var/packages/${SYNOPKG_PKGNAME}/home"
+if [ "${SYNOPKG_PKGVAR:?}" != "$expected_var" ] || [ "${SYNOPKG_PKGHOME:?}" != "$expected_home" ]; then
+    echo "Refusing data deletion because package paths are unexpected." > "${SYNOPKG_TEMP_LOGFILE:-/dev/stderr}"
+    exit 1
+fi
+find "$SYNOPKG_PKGVAR" -mindepth 1 -maxdepth 1 -exec rm -rf {} \;
+find "$SYNOPKG_PKGHOME" -mindepth 1 -maxdepth 1 -exec rm -rf {} \;
+echo "Persistent gateway database and keys were permanently deleted." > "${SYNOPKG_TEMP_LOGFILE:-/dev/null}"
+exit 0
