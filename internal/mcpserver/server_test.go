@@ -62,8 +62,8 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools() error = %v", err)
 	}
-	if len(tools.Tools) != 61 {
-		t.Fatalf("ListTools() returned %d tools, want 61", len(tools.Tools))
+	if len(tools.Tools) != 69 {
+		t.Fatalf("ListTools() returned %d tools, want 69", len(tools.Tools))
 	}
 	readOnlyTools := map[string]bool{
 		"discover_lan_devices":                false,
@@ -84,6 +84,10 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"get_service_discovery_state":         false,
 		"get_ftp_service_capabilities":        false,
 		"get_ftp_service_state":               false,
+		"get_rsync_service_capabilities":      false,
+		"get_rsync_service_state":             false,
+		"get_tftp_service_capabilities":       false,
+		"get_tftp_service_state":              false,
 		"get_san_capabilities":                false,
 		"get_san_state":                       false,
 		"get_share_capabilities":              false,
@@ -99,6 +103,8 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"plan_nfs_export_change":              false,
 		"plan_service_discovery_change":       false,
 		"plan_ftp_service_change":             false,
+		"plan_rsync_service_change":           false,
+		"plan_tftp_service_change":            false,
 		"get_package_capabilities":            false,
 		"get_package_state":                   false,
 		"get_package_settings":                false,
@@ -124,6 +130,8 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"apply_nfs_export_plan":         false,
 		"apply_service_discovery_plan":  false,
 		"apply_ftp_service_plan":        false,
+		"apply_rsync_service_plan":      false,
+		"apply_tftp_service_plan":       false,
 		"apply_package_plan":            false,
 		"apply_resource_recording_plan": false,
 	}

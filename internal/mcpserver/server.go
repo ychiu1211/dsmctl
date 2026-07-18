@@ -17,11 +17,13 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/domain/nfsexport"
 	"github.com/ychiu1211/dsmctl/internal/domain/packagecenter"
 	"github.com/ychiu1211/dsmctl/internal/domain/resmon"
+	"github.com/ychiu1211/dsmctl/internal/domain/rsyncservice"
 	"github.com/ychiu1211/dsmctl/internal/domain/san"
 	"github.com/ychiu1211/dsmctl/internal/domain/servicediscovery"
 	"github.com/ychiu1211/dsmctl/internal/domain/share"
 	"github.com/ychiu1211/dsmctl/internal/domain/storage"
 	"github.com/ychiu1211/dsmctl/internal/domain/syslog"
+	"github.com/ychiu1211/dsmctl/internal/domain/tftpservice"
 	"github.com/ychiu1211/dsmctl/internal/synology"
 )
 
@@ -239,6 +241,64 @@ type applyFTPServicesPlanInput struct {
 
 type applyFTPServicesPlanOutput struct {
 	Result application.FTPServicesApplyResult `json:"result" jsonschema:"FTP services mutation result after stale-state and postcondition checks"`
+}
+
+type getRsyncServiceStateOutput struct {
+	NAS          string                     `json:"nas" jsonschema:"NAS profile used for the request"`
+	RsyncService synology.RsyncServiceState `json:"rsync_service" jsonschema:"Normalized rsync-service configuration"`
+}
+
+type getRsyncServiceCapabilitiesOutput struct {
+	NAS          string                            `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.RsyncServiceCapabilities `json:"capabilities" jsonschema:"Selected rsync-service operations"`
+	Report       synology.CompatibilityReport      `json:"report" jsonschema:"Discovered APIs and selected rsync-service backend"`
+}
+
+type planRsyncServiceChangeInput struct {
+	NAS     string              `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request rsyncservice.Change `json:"request" jsonschema:"Patch-only rsync-service intent"`
+}
+
+type planRsyncServiceChangeOutput struct {
+	Plan application.RsyncServicePlan `json:"plan" jsonschema:"Validated plan bound to the complete observed state and approval hash"`
+}
+
+type applyRsyncServicePlanInput struct {
+	Plan         application.RsyncServicePlan `json:"plan" jsonschema:"Unmodified plan returned by plan_rsync_service_change"`
+	ApprovalHash string                       `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved rsync service plan"`
+}
+
+type applyRsyncServicePlanOutput struct {
+	Result application.RsyncServiceApplyResult `json:"result" jsonschema:"rsync service mutation result after stale-state and postcondition checks"`
+}
+
+type getTFTPServiceStateOutput struct {
+	NAS         string                    `json:"nas" jsonschema:"NAS profile used for the request"`
+	TFTPService synology.TFTPServiceState `json:"tftp_service" jsonschema:"Normalized TFTP configuration"`
+}
+
+type getTFTPServiceCapabilitiesOutput struct {
+	NAS          string                           `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.TFTPServiceCapabilities `json:"capabilities" jsonschema:"Selected TFTP operations"`
+	Report       synology.CompatibilityReport     `json:"report" jsonschema:"Discovered APIs and selected TFTP backend"`
+}
+
+type planTFTPServiceChangeInput struct {
+	NAS     string             `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request tftpservice.Change `json:"request" jsonschema:"Patch-only TFTP intent"`
+}
+
+type planTFTPServiceChangeOutput struct {
+	Plan application.TFTPServicePlan `json:"plan" jsonschema:"Validated plan bound to the complete observed state and approval hash"`
+}
+
+type applyTFTPServicePlanInput struct {
+	Plan         application.TFTPServicePlan `json:"plan" jsonschema:"Unmodified plan returned by plan_tftp_service_change"`
+	ApprovalHash string                     `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved TFTP service plan"`
+}
+
+type applyTFTPServicePlanOutput struct {
+	Result application.TFTPServiceApplyResult `json:"result" jsonschema:"TFTP service mutation result after stale-state and postcondition checks"`
 }
 
 type getStorageInput struct {
@@ -880,6 +940,110 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, applyFTPServicesPlanOutput{}, err
 		}
 		return nil, applyFTPServicesPlanOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_rsync_service_capabilities",
+		Title:       "Get rsync service capabilities",
+		Description: "Report whether the rsync network-backup service can be read and changed on the selected NAS, and the DSM backend selected.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getFileServicesInput) (*mcp.CallToolResult, getRsyncServiceCapabilitiesOutput, error) {
+		result, err := service.GetRsyncServiceCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getRsyncServiceCapabilitiesOutput{}, err
+		}
+		return nil, getRsyncServiceCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_rsync_service_state",
+		Title:       "Get rsync service state",
+		Description: "Read the rsync network-backup service switch, rsync account switch, and shared SSH port without changing DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getFileServicesInput) (*mcp.CallToolResult, getRsyncServiceStateOutput, error) {
+		result, err := service.GetRsyncServiceState(ctx, input.NAS)
+		if err != nil {
+			return nil, getRsyncServiceStateOutput{}, err
+		}
+		return nil, getRsyncServiceStateOutput{NAS: result.NAS, RsyncService: result.RsyncService}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_rsync_service_change",
+		Title:       "Plan an rsync service change",
+		Description: "Validate one patch-only rsync-service request, read the current state, and return a hash-bound approval plan. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planRsyncServiceChangeInput) (*mcp.CallToolResult, planRsyncServiceChangeOutput, error) {
+		plan, err := service.PlanRsyncServiceChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planRsyncServiceChangeOutput{}, err
+		}
+		return nil, planRsyncServiceChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_rsync_service_plan",
+		Title:       "Apply an approved rsync service plan",
+		Description: "Apply an unmodified rsync-service plan only while its approval hash and complete observed state still match, then verify the requested postcondition.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyRsyncServicePlanInput) (*mcp.CallToolResult, applyRsyncServicePlanOutput, error) {
+		result, err := service.ApplyRsyncServicePlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applyRsyncServicePlanOutput{}, err
+		}
+		return nil, applyRsyncServicePlanOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_tftp_service_capabilities",
+		Title:       "Get TFTP service capabilities",
+		Description: "Report whether the TFTP service can be read and changed on the selected NAS, and the DSM backend selected.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getFileServicesInput) (*mcp.CallToolResult, getTFTPServiceCapabilitiesOutput, error) {
+		result, err := service.GetTFTPServiceCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getTFTPServiceCapabilitiesOutput{}, err
+		}
+		return nil, getTFTPServiceCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_tftp_service_state",
+		Title:       "Get TFTP service state",
+		Description: "Read the TFTP service switch, root folder, permission, logging, allowed-client range, and timeout without changing DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getFileServicesInput) (*mcp.CallToolResult, getTFTPServiceStateOutput, error) {
+		result, err := service.GetTFTPServiceState(ctx, input.NAS)
+		if err != nil {
+			return nil, getTFTPServiceStateOutput{}, err
+		}
+		return nil, getTFTPServiceStateOutput{NAS: result.NAS, TFTPService: result.TFTPService}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_tftp_service_change",
+		Title:       "Plan a TFTP service change",
+		Description: "Validate one patch-only TFTP request, read the current state, and return a hash-bound approval plan. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planTFTPServiceChangeInput) (*mcp.CallToolResult, planTFTPServiceChangeOutput, error) {
+		plan, err := service.PlanTFTPServiceChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planTFTPServiceChangeOutput{}, err
+		}
+		return nil, planTFTPServiceChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_tftp_service_plan",
+		Title:       "Apply an approved TFTP service plan",
+		Description: "Apply an unmodified TFTP plan only while its approval hash and complete observed state still match, then verify the requested postcondition.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyTFTPServicePlanInput) (*mcp.CallToolResult, applyTFTPServicePlanOutput, error) {
+		result, err := service.ApplyTFTPServicePlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applyTFTPServicePlanOutput{}, err
+		}
+		return nil, applyTFTPServicePlanOutput{Result: result}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

@@ -269,6 +269,67 @@ dsmctl control-panel file-services ftp apply --file ftp.plan.json --approve <has
 MCP exposes `get_ftp_service_capabilities`, `get_ftp_service_state`,
 `plan_ftp_service_change`, and `apply_ftp_service_plan`.
 
+## rsync service
+
+DSM's "rsync" File Services tab enables the rsync network-backup service (used
+by remote rsync backups) through `SYNO.Backup.Service.NetworkBackup`.
+
+```console
+dsmctl control-panel file-services rsync capabilities --nas office
+dsmctl control-panel file-services rsync state --nas office --json
+```
+
+The state carries the service switch, the dedicated-rsync-account switch, and the
+rsync-over-SSH port. The SSH port is reported **read-only** because DSM shares it
+with the SSH daemon; changing it here would move the SSH service, so it is out of
+scope for writes. Changes are patch-only through the same hash-bound plan/apply
+flow: apply reads the current pair, merges the patch, and submits the service
+switch (the write requires it) alongside the account switch. Enabling the service
+(which exposes an rsync endpoint), disabling it (which stops incoming backups),
+and enabling the rsync account are high risk.
+
+```json
+{ "enabled": true, "rsync_account": false }
+```
+
+```console
+dsmctl control-panel file-services rsync plan --nas office --file rsync.json --output rsync.plan.json
+dsmctl control-panel file-services rsync apply --file rsync.plan.json --approve <hash-from-plan>
+```
+
+MCP exposes `get_rsync_service_capabilities`, `get_rsync_service_state`,
+`plan_rsync_service_change`, and `apply_rsync_service_plan`.
+
+## TFTP service
+
+The TFTP service (`SYNO.Core.TFTP`) is a separate module.
+
+```console
+dsmctl control-panel file-services tftp capabilities --nas office
+dsmctl control-panel file-services tftp state --nas office --json
+```
+
+The state carries the service switch, root folder, permission (`read_only` or
+`read_write`), transfer-logging switch, allowed-client IP range, and link
+timeout. The allowed-client IP range is reported **read-only** for now (its
+bounds interact with an "allow all" flag, so writing them is deferred). The set is a partial update, so only the fields in
+the patch are sent. Enabling TFTP requires a root folder, so a patch that enables
+the service without one (and with no current root) is rejected at plan time.
+Enabling TFTP (an unauthenticated service) and granting write permission (which
+lets unauthenticated clients upload) are high risk.
+
+```json
+{ "enabled": true, "root_path": "/volume1/tftp", "permission": "read_only", "timeout": 10 }
+```
+
+```console
+dsmctl control-panel file-services tftp plan --nas office --file tftp.json --output tftp.plan.json
+dsmctl control-panel file-services tftp apply --file tftp.plan.json --approve <hash-from-plan>
+```
+
+MCP exposes `get_tftp_service_capabilities`, `get_tftp_service_state`,
+`plan_tftp_service_change`, and `apply_tftp_service_plan`.
+
 ## Adding another module
 
 Add a dedicated type under `internal/domain/controlpanel`, an operation package
