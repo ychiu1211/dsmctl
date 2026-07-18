@@ -11,10 +11,10 @@
 // (SYNO.Core.Package.Setting.Volume) and the update channel are separate
 // follow-ups.
 //
-// Install and update are modeled as variant-less operations so capability
-// reporting and request validation can name them, but they have no backend in
-// this slice and always fail closed: they require the online catalog, download,
-// and installation APIs plus asynchronous job handling.
+// Install is backed by the online catalog (SYNO.Core.Package.Server) plus the
+// asynchronous download+install task (SYNO.Core.Package.Installation.install with
+// status polling); see catalog.go and install.go. Update (upgrade) is still
+// modeled as a variant-less operation and fails closed until its backend ships.
 package packagecenter
 
 import (
@@ -122,15 +122,15 @@ var uninstallOperation = compatibility.Operation[UninstallInput, MutationResult]
 	},
 }
 
-// installOperation and updateOperation are modeled but have no variants, so they
-// always report unsupported and fail closed.
-var installOperation = compatibility.Operation[Input, MutationResult]{Name: InstallCapabilityName}
+// updateOperation is modeled but has no variant yet (upgrade is a follow-up), so
+// it reports unsupported and fails closed. Install is backed by the real online
+// download operation defined in install.go.
 var updateOperation = compatibility.Operation[Input, MutationResult]{Name: UpdateCapabilityName}
 
 // APINames lists every DSM API this package may use, so the facade can discover
 // them in one call before selecting variants.
 func APINames() []string {
-	return []string{InventoryAPIName, SettingAPIName, ControlAPIName, UninstallAPIName}
+	return []string{InventoryAPIName, SettingAPIName, ControlAPIName, UninstallAPIName, ServerAPIName, InstallationAPIName}
 }
 
 func SelectInventory(target compatibility.Target) (compatibility.Selection, error) {
@@ -159,7 +159,7 @@ func SelectUninstall(target compatibility.Target) (compatibility.Selection, erro
 }
 
 func SelectInstall(target compatibility.Target) (compatibility.Selection, error) {
-	_, selection, err := installOperation.Select(target)
+	_, selection, err := downloadOperation.Select(target)
 	return selection, err
 }
 

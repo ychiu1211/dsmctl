@@ -83,8 +83,7 @@ type Settings struct {
 }
 
 // Capabilities reports which Package Center operations dsmctl currently exposes
-// for the selected DSM backend. Install and Update are always false in this
-// slice.
+// for the selected DSM backend. Update is false until its upgrade backend ships.
 type Capabilities struct {
 	Module        string `json:"module" jsonschema:"Stable module name: package-center"`
 	InventoryRead bool   `json:"inventory_read" jsonschema:"Whether installed-package inventory can be read"`
@@ -93,8 +92,30 @@ type Capabilities struct {
 	Start         bool   `json:"start" jsonschema:"Whether guarded package start is available"`
 	Stop          bool   `json:"stop" jsonschema:"Whether guarded package stop is available"`
 	Uninstall     bool   `json:"uninstall" jsonschema:"Whether guarded package uninstall is available"`
-	Install       bool   `json:"install" jsonschema:"Whether guarded package install is available; deferred, currently always false"`
+	Install       bool   `json:"install" jsonschema:"Whether guarded online package install is available"`
 	Update        bool   `json:"update" jsonschema:"Whether guarded package update is available; deferred, currently always false"`
+}
+
+// AvailablePackage is one package offered by the configured online package
+// server (Synology's repository), with the metadata needed to plan an install or
+// update. Download fields are what DSM's guarded download+install task consumes.
+type AvailablePackage struct {
+	ID              string `json:"id" jsonschema:"Stable DSM package identifier"`
+	Name            string `json:"name,omitempty" jsonschema:"Human-readable package name"`
+	Version         string `json:"version,omitempty" jsonschema:"Offered package version"`
+	Beta            bool   `json:"beta,omitempty" jsonschema:"Whether the offered build is a beta"`
+	Size            int64  `json:"size,omitempty" jsonschema:"Download size in bytes when reported"`
+	DownloadLink    string `json:"download_link,omitempty" jsonschema:"Package download URL used by the guarded install"`
+	Checksum        string `json:"checksum,omitempty" jsonschema:"Package checksum (md5) when reported"`
+	QuickInstall    bool   `json:"quick_install" jsonschema:"Whether the package supports quick install (no configuration wizard)"`
+	Installed       bool   `json:"installed" jsonschema:"Whether this package is already installed"`
+	UpdateAvailable bool   `json:"update_available" jsonschema:"Whether an installed package has a newer offered version"`
+}
+
+// Catalog is a point-in-time view of packages offered by the online package
+// server.
+type Catalog struct {
+	Packages []AvailablePackage `json:"packages" jsonschema:"Packages offered by the online package server"`
 }
 
 // ChangeRequest is the stable Package Center intent shared by CLI and MCP. It

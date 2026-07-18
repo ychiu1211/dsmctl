@@ -24,6 +24,14 @@ func (client *fakePackageClient) PackageSettings(context.Context) (synology.Pack
 	return client.settings, nil
 }
 
+func (client *fakePackageClient) PackageCatalog(context.Context) (synology.PackageCatalog, error) {
+	return synology.PackageCatalog{}, nil
+}
+
+func (client *fakePackageClient) PackageInstall(_ context.Context, input synology.PackageInstallInput) (synology.PackageInstallResult, error) {
+	return synology.PackageInstallResult{PackageID: input.Name, Installed: true}, nil
+}
+
 func (client *fakePackageClient) PackageCapabilities(context.Context) (synology.PackageCapabilities, synology.CompatibilityReport, error) {
 	return client.caps, synology.CompatibilityReport{}, nil
 }

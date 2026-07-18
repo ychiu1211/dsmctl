@@ -58,9 +58,156 @@ type PackageApplyResult struct {
 type packageClient interface {
 	PackageState(context.Context) (synology.PackageState, error)
 	PackageSettings(context.Context) (synology.PackageSettings, error)
+	PackageCatalog(context.Context) (synology.PackageCatalog, error)
+	PackageInstall(context.Context, synology.PackageInstallInput) (synology.PackageInstallResult, error)
 	PackageCapabilities(context.Context) (synology.PackageCapabilities, synology.CompatibilityReport, error)
 	ApplyPackageSettingsChange(context.Context, synology.PackageSettings) (synology.PackageMutationResult, error)
 	ApplyPackageLifecycleChange(context.Context, synology.PackageLifecycleChange) (synology.PackageMutationResult, error)
+}
+
+// PackageCatalogResult is the online-catalog read result.
+type PackageCatalogResult struct {
+	NAS     string                 `json:"nas" jsonschema:"NAS profile used for the request"`
+	Catalog synology.PackageCatalog `json:"catalog" jsonschema:"Packages offered by the online package server"`
+}
+
+func (s *Service) GetPackageCatalog(ctx context.Context, requestedNAS string) (PackageCatalogResult, error) {
+	name, client, err := s.packageClient(ctx, requestedNAS)
+	if err != nil {
+		return PackageCatalogResult{}, err
+	}
+	catalog, err := client.PackageCatalog(ctx)
+	if err != nil {
+		return PackageCatalogResult{}, authenticationError(name, err)
+	}
+	return PackageCatalogResult{NAS: name, Catalog: catalog}, nil
+}
+
+const packageInstallAPIVersion = "dsmctl.io/v1alpha1"
+
+// PackageInstallPlan is a hash-bound install intent resolved against the online
+// catalog and the current inventory.
+type PackageInstallPlan struct {
+	APIVersion      string `json:"api_version" jsonschema:"Plan schema version"`
+	NAS             string `json:"nas" jsonschema:"NAS profile selected during planning"`
+	PackageID       string `json:"package_id" jsonschema:"Package identifier to install"`
+	Name            string `json:"name" jsonschema:"Human-readable package name"`
+	Version         string `json:"version" jsonschema:"Offered version to install"`
+	Size            int64  `json:"size" jsonschema:"Download size in bytes"`
+	DownloadLink    string `json:"download_link" jsonschema:"Resolved download URL"`
+	Checksum        string `json:"checksum" jsonschema:"Resolved package checksum (md5)"`
+	Beta            bool   `json:"beta" jsonschema:"Whether the offered build is a beta"`
+	QuickInstall    bool   `json:"quick_install" jsonschema:"Whether quick install (no wizard) is used"`
+	VolumePath      string `json:"volume_path" jsonschema:"Target install volume path"`
+	RunAfterInstall bool   `json:"run_after_install" jsonschema:"Whether the package starts after install"`
+	Risk            string `json:"risk" jsonschema:"Plan risk level"`
+	Warnings        []string `json:"warnings" jsonschema:"Install warnings"`
+	Summary         []string `json:"summary" jsonschema:"Human-readable operations"`
+	Hash            string `json:"hash" jsonschema:"SHA-256 approval hash covering the resolved install intent"`
+}
+
+// PackageInstallApplyResult reports the outcome of a completed install.
+type PackageInstallApplyResult struct {
+	NAS      string                          `json:"nas" jsonschema:"NAS profile used for apply"`
+	PlanHash string                          `json:"plan_hash" jsonschema:"Approved plan hash"`
+	Result   synology.PackageInstallResult   `json:"result" jsonschema:"Install outcome confirmed by inventory"`
+}
+
+func (s *Service) PlanPackageInstall(ctx context.Context, requestedNAS, packageID, volumePath string, runAfterInstall, quickInstall bool) (PackageInstallPlan, error) {
+	if strings.TrimSpace(packageID) == "" {
+		return PackageInstallPlan{}, fmt.Errorf("install requires a package id")
+	}
+	if strings.TrimSpace(volumePath) == "" {
+		return PackageInstallPlan{}, fmt.Errorf("install requires a target volume path")
+	}
+	name, client, err := s.packageClient(ctx, requestedNAS)
+	if err != nil {
+		return PackageInstallPlan{}, err
+	}
+	return planPackageInstallWithClient(ctx, name, client, packageID, volumePath, runAfterInstall, quickInstall)
+}
+
+func planPackageInstallWithClient(ctx context.Context, nas string, client packageClient, packageID, volumePath string, runAfterInstall, quickInstall bool) (PackageInstallPlan, error) {
+	state, err := client.PackageState(ctx)
+	if err != nil {
+		return PackageInstallPlan{}, authenticationError(nas, err)
+	}
+	for _, pkg := range state.Packages {
+		if pkg.ID == packageID {
+			return PackageInstallPlan{}, fmt.Errorf("package %q is already installed", packageID)
+		}
+	}
+	catalog, err := client.PackageCatalog(ctx)
+	if err != nil {
+		return PackageInstallPlan{}, authenticationError(nas, err)
+	}
+	var offered *packagecenter.AvailablePackage
+	for i := range catalog.Packages {
+		if catalog.Packages[i].ID == packageID {
+			offered = &catalog.Packages[i]
+			break
+		}
+	}
+	if offered == nil {
+		return PackageInstallPlan{}, fmt.Errorf("package %q is not offered by the online package server", packageID)
+	}
+	if offered.DownloadLink == "" {
+		return PackageInstallPlan{}, fmt.Errorf("package %q has no download link in the catalog", packageID)
+	}
+	plan := PackageInstallPlan{
+		APIVersion: packageInstallAPIVersion, NAS: nas, PackageID: offered.ID, Name: offered.Name,
+		Version: offered.Version, Size: offered.Size, DownloadLink: offered.DownloadLink, Checksum: offered.Checksum,
+		Beta: offered.Beta, QuickInstall: offered.QuickInstall || quickInstall, VolumePath: volumePath, RunAfterInstall: runAfterInstall,
+		Risk: "high",
+		Warnings: []string{
+			"installing downloads and runs third-party software on the NAS",
+		},
+		Summary: []string{fmt.Sprintf("install %s %s to %s", offered.ID, offered.Version, volumePath)},
+	}
+	if offered.Beta {
+		plan.Warnings = append(plan.Warnings, "the offered build is a beta version")
+	}
+	plan.Hash, err = packageInstallPlanHash(plan)
+	if err != nil {
+		return PackageInstallPlan{}, err
+	}
+	return plan, nil
+}
+
+func (s *Service) ApplyPackageInstallPlan(ctx context.Context, plan PackageInstallPlan, approvalHash string) (PackageInstallApplyResult, error) {
+	if strings.TrimSpace(approvalHash) == "" || approvalHash != plan.Hash {
+		return PackageInstallApplyResult{}, fmt.Errorf("approval hash does not match the install plan")
+	}
+	if plan.APIVersion != packageInstallAPIVersion || strings.TrimSpace(plan.NAS) == "" || strings.TrimSpace(plan.PackageID) == "" {
+		return PackageInstallApplyResult{}, fmt.Errorf("invalid install plan metadata")
+	}
+	expectedHash, err := packageInstallPlanHash(plan)
+	if err != nil {
+		return PackageInstallApplyResult{}, err
+	}
+	if expectedHash != plan.Hash {
+		return PackageInstallApplyResult{}, fmt.Errorf("install plan contents were modified after planning")
+	}
+	name, client, err := s.packageClient(ctx, plan.NAS)
+	if err != nil {
+		return PackageInstallApplyResult{}, err
+	}
+	if name != plan.NAS {
+		return PackageInstallApplyResult{}, fmt.Errorf("install plan NAS %q resolved to different profile %q", plan.NAS, name)
+	}
+	result, err := client.PackageInstall(ctx, synology.PackageInstallInput{
+		Name: plan.PackageID, URL: plan.DownloadLink, Checksum: plan.Checksum, Filesize: plan.Size,
+		Beta: plan.Beta, QuickInstall: plan.QuickInstall, VolumePath: plan.VolumePath, RunAfterInstall: plan.RunAfterInstall,
+	})
+	if err != nil {
+		return PackageInstallApplyResult{}, authenticationError(plan.NAS, err)
+	}
+	return PackageInstallApplyResult{NAS: plan.NAS, PlanHash: plan.Hash, Result: result}, nil
+}
+
+func packageInstallPlanHash(plan PackageInstallPlan) (string, error) {
+	plan.Hash = ""
+	return hashJSON(plan)
 }
 
 func (s *Service) GetPackageState(ctx context.Context, requestedNAS string) (PackageStateResult, error) {

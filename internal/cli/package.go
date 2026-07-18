@@ -19,10 +19,85 @@ func newPackageCommand(opts *options) *cobra.Command {
 	command.AddCommand(
 		newPackageCapabilitiesCommand(opts),
 		newPackageInventoryCommand(opts),
+		newPackageAvailableCommand(opts),
+		newPackageInstallCommand(opts),
 		newPackageSettingsCommand(opts),
 		newPackagePlanCommand(opts),
 		newPackageApplyCommand(opts),
 	)
+	return command
+}
+
+func newPackageInstallCommand(opts *options) *cobra.Command {
+	var volume, approvalHash string
+	var start, quick bool
+	command := &cobra.Command{
+		Use:   "install <package-id>",
+		Short: "Install a package from the online server (plan by default; --approve to run)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			service, err := loadService(opts.configPath)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			plan, err := service.PlanPackageInstall(cmd.Context(), opts.nas, args[0], volume, start, quick)
+			if err != nil {
+				return err
+			}
+			if approvalHash == "" {
+				// Plan only: show what would happen and the approval hash.
+				return encodeIndentedJSON(cmd.OutOrStdout(), plan)
+			}
+			result, err := service.ApplyPackageInstallPlan(cmd.Context(), plan, approvalHash)
+			if err != nil {
+				return err
+			}
+			return encodeIndentedJSON(cmd.OutOrStdout(), result)
+		},
+	}
+	command.Flags().StringVar(&volume, "volume", "", "target install volume path (e.g. /volume1)")
+	command.Flags().BoolVar(&start, "start", true, "start the package after install")
+	command.Flags().BoolVar(&quick, "quick", true, "quick install with defaults (no configuration wizard)")
+	command.Flags().StringVar(&approvalHash, "approve", "", "exact SHA-256 hash printed by the install plan to execute the install")
+	_ = command.MarkFlagRequired("volume")
+	return command
+}
+
+func newPackageAvailableCommand(opts *options) *cobra.Command {
+	var jsonOutput bool
+	command := &cobra.Command{
+		Use:   "available",
+		Short: "List packages offered by the online package server (Synology repository)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			service, err := loadService(opts.configPath)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.GetPackageCatalog(cmd.Context(), opts.nas)
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				return encodeIndentedJSON(cmd.OutOrStdout(), result)
+			}
+			writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+			fmt.Fprintf(writer, "NAS:\t%s\n", result.NAS)
+			fmt.Fprintf(writer, "Offered packages:\t%d\n\n", len(result.Catalog.Packages))
+			fmt.Fprintln(writer, "ID\tVERSION\tBETA\tSIZE\tLINK")
+			for _, pkg := range result.Catalog.Packages {
+				link := pkg.DownloadLink
+				if len(link) > 48 {
+					link = link[:45] + "..."
+				}
+				fmt.Fprintf(writer, "%s\t%s\t%s\t%d\t%s\n", pkg.ID, valueOrDash(pkg.Version), yesNo(pkg.Beta), pkg.Size, valueOrDash(link))
+			}
+			return writer.Flush()
+		},
+	}
+	command.Flags().BoolVar(&jsonOutput, "json", false, "output structured JSON")
 	return command
 }
 
