@@ -73,11 +73,15 @@ dsmctl control-panel file-services nfs state --nas office --json
 ```
 
 The normalized SMB state contains the service switch, workgroup, minimum and
-maximum SMB protocol, transport-encryption policy, and server-signing policy.
-`disabled_for_smb1` is intentionally distinct from fully disabled signing: it
-is the meaning of DSM's value `0`. The NFS state contains the service switch,
-configured maximum protocol, protocols advertised by DSM, and the NFSv4 domain
-when the advanced read API is available.
+maximum SMB protocol, transport-encryption policy, and server-signing policy,
+plus the advanced "Others" toggles opportunistic locking, SMB2 leases, durable
+handles, and local master browser. `disabled_for_smb1` is intentionally distinct
+from fully disabled signing: it is the meaning of DSM's value `0`. The advanced
+toggles are patch-only booleans applied through the same plan/apply flow (DSM's
+SMB set is a partial update, so only the changed fields are sent, alongside the
+service-enabled flag). The NFS state contains the service switch, configured
+maximum protocol, protocols advertised by DSM, and the NFSv4 domain when the
+advanced read API is available.
 
 Base settings use the same hash-bound plan/apply flow for CLI and MCP. A request
 owns only its non-null fields; the plan records and hashes the complete current
@@ -120,11 +124,211 @@ MCP exposes `get_file_service_capabilities`, `get_smb_state`, `get_nfs_state`,
 application contract.
 
 DSM's NFS advanced-setting form submits its complete port, packet-size, UNIX
-permission, service-state, and domain snapshot. The current domain model reads
-`nfsv4_domain` but deliberately reports `set_advanced: false`; domain writes
-remain fail-closed until all required preservation fields have a stable typed
-contract. Per-shared-folder NFS host/export rules are also a separate future
-share module.
+permission, service-state, and domain snapshot in one
+`SYNO.Core.FileServ.NFS.AdvancedSetting` set. The NFSv4 domain is writable
+through the same file-service plan/apply flow: apply reads the whole advanced
+snapshot, overrides only the domain, and resubmits the full snapshot so no
+other advanced field is reset. `set_advanced` is `true` only when the advanced
+set backend is selected, and a domain change is still planned separately from
+the NFS base settings.
+
+```json
+{
+  "protocol": "nfs",
+  "nfs": { "nfsv4_domain": "lab.example" }
+}
+```
+
+The remaining advanced fields (read/write packet size, custom NFS ports, and the
+UNIX-permission switch) are modeled only to preserve them across a domain write;
+exposing them as mutations is deferred (WI-025) until their DSM-permitted value
+sets are confirmed.
+
+### Per-shared-folder NFS export rules
+
+Each shared folder owns an independent NFS export rule set, exposed separately
+from the global NFS switch because it is a different DSM API
+(`SYNO.Core.FileServ.NFS.SharePrivilege`) keyed by shared-folder name:
+
+```console
+dsmctl control-panel file-services nfs export capabilities --nas office
+dsmctl control-panel file-services nfs export list --nas office --share backup --json
+```
+
+Each normalized rule has a client pattern (hostname, IP, IP/mask, or a wildcard
+such as `*`), a privilege (`read_write` or `read_only`), a squash mapping
+(`no_mapping`, `map_root_to_admin`, `map_root_to_guest`, `map_all_to_admin`,
+`map_all_to_guest`), a security flavor (`sys`, `kerberos`,
+`kerberos_integrity`, `kerberos_privacy`), and the `async`,
+`allow_nonprivileged_ports`, and `allow_subfolder_access` switches.
+
+Unlike the patch-only base settings, an export change owns the **complete
+desired rule set** for one shared folder: the `rules` array fully replaces the
+folder's existing rules, and an empty array removes every rule. The plan records
+and hashes the complete observed rule set; apply rejects a changed set, submits
+the whole desired set (existing clients as edits, new clients as creations), and
+re-reads to verify. Removing a rule, granting read-write to a wildcard client,
+or broadening a client from read-only to read-write is high risk.
+
+```json
+{
+  "share": "backup",
+  "rules": [
+    {
+      "client": "10.0.0.0/24",
+      "privilege": "read_write",
+      "squash": "map_all_to_admin",
+      "security": "sys",
+      "async": true,
+      "allow_nonprivileged_ports": false,
+      "allow_subfolder_access": true
+    }
+  ]
+}
+```
+
+```console
+dsmctl control-panel file-services nfs export plan --nas office --file export.json --output export.plan.json
+dsmctl control-panel file-services nfs export apply --file export.plan.json --approve <hash-from-plan>
+```
+
+MCP exposes `get_nfs_export_capabilities`, `get_nfs_export_state`,
+`plan_nfs_export_change`, and `apply_nfs_export_plan` over the identical
+application contract.
+
+## File Services discovery
+
+The File Services "Advanced" discovery toggles are a separate module because
+they are separate DSM APIs from SMB and NFS: Time Machine advertising lives on
+`SYNO.Core.FileServ.ServiceDiscovery` (over SMB and AFP) and WS-Discovery on
+`SYNO.Core.FileServ.ServiceDiscovery.WSTransfer`. The two are selected
+independently, so a backend can expose Time Machine advertising while
+WS-Discovery is absent (reported as `(not supported)` and `null`).
+
+```console
+dsmctl control-panel file-services discovery capabilities --nas office
+dsmctl control-panel file-services discovery state --nas office --json
+```
+
+Changes are patch-only through the same hash-bound plan/apply flow: Time Machine
+fields are merged into a freshly read pair and submitted as one
+`ServiceDiscovery` set, and WS-Discovery is submitted to its own backend.
+Disabling an advertisement (which stops client discovery) and enabling
+WS-Discovery (which advertises the NAS on the local network) are high risk;
+enabling Time Machine advertising is medium.
+
+```json
+{ "smb_time_machine": true, "ws_discovery": false }
+```
+
+```console
+dsmctl control-panel file-services discovery plan --nas office --file discovery.json --output discovery.plan.json
+dsmctl control-panel file-services discovery apply --file discovery.plan.json --approve <hash-from-plan>
+```
+
+MCP exposes `get_service_discovery_capabilities`, `get_service_discovery_state`,
+`plan_service_discovery_change`, and `apply_service_discovery_plan`.
+
+## FTP, FTPS, and SFTP
+
+DSM groups three file-transfer protocols on one "FTP" page, but they are two
+independent DSM APIs and two compatibility boundaries: plain FTP and FTP over
+explicit TLS (FTPS) share `SYNO.Core.FileServ.FTP`, while SFTP (file transfer
+over SSH) is `SYNO.Core.FileServ.FTP.SFTP`. SFTP is selected independently, so a
+backend can expose the FTP switches while SFTP is absent (reported as
+`(not supported)` and a nil `sftp`).
+
+```console
+dsmctl control-panel file-services ftp capabilities --nas office
+dsmctl control-panel file-services ftp state --nas office --json
+```
+
+The normalized state carries the plain-FTP switch, the FTPS switch, and — when
+the SFTP backend is available — the SFTP switch and its listening port. Plain FTP
+and FTPS are independent: DSM can serve unencrypted FTP, FTPS, both, or neither.
+
+Changes are patch-only through the same hash-bound plan/apply flow. DSM's FTP set
+requires **both** the plain and FTPS switches on every write, so an FTP patch is
+merged into a freshly read pair before submitting; the SFTP set requires the
+enable switch and always resends the port to preserve it. The plan records and
+hashes the complete observed state; apply rejects a changed state, submits the
+merged values, and re-reads to verify. Enabling plain FTP (which transmits
+credentials without encryption) and disabling a service already in use (which
+disconnects clients) are high risk; enabling FTPS or changing the SFTP port is
+medium.
+
+```json
+{ "ftp": { "ftps": true }, "sftp": { "enabled": true, "port": 22 } }
+```
+
+```console
+dsmctl control-panel file-services ftp plan --nas office --file ftp.json --output ftp.plan.json
+dsmctl control-panel file-services ftp apply --file ftp.plan.json --approve <hash-from-plan>
+```
+
+MCP exposes `get_ftp_service_capabilities`, `get_ftp_service_state`,
+`plan_ftp_service_change`, and `apply_ftp_service_plan`.
+
+## rsync service
+
+DSM's "rsync" File Services tab enables the rsync network-backup service (used
+by remote rsync backups) through `SYNO.Backup.Service.NetworkBackup`.
+
+```console
+dsmctl control-panel file-services rsync capabilities --nas office
+dsmctl control-panel file-services rsync state --nas office --json
+```
+
+The state carries the service switch, the dedicated-rsync-account switch, and the
+rsync-over-SSH port. The SSH port is reported **read-only** because DSM shares it
+with the SSH daemon; changing it here would move the SSH service, so it is out of
+scope for writes. Changes are patch-only through the same hash-bound plan/apply
+flow: apply reads the current pair, merges the patch, and submits the service
+switch (the write requires it) alongside the account switch. Enabling the service
+(which exposes an rsync endpoint), disabling it (which stops incoming backups),
+and enabling the rsync account are high risk.
+
+```json
+{ "enabled": true, "rsync_account": false }
+```
+
+```console
+dsmctl control-panel file-services rsync plan --nas office --file rsync.json --output rsync.plan.json
+dsmctl control-panel file-services rsync apply --file rsync.plan.json --approve <hash-from-plan>
+```
+
+MCP exposes `get_rsync_service_capabilities`, `get_rsync_service_state`,
+`plan_rsync_service_change`, and `apply_rsync_service_plan`.
+
+## TFTP service
+
+The TFTP service (`SYNO.Core.TFTP`) is a separate module.
+
+```console
+dsmctl control-panel file-services tftp capabilities --nas office
+dsmctl control-panel file-services tftp state --nas office --json
+```
+
+The state carries the service switch, root folder, permission (`read_only` or
+`read_write`), transfer-logging switch, allowed-client IP range, and link
+timeout. The allowed-client IP range is reported **read-only** for now (its
+bounds interact with an "allow all" flag, so writing them is deferred). The set is a partial update, so only the fields in
+the patch are sent. Enabling TFTP requires a root folder, so a patch that enables
+the service without one (and with no current root) is rejected at plan time.
+Enabling TFTP (an unauthenticated service) and granting write permission (which
+lets unauthenticated clients upload) are high risk.
+
+```json
+{ "enabled": true, "root_path": "/volume1/tftp", "permission": "read_only", "timeout": 10 }
+```
+
+```console
+dsmctl control-panel file-services tftp plan --nas office --file tftp.json --output tftp.plan.json
+dsmctl control-panel file-services tftp apply --file tftp.plan.json --approve <hash-from-plan>
+```
+
+MCP exposes `get_tftp_service_capabilities`, `get_tftp_service_state`,
+`plan_tftp_service_change`, and `apply_tftp_service_plan`.
 
 ## Adding another module
 

@@ -280,7 +280,11 @@ func (m *Manager) sessionClient(ctx context.Context, name string, profile config
 	if session.SID == "" {
 		return nil, false, nil
 	}
-	client, err := m.seededClient(name, profile, session)
+	// allowPasswordFallback lets the seeded client recover on its own if DSM has
+	// evicted the session and refuses a Noise resume: it lazily resolves the
+	// password and logs in again instead of forcing an interactive sign-in.
+	// Reusing a live session never resolves the password.
+	client, err := m.seededClient(name, profile, session, true)
 	if err != nil {
 		return nil, false, err
 	}
@@ -297,15 +301,37 @@ func (m *Manager) sessionClient(ctx context.Context, name string, profile config
 // usable after the session it started with expires — and otherwise performs
 // the browserless Noise resume with the stored renewal keys, persisting the
 // refreshed session for other processes to pick up the same way.
-func (m *Manager) seededClient(name string, profile config.Profile, session credentials.SessionCredential) (*synology.Client, error) {
+func (m *Manager) seededClient(name string, profile config.Profile, session credentials.SessionCredential, allowPasswordFallback bool) (*synology.Client, error) {
 	current := session
+	var passwordFunc func(ctx context.Context) (string, error)
+	if allowPasswordFallback {
+		passwordFunc = func(ctx context.Context) (string, error) {
+			return m.credentials.Password(ctx, name, profile)
+		}
+	}
 	client, err := synology.NewClient(synology.Options{
 		BaseURL:                profile.URL,
 		Username:               profile.Username,
+		PasswordFunc:           passwordFunc,
 		SessionID:              session.SID,
 		SynoToken:              session.SynoToken,
 		HTTPClient:             httpClient(profile),
 		PreserveSessionOnClose: true,
+		// SaveSession persists a session recovered by the password fallback so
+		// later processes reuse its session ID instead of logging in again. It
+		// keeps the existing resume material and account metadata and updates
+		// only the live tokens.
+		SaveSession: func(ctx context.Context, sid, synoToken string) error {
+			stored, err := m.sessions.Session(ctx, name)
+			if err != nil || stored.SID == "" {
+				stored = current
+			}
+			stored.SID = sid
+			stored.SynoToken = synoToken
+			stored.LastVerified = time.Now()
+			current = stored
+			return m.sessions.SaveSession(ctx, name, stored)
+		},
 		Resume: func(ctx context.Context) (string, string, error) {
 			if latest, err := m.sessions.Session(ctx, name); err == nil && latest.SID != "" && latest.SID != current.SID {
 				current = latest
@@ -373,7 +399,9 @@ func (m *Manager) RevokeStoredSession(ctx context.Context, name string) (bool, e
 	if session.SID == "" {
 		return false, nil
 	}
-	client, err := m.seededClient(name, profile, session)
+	// No password fallback for revocation: signing out must not silently start a
+	// new session.
+	client, err := m.seededClient(name, profile, session, false)
 	if err != nil {
 		return false, err
 	}

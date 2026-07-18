@@ -87,6 +87,26 @@ type Log struct {
 	Entries []LogEntry `json:"entries" jsonschema:"Drive log entries for the requested page"`
 }
 
+// ServerConfig is the normalized Drive server database configuration from the
+// Admin Console (SYNO.SynologyDrive.Config). VolumePath is read-only: DSM changes
+// it by physically moving the Drive database between volumes, which is out of
+// scope for a guarded settings write.
+type ServerConfig struct {
+	VolumePath        string          `json:"volume_path" jsonschema:"Volume holding the Drive database (read-only)"`
+	VMTouchEnabled    bool            `json:"vmtouch_enabled" jsonschema:"Whether the Drive database is pinned in memory (vmtouch)"`
+	VMTouchReserveMem int             `json:"vmtouch_reserve_mem" jsonschema:"Memory reserved for the pinned database, in MB"`
+	Package           PackageEvidence `json:"package" jsonschema:"Installed SynologyDrive package evidence observed with this read"`
+}
+
+// ServerConfigChange patches the Drive server database configuration. The
+// vmtouch enable flag and its reserved memory are a coupled pair; the facade
+// submits both, merged from the current configuration. VolumePath is not
+// writable.
+type ServerConfigChange struct {
+	VMTouchEnabled    *bool `json:"vmtouch_enabled,omitempty" jsonschema:"Enable or disable pinning the Drive database in memory"`
+	VMTouchReserveMem *int  `json:"vmtouch_reserve_mem,omitempty" jsonschema:"Memory reserved for the pinned database, in MB"`
+}
+
 // Capabilities reports which Drive Admin operations dsmctl currently exposes
 // for the selected backends, plus the package evidence the selection used.
 // TeamFoldersSet is modeled but fails closed in this slice.
@@ -98,4 +118,6 @@ type Capabilities struct {
 	TeamFoldersRead bool            `json:"team_folders_read" jsonschema:"Whether team folders can be listed"`
 	LogRead         bool            `json:"log_read" jsonschema:"Whether Drive server logs can be read"`
 	TeamFoldersSet  bool            `json:"team_folders_set" jsonschema:"Whether guarded team-folder changes are available; deferred, currently always false"`
+	ConfigRead      bool            `json:"config_read" jsonschema:"Whether the Drive server database configuration can be read"`
+	ConfigSet       bool            `json:"config_set" jsonschema:"Whether guarded Drive server database configuration changes are available"`
 }

@@ -1,5 +1,5 @@
 ---
-id: WI-024
+id: WI-032
 title: Replace platform administration with a portable local administrator
 status: done
 priority: P0
@@ -20,7 +20,7 @@ touches:
   - spec/gateway-deployment.md
 ---
 
-# WI-024 - Replace platform administration with a portable local administrator
+# WI-032 - Replace platform administration with a portable local administrator
 
 ## Outcome
 

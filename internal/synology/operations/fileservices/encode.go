@@ -43,6 +43,18 @@ func encodeSMBChange(change controlpanel.SMBChange) (map[string]any, error) {
 		}
 		parameters["enable_server_signing"] = value
 	}
+	if change.OpportunisticLocking != nil {
+		parameters["enable_op_lock"] = *change.OpportunisticLocking
+	}
+	if change.SMB2Leases != nil {
+		parameters["enable_smb2_leases"] = *change.SMB2Leases
+	}
+	if change.DurableHandles != nil {
+		parameters["enable_durable_handles"] = *change.DurableHandles
+	}
+	if change.LocalMasterBrowser != nil {
+		parameters["enable_local_master_browser"] = *change.LocalMasterBrowser
+	}
 	if len(parameters) == 0 {
 		return nil, fmt.Errorf("SMB change has no fields")
 	}
@@ -79,6 +91,28 @@ func encodeNFSBaseChange(change controlpanel.NFSChange) (map[string]any, error) 
 		return nil, fmt.Errorf("NFS base change has no fields")
 	}
 	return parameters, nil
+}
+
+// encodeNFSAdvancedSnapshot resubmits the advanced settable fields DSM returned,
+// verbatim (preserving their exact JSON types), with only the NFSv4 domain
+// overridden. Fields absent from the get response — notably enable_nfs — are not
+// sent, so an advanced write never disturbs the base NFS service state.
+func encodeNFSAdvancedSnapshot(snapshot NFSAdvancedSnapshot) map[string]any {
+	return map[string]any{
+		// enable_nfs is required by the set and is the current base service
+		// state, so the write never toggles the NFS service. The booleans are
+		// sent as booleans even though the get response returns
+		// custom_port_enable as an integer, because the set validation requires
+		// boolean types.
+		"enable_nfs":         snapshot.EnableNFS,
+		"custom_port_enable": snapshot.CustomPortEnable,
+		"read_size":          snapshot.ReadSize,
+		"write_size":         snapshot.WriteSize,
+		"unix_pri_enable":    snapshot.UnixPermissions,
+		"statd_port":         snapshot.StatdPort,
+		"nlm_port":           snapshot.NLMPort,
+		"nfs_v4_domain":      snapshot.Domain,
+	}
 }
 
 func encodeSMBSigningPolicy(value controlpanel.SMBSigningPolicy) (int, error) {

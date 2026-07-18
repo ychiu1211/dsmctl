@@ -19,10 +19,87 @@ func newPackageCommand(opts *options) *cobra.Command {
 	command.AddCommand(
 		newPackageCapabilitiesCommand(opts),
 		newPackageInventoryCommand(opts),
+		newPackageAvailableCommand(opts),
+		newPackageInstallCommand(opts),
 		newPackageSettingsCommand(opts),
 		newPackagePlanCommand(opts),
 		newPackageApplyCommand(opts),
 	)
+	return command
+}
+
+func newPackageInstallCommand(opts *options) *cobra.Command {
+	var volume, approvalHash string
+	var start, quick bool
+	command := &cobra.Command{
+		Use:   "install <package-id>",
+		Short: "Install a package from the online server (plan by default; --approve to run)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			service, err := loadService(opts.configPath)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			plan, err := service.PlanPackageInstall(cmd.Context(), opts.nas, args[0], volume, start, quick)
+			if err != nil {
+				return err
+			}
+			if approvalHash == "" {
+				// Plan only: show what would happen and the approval hash.
+				return encodeIndentedJSON(cmd.OutOrStdout(), plan)
+			}
+			result, err := service.ApplyPackageInstallPlan(cmd.Context(), plan, approvalHash)
+			if err != nil {
+				return err
+			}
+			return encodeIndentedJSON(cmd.OutOrStdout(), result)
+		},
+	}
+	command.Flags().StringVar(&volume, "volume", "", "target install volume path (e.g. /volume1)")
+	command.Flags().BoolVar(&start, "start", true, "start the package after install")
+	command.Flags().BoolVar(&quick, "quick", true, "quick install with defaults (no configuration wizard)")
+	command.Flags().StringVar(&approvalHash, "approve", "", "exact SHA-256 hash printed by the install plan to execute the install")
+	_ = command.MarkFlagRequired("volume")
+	return command
+}
+
+func newPackageAvailableCommand(opts *options) *cobra.Command {
+	var jsonOutput, updatesOnly bool
+	command := &cobra.Command{
+		Use:   "available",
+		Short: "List packages offered by the online package server (Synology repository)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			service, err := loadService(opts.configPath)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.GetPackageCatalog(cmd.Context(), opts.nas)
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				return encodeIndentedJSON(cmd.OutOrStdout(), result)
+			}
+			writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+			fmt.Fprintf(writer, "NAS:\t%s\n", result.NAS)
+			shown := 0
+			fmt.Fprintln(writer, "\nID\tVERSION\tINSTALLED\tUPDATE\tBETA\tSIZE")
+			for _, pkg := range result.Catalog.Packages {
+				if updatesOnly && !pkg.UpdateAvailable {
+					continue
+				}
+				fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%d\n", pkg.ID, valueOrDash(pkg.Version), yesNo(pkg.Installed), yesNo(pkg.UpdateAvailable), yesNo(pkg.Beta), pkg.Size)
+				shown++
+			}
+			fmt.Fprintf(writer, "\nShown:\t%d of %d offered\n", shown, len(result.Catalog.Packages))
+			return writer.Flush()
+		},
+	}
+	command.Flags().BoolVar(&jsonOutput, "json", false, "output structured JSON")
+	command.Flags().BoolVar(&updatesOnly, "updates", false, "show only installed packages with an available update")
 	return command
 }
 

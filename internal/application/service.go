@@ -495,6 +495,12 @@ func (s *Service) GetResourceMonitorCapabilities(ctx context.Context, requestedN
 }
 
 func authenticationError(name string, err error) error {
+	if synology.IsSessionExpired(err) {
+		// Re-wrap with the profile name so the CLI and MCP surface a clear,
+		// detectable "session ended for NAS X" result; the typed error is
+		// preserved in the chain for IsSessionExpired.
+		return &synology.SessionExpiredError{NAS: name, Cause: err}
+	}
 	if synology.IsOTPRequired(err) {
 		return fmt.Errorf("NAS %q requires a one-time password; run 'dsmctl auth login --nas %s' in an interactive terminal first: %w", name, name, err)
 	}

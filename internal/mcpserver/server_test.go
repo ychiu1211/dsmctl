@@ -62,8 +62,8 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools() error = %v", err)
 	}
-	if len(tools.Tools) != 49 {
-		t.Fatalf("ListTools() returned %d tools, want 49", len(tools.Tools))
+	if len(tools.Tools) != 76 {
+		t.Fatalf("ListTools() returned %d tools, want 76", len(tools.Tools))
 	}
 	for _, tool := range tools.Tools {
 		if scope, ok := ToolScope(tool.Name); !ok || scope == "" {
@@ -83,6 +83,18 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"get_file_service_capabilities":       false,
 		"get_smb_state":                       false,
 		"get_nfs_state":                       false,
+		"get_nfs_export_capabilities":         false,
+		"get_nfs_export_state":                false,
+		"get_service_discovery_capabilities":  false,
+		"get_service_discovery_state":         false,
+		"get_ftp_service_capabilities":        false,
+		"get_ftp_service_state":               false,
+		"get_rsync_service_capabilities":      false,
+		"get_rsync_service_state":             false,
+		"get_tftp_service_capabilities":       false,
+		"get_tftp_service_state":              false,
+		"get_photos_capabilities":             false,
+		"get_photos_settings":                 false,
 		"get_san_capabilities":                false,
 		"get_san_state":                       false,
 		"get_share_capabilities":              false,
@@ -95,6 +107,12 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"plan_share_change":                   false,
 		"plan_storage_change":                 false,
 		"plan_file_service_change":            false,
+		"plan_nfs_export_change":              false,
+		"plan_service_discovery_change":       false,
+		"plan_ftp_service_change":             false,
+		"plan_rsync_service_change":           false,
+		"plan_tftp_service_change":            false,
+		"plan_photos_change":                  false,
 		"get_package_capabilities":            false,
 		"get_package_state":                   false,
 		"get_package_settings":                false,
@@ -109,6 +127,8 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"get_drive_admin_connections":         false,
 		"get_drive_admin_team_folders":        false,
 		"get_drive_admin_logs":                false,
+		"get_drive_config":                    false,
+		"plan_drive_config_change":            false,
 	}
 	mutationTools := map[string]bool{
 		"apply_account_plan":            false,
@@ -117,6 +137,13 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"apply_share_plan":              false,
 		"apply_storage_plan":            false,
 		"apply_file_service_plan":       false,
+		"apply_nfs_export_plan":         false,
+		"apply_service_discovery_plan":  false,
+		"apply_ftp_service_plan":        false,
+		"apply_rsync_service_plan":      false,
+		"apply_tftp_service_plan":       false,
+		"apply_photos_plan":             false,
+		"apply_drive_config_plan":       false,
 		"apply_package_plan":            false,
 		"apply_resource_recording_plan": false,
 	}

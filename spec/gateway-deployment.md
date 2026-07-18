@@ -337,7 +337,7 @@ approved under the repository safety policy.
 3. WI-016 adds scoped remote authorization, out-of-band approval, and audit.
 4. WI-017 packages the completed gateway for generic Linux and Synology
    x86_64, including offline image preload and portal wiring.
-5. WI-024 replaces the pre-release bootstrap/platform-auth split with the same
+5. WI-032 replaces the pre-release bootstrap/platform-auth split with the same
    one-hour local-administrator setup and browser session model everywhere.
 
 The production Synology package depends on all five items. Intermediate

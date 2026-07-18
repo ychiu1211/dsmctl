@@ -10,14 +10,24 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/runtime"
 )
 
-// webLoginResolver is the credential resolver used now that web login is the
-// only sign-in method. The runtime prefers a stored web-login session; this
-// resolver is only reached when no session exists, so it declines with an
-// actionable message instead of asking for a password.
-type webLoginResolver struct{}
+// credentialResolver resolves the account password from the profile's
+// environment variable (for example DSMCTL_PASSWORD_LAB). The runtime prefers a
+// stored web-login session and only reaches this resolver when no session
+// exists or a seeded session can no longer be resumed, so it acts as an
+// automatic, non-interactive fallback: dsmctl re-authenticates with the
+// environment password instead of forcing a browser sign-in. When no password
+// is available it declines with a message pointing at both recovery paths.
+type credentialResolver struct {
+	env *credentials.Environment
+}
 
-func (webLoginResolver) Password(_ context.Context, profileName string, _ config.Profile) (string, error) {
-	return "", fmt.Errorf("not signed in to NAS %q; run 'dsmctl auth login --nas %s'", profileName, profileName)
+func (r credentialResolver) Password(ctx context.Context, profileName string, profile config.Profile) (string, error) {
+	password, err := r.env.Password(ctx, profileName, profile)
+	if err == nil {
+		return password, nil
+	}
+	varName, _ := r.env.Status(profileName, profile)
+	return "", fmt.Errorf("not signed in to NAS %q and no password available; run 'dsmctl auth login --nas %s' or set %s", profileName, profileName, varName)
 }
 
 func loadService(configPath string) (*application.Service, error) {
@@ -28,7 +38,7 @@ func loadService(configPath string) (*application.Service, error) {
 	secrets := credentials.NewSecureStore()
 	manager := runtime.NewManager(
 		cfg,
-		webLoginResolver{},
+		credentialResolver{env: credentials.NewEnvironment()},
 		runtime.WithDeviceStore(secrets),
 		runtime.WithSessionStore(secrets),
 	)

@@ -37,9 +37,16 @@ import (
 
 const (
 	defaultClientID = "webui"
-	defaultSession  = "webui"
-	defaultTimeout  = 3 * time.Minute
-	maxBodySize     = 1 << 20
+	// defaultSession is an app session name, deliberately not "webui". DSM keeps
+	// an app-named session resumable after its idle timeout (it is suspended, not
+	// destroyed), whereas a "webui" session is dropped non-resumably and forces a
+	// fresh browser sign-in. Using an app name lets a web login survive idle
+	// periods through the browserless Noise resume, the way the Synology mobile
+	// apps stay signed in. Verified live: the DSM code-grant browser flow accepts
+	// this session name.
+	defaultSession = "dsmctl"
+	defaultTimeout = 3 * time.Minute
+	maxBodySize    = 1 << 20
 )
 
 // Result is the outcome of a successful web login. SID and SynoToken are the

@@ -59,7 +59,30 @@ func decodeSMB(data json.RawMessage, modern bool) (controlpanel.SMBState, error)
 	if err != nil {
 		return controlpanel.SMBState{}, err
 	}
+	// Advanced "Others" toggles are read optionally so an older backend that
+	// omits one leaves it false rather than failing the whole read.
+	state.OpportunisticLocking = optionalBool(raw, "enable_op_lock")
+	state.SMB2Leases = optionalBool(raw, "enable_smb2_leases")
+	state.DurableHandles = optionalBool(raw, "enable_durable_handles")
+	state.LocalMasterBrowser = optionalBool(raw, "enable_local_master_browser")
 	return state, nil
+}
+
+// optionalBool reads a DSM boolean that may be absent or encoded as 0/1,
+// defaulting to false when missing or unparseable.
+func optionalBool(raw map[string]json.RawMessage, name string) bool {
+	value, ok := raw[name]
+	if !ok {
+		return false
+	}
+	var result bool
+	if err := json.Unmarshal(value, &result); err == nil {
+		return result
+	}
+	if integer, err := decodeInt(value); err == nil {
+		return integer == 1
+	}
+	return false
 }
 
 func decodeNFS(data json.RawMessage, modern bool) (controlpanel.NFSState, error) {
@@ -106,15 +129,62 @@ func decodeNFSAdvanced(data json.RawMessage) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return decodeNFSAdvancedDomain(raw), nil
+}
+
+func decodeNFSAdvancedDomain(raw map[string]json.RawMessage) string {
 	value, ok := raw["nfs_v4_domain"]
 	if !ok || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
-		return "", nil
+		return ""
 	}
 	var domain string
 	if err := json.Unmarshal(value, &domain); err != nil {
-		return "", fmt.Errorf("decode NFS advanced field %q: %w", "nfs_v4_domain", err)
+		return ""
 	}
-	return strings.TrimSpace(domain), nil
+	return strings.TrimSpace(domain)
+}
+
+// decodeNFSAdvancedSnapshot captures the raw advanced get response verbatim and
+// parses the NFSv4 domain. It deliberately does not require any particular field
+// because the DSM AdvancedSetting get response omits base-service fields such as
+// enable_nfs; the write path resubmits exactly the advanced fields DSM returned.
+// decodeNFSAdvancedSnapshot decodes the advanced get response into the types the
+// set method's validation requires. enable_nfs is intentionally not read here:
+// the get response omits it, and the facade supplies the current base service
+// state instead. requiredBool tolerates DSM returning booleans as integers,
+// which the AdvancedSetting get does for custom_port_enable.
+func decodeNFSAdvancedSnapshot(data json.RawMessage) (NFSAdvancedSnapshot, error) {
+	raw, err := decodeObject(data, "NFS advanced")
+	if err != nil {
+		return NFSAdvancedSnapshot{}, err
+	}
+	readSize, err := requiredInt(raw, "read_size", "NFS advanced")
+	if err != nil {
+		return NFSAdvancedSnapshot{}, err
+	}
+	writeSize, err := requiredInt(raw, "write_size", "NFS advanced")
+	if err != nil {
+		return NFSAdvancedSnapshot{}, err
+	}
+	unixPermissions, err := requiredBool(raw, "unix_pri_enable", "NFS advanced")
+	if err != nil {
+		return NFSAdvancedSnapshot{}, err
+	}
+	customPort, err := requiredBool(raw, "custom_port_enable", "NFS advanced")
+	if err != nil {
+		return NFSAdvancedSnapshot{}, err
+	}
+	statdPort, _ := optionalInt(raw, "statd_port")
+	nlmPort, _ := optionalInt(raw, "nlm_port")
+	return NFSAdvancedSnapshot{
+		CustomPortEnable: customPort,
+		ReadSize:         readSize,
+		WriteSize:        writeSize,
+		UnixPermissions:  unixPermissions,
+		StatdPort:        statdPort,
+		NLMPort:          nlmPort,
+		Domain:           decodeNFSAdvancedDomain(raw),
+	}, nil
 }
 
 func supportedNFSProtocols(raw map[string]json.RawMessage, configured controlpanel.NFSProtocol) []controlpanel.NFSProtocol {

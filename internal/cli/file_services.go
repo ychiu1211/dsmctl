@@ -22,6 +22,10 @@ func newFileServicesCommand(opts *options) *cobra.Command {
 		newFileServicesCapabilitiesCommand(opts),
 		newSMBCommand(opts),
 		newNFSCommand(opts),
+		newServiceDiscoveryCommand(opts),
+		newFTPServicesCommand(opts),
+		newRsyncServiceCommand(opts),
+		newTFTPServiceCommand(opts),
 		newFileServicesPlanCommand(opts),
 		newFileServicesApplyCommand(opts),
 	)
@@ -35,8 +39,8 @@ func newSMBCommand(opts *options) *cobra.Command {
 }
 
 func newNFSCommand(opts *options) *cobra.Command {
-	command := &cobra.Command{Use: "nfs", Short: "Inspect global NFS service settings"}
-	command.AddCommand(newNFSStateCommand(opts))
+	command := &cobra.Command{Use: "nfs", Short: "Inspect global NFS service settings and per-shared-folder export rules"}
+	command.AddCommand(newNFSStateCommand(opts), newNFSExportCommand(opts))
 	return command
 }
 
@@ -185,6 +189,10 @@ func writeSMBState(cmd *cobra.Command, result application.SMBStateResult) error 
 	fmt.Fprintf(writer, "Protocol range:\t%s - %s\n", valueOrDash(string(result.SMB.MinimumProtocol)), valueOrDash(string(result.SMB.MaximumProtocol)))
 	fmt.Fprintf(writer, "Transport encryption:\t%s\n", valueOrDash(string(result.SMB.TransportEncryption)))
 	fmt.Fprintf(writer, "Server signing:\t%s\n", valueOrDash(string(result.SMB.ServerSigning)))
+	fmt.Fprintf(writer, "Opportunistic locking:\t%s\n", yesNo(result.SMB.OpportunisticLocking))
+	fmt.Fprintf(writer, "SMB2 leases:\t%s\n", yesNo(result.SMB.SMB2Leases))
+	fmt.Fprintf(writer, "Durable handles:\t%s\n", yesNo(result.SMB.DurableHandles))
+	fmt.Fprintf(writer, "Local master browser:\t%s\n", yesNo(result.SMB.LocalMasterBrowser))
 	return writer.Flush()
 }
 

@@ -164,10 +164,13 @@ func TestInjectedSessionExpiryWithoutPasswordErrorsCleanly(t *testing.T) {
 	}
 	_, err = client.SystemInfo(context.Background())
 	if err == nil {
-		t.Fatal("SystemInfo() with expired session and no password returned nil error")
+		t.Fatal("SystemInfo() with expired session and no recovery returned nil error")
 	}
-	if !strings.Contains(err.Error(), "password") {
-		t.Fatalf("error should point at the missing password: %v", err)
+	if !IsSessionExpired(err) {
+		t.Fatalf("an expired injected session with no recovery should be a detectable SessionExpiredError: %v", err)
+	}
+	if !strings.Contains(err.Error(), "dsmctl auth login") {
+		t.Fatalf("error should direct the user to sign in again: %v", err)
 	}
 	if loginCount != 0 {
 		t.Fatalf("loginCount = %d, want 0 (no empty-password login attempt)", loginCount)

@@ -174,7 +174,7 @@ var teamFoldersSetOperation = compatibility.Operation[Input, struct{}]{Name: Tea
 // APINames lists every DSM API this module may use, so the facade can discover
 // them in one call before selecting variants.
 func APINames() []string {
-	return []string{StatusAPIName, ConnectionAPIName, ShareAPIName, LogAPIName}
+	return []string{StatusAPIName, ConnectionAPIName, ShareAPIName, LogAPIName, ConfigAPIName}
 }
 
 func SelectStatus(target compatibility.Target) (compatibility.Selection, error) {

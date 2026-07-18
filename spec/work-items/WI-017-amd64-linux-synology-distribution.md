@@ -4,7 +4,7 @@ title: Ship generic Linux and Synology x86_64 distributions
 status: in_progress
 priority: P1
 owner: "synology-distribution"
-depends_on: [WI-014, WI-015, WI-016, WI-024]
+depends_on: [WI-014, WI-015, WI-016, WI-032]
 parallel_group: G
 touches:
   - deploy/container
@@ -128,8 +128,8 @@ secured reverse-proxy endpoint, and pass the same gateway behavior suite.
 Depends on the completed gateway, state/vault, and authorization work. Most
 files are new deployment assets, but release documentation and workflows may
 overlap WI-010 reliability/release hardening if that item is later specified.
-WI-024 supersedes this item's DSM platform-authentication design. Real hardware
-certification and completion of this item are paused until WI-024 replaces the
+WI-032 supersedes this item's DSM platform-authentication design. Real hardware
+certification and completion of this item are paused until WI-032 replaces the
 adapter and revalidates the shared image/SPK artifacts.
 
 ## Handoff
@@ -137,7 +137,7 @@ adapter and revalidates the shared image/SPK artifacts.
 Implementation and local verification are complete; real Synology hardware
 certification remains before this item can truthfully move to `done`.
 
-- Last known good state: WI-024 is complete. Generic Linux and Synology use the
+- Last known good state: WI-032 is complete. Generic Linux and Synology use the
   same portable local-administrator setup/login flow and exact image. The SPK
   owns only package lifecycle, master-key creation, offline image/project
   resources, and loopback DSM portal wiring; there is no DSM authentication

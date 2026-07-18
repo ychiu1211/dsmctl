@@ -257,6 +257,13 @@ func (c *Client) ApplyFileServiceChange(ctx context.Context, request FileService
 				effective.ServerSigning = &current.ServerSigning
 			}
 		}
+		if request.SMB.OpportunisticLocking != nil || request.SMB.SMB2Leases != nil || request.SMB.DurableHandles != nil || request.SMB.LocalMasterBrowser != nil {
+			// Carry the service-enabled flag with an advanced-only change so the
+			// SMB set matches the shape DSM's own advanced dialog submits.
+			if effective.Enabled == nil {
+				effective.Enabled = &current.Enabled
+			}
+		}
 		result, _, err := fileservices.ExecuteSMBSet(ctx, c.target, lockedExecutor{client: c}, effective)
 		if err != nil {
 			return FileServiceMutationResult{}, fmt.Errorf("apply SMB configuration: %w", err)
@@ -267,7 +274,17 @@ func (c *Client) ApplyFileServiceChange(ctx context.Context, request FileService
 			return FileServiceMutationResult{}, fmt.Errorf("NFS mutation requires only the nfs patch")
 		}
 		if request.NFS.NFSv4Domain != nil {
-			result, _, err := fileservices.ExecuteNFSAdvancedSet(ctx, c.target, lockedExecutor{client: c}, *request.NFS)
+			base, _, err := fileservices.ExecuteNFSRead(ctx, c.target, lockedExecutor{client: c})
+			if err != nil {
+				return FileServiceMutationResult{}, fmt.Errorf("refresh NFS service state before advanced apply: %w", err)
+			}
+			snapshot, _, err := fileservices.ExecuteNFSAdvancedSnapshotRead(ctx, c.target, lockedExecutor{client: c})
+			if err != nil {
+				return FileServiceMutationResult{}, fmt.Errorf("refresh NFS advanced configuration before apply: %w", err)
+			}
+			snapshot.EnableNFS = base.Enabled
+			snapshot.Domain = strings.TrimSpace(*request.NFS.NFSv4Domain)
+			result, _, err := fileservices.ExecuteNFSAdvancedSet(ctx, c.target, lockedExecutor{client: c}, snapshot)
 			if err != nil {
 				return FileServiceMutationResult{}, fmt.Errorf("apply NFS advanced configuration: %w", err)
 			}

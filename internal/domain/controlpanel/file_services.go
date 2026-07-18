@@ -45,6 +45,12 @@ type SMBState struct {
 	MaximumProtocol     SMBProtocol      `json:"maximum_protocol,omitempty" jsonschema:"Maximum accepted SMB protocol when exposed by this DSM backend"`
 	TransportEncryption SMBPolicy        `json:"transport_encryption,omitempty" jsonschema:"SMB transport encryption policy when exposed by this DSM backend"`
 	ServerSigning       SMBSigningPolicy `json:"server_signing,omitempty" jsonschema:"SMB server signing policy when exposed by this DSM backend"`
+	// Advanced "Others" toggles, populated when the modern SMB backend reports
+	// them. They are independent booleans.
+	OpportunisticLocking bool `json:"opportunistic_locking" jsonschema:"Whether SMB opportunistic locking is enabled"`
+	SMB2Leases           bool `json:"smb2_leases" jsonschema:"Whether SMB2 leasing is enabled"`
+	DurableHandles       bool `json:"durable_handles" jsonschema:"Whether SMB durable handles are enabled"`
+	LocalMasterBrowser   bool `json:"local_master_browser" jsonschema:"Whether the SMB server acts as a local master browser"`
 }
 
 // NFSProtocol is the highest NFS protocol level DSM is configured to serve.
@@ -91,6 +97,10 @@ type SMBChange struct {
 	MaximumProtocol     *SMBProtocol      `json:"maximum_protocol,omitempty" jsonschema:"Set maximum SMB protocol"`
 	TransportEncryption *SMBPolicy        `json:"transport_encryption,omitempty" jsonschema:"Set SMB transport encryption policy"`
 	ServerSigning       *SMBSigningPolicy `json:"server_signing,omitempty" jsonschema:"Set SMB server signing policy"`
+	OpportunisticLocking *bool `json:"opportunistic_locking,omitempty" jsonschema:"Enable or disable SMB opportunistic locking"`
+	SMB2Leases           *bool `json:"smb2_leases,omitempty" jsonschema:"Enable or disable SMB2 leasing"`
+	DurableHandles       *bool `json:"durable_handles,omitempty" jsonschema:"Enable or disable SMB durable handles"`
+	LocalMasterBrowser   *bool `json:"local_master_browser,omitempty" jsonschema:"Enable or disable acting as the local master browser"`
 }
 
 type NFSChange struct {
