@@ -257,6 +257,13 @@ func (c *Client) ApplyFileServiceChange(ctx context.Context, request FileService
 				effective.ServerSigning = &current.ServerSigning
 			}
 		}
+		if request.SMB.OpportunisticLocking != nil || request.SMB.SMB2Leases != nil || request.SMB.DurableHandles != nil || request.SMB.LocalMasterBrowser != nil {
+			// Carry the service-enabled flag with an advanced-only change so the
+			// SMB set matches the shape DSM's own advanced dialog submits.
+			if effective.Enabled == nil {
+				effective.Enabled = &current.Enabled
+			}
+		}
 		result, _, err := fileservices.ExecuteSMBSet(ctx, c.target, lockedExecutor{client: c}, effective)
 		if err != nil {
 			return FileServiceMutationResult{}, fmt.Errorf("apply SMB configuration: %w", err)

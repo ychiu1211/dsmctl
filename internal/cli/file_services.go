@@ -186,6 +186,10 @@ func writeSMBState(cmd *cobra.Command, result application.SMBStateResult) error 
 	fmt.Fprintf(writer, "Protocol range:\t%s - %s\n", valueOrDash(string(result.SMB.MinimumProtocol)), valueOrDash(string(result.SMB.MaximumProtocol)))
 	fmt.Fprintf(writer, "Transport encryption:\t%s\n", valueOrDash(string(result.SMB.TransportEncryption)))
 	fmt.Fprintf(writer, "Server signing:\t%s\n", valueOrDash(string(result.SMB.ServerSigning)))
+	fmt.Fprintf(writer, "Opportunistic locking:\t%s\n", yesNo(result.SMB.OpportunisticLocking))
+	fmt.Fprintf(writer, "SMB2 leases:\t%s\n", yesNo(result.SMB.SMB2Leases))
+	fmt.Fprintf(writer, "Durable handles:\t%s\n", yesNo(result.SMB.DurableHandles))
+	fmt.Fprintf(writer, "Local master browser:\t%s\n", yesNo(result.SMB.LocalMasterBrowser))
 	return writer.Flush()
 }
 

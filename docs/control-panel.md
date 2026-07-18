@@ -73,11 +73,15 @@ dsmctl control-panel file-services nfs state --nas office --json
 ```
 
 The normalized SMB state contains the service switch, workgroup, minimum and
-maximum SMB protocol, transport-encryption policy, and server-signing policy.
-`disabled_for_smb1` is intentionally distinct from fully disabled signing: it
-is the meaning of DSM's value `0`. The NFS state contains the service switch,
-configured maximum protocol, protocols advertised by DSM, and the NFSv4 domain
-when the advanced read API is available.
+maximum SMB protocol, transport-encryption policy, and server-signing policy,
+plus the advanced "Others" toggles opportunistic locking, SMB2 leases, durable
+handles, and local master browser. `disabled_for_smb1` is intentionally distinct
+from fully disabled signing: it is the meaning of DSM's value `0`. The advanced
+toggles are patch-only booleans applied through the same plan/apply flow (DSM's
+SMB set is a partial update, so only the changed fields are sent, alongside the
+service-enabled flag). The NFS state contains the service switch, configured
+maximum protocol, protocols advertised by DSM, and the NFSv4 domain when the
+advanced read API is available.
 
 Base settings use the same hash-bound plan/apply flow for CLI and MCP. A request
 owns only its non-null fields; the plan records and hashes the complete current

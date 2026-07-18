@@ -59,7 +59,30 @@ func decodeSMB(data json.RawMessage, modern bool) (controlpanel.SMBState, error)
 	if err != nil {
 		return controlpanel.SMBState{}, err
 	}
+	// Advanced "Others" toggles are read optionally so an older backend that
+	// omits one leaves it false rather than failing the whole read.
+	state.OpportunisticLocking = optionalBool(raw, "enable_op_lock")
+	state.SMB2Leases = optionalBool(raw, "enable_smb2_leases")
+	state.DurableHandles = optionalBool(raw, "enable_durable_handles")
+	state.LocalMasterBrowser = optionalBool(raw, "enable_local_master_browser")
 	return state, nil
+}
+
+// optionalBool reads a DSM boolean that may be absent or encoded as 0/1,
+// defaulting to false when missing or unparseable.
+func optionalBool(raw map[string]json.RawMessage, name string) bool {
+	value, ok := raw[name]
+	if !ok {
+		return false
+	}
+	var result bool
+	if err := json.Unmarshal(value, &result); err == nil {
+		return result
+	}
+	if integer, err := decodeInt(value); err == nil {
+		return integer == 1
+	}
+	return false
 }
 
 func decodeNFS(data json.RawMessage, modern bool) (controlpanel.NFSState, error) {

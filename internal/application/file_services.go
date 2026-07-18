@@ -337,6 +337,18 @@ func fileServicePlanEffects(plan FileServicePlan) (bool, []string, []string) {
 			summary = append(summary, fmt.Sprintf("set SMB server signing to %s", *change.ServerSigning))
 			warnings = append(warnings, "changing SMB signing can reject incompatible clients")
 		}
+		if change.OpportunisticLocking != nil {
+			summary = append(summary, fmt.Sprintf("set SMB opportunistic locking to %t", *change.OpportunisticLocking))
+		}
+		if change.SMB2Leases != nil {
+			summary = append(summary, fmt.Sprintf("set SMB2 leasing to %t", *change.SMB2Leases))
+		}
+		if change.DurableHandles != nil {
+			summary = append(summary, fmt.Sprintf("set SMB durable handles to %t", *change.DurableHandles))
+		}
+		if change.LocalMasterBrowser != nil {
+			summary = append(summary, fmt.Sprintf("set SMB local master browser to %t", *change.LocalMasterBrowser))
+		}
 	}
 	if change := plan.Request.NFS; change != nil {
 		if change.Enabled != nil {
@@ -388,7 +400,8 @@ func fileServicePlanHash(plan FileServicePlan) (string, error) {
 }
 
 func emptySMBChange(change controlpanel.SMBChange) bool {
-	return change.Enabled == nil && change.Workgroup == nil && change.MinimumProtocol == nil && change.MaximumProtocol == nil && change.TransportEncryption == nil && change.ServerSigning == nil
+	return change.Enabled == nil && change.Workgroup == nil && change.MinimumProtocol == nil && change.MaximumProtocol == nil && change.TransportEncryption == nil && change.ServerSigning == nil &&
+		change.OpportunisticLocking == nil && change.SMB2Leases == nil && change.DurableHandles == nil && change.LocalMasterBrowser == nil
 }
 
 func emptyNFSChange(change controlpanel.NFSChange) bool {
@@ -433,7 +446,11 @@ func smbChangeMatches(state synology.SMBState, change controlpanel.SMBChange) bo
 		(change.MinimumProtocol == nil || state.MinimumProtocol == *change.MinimumProtocol) &&
 		(change.MaximumProtocol == nil || state.MaximumProtocol == *change.MaximumProtocol) &&
 		(change.TransportEncryption == nil || state.TransportEncryption == *change.TransportEncryption) &&
-		(change.ServerSigning == nil || state.ServerSigning == *change.ServerSigning)
+		(change.ServerSigning == nil || state.ServerSigning == *change.ServerSigning) &&
+		(change.OpportunisticLocking == nil || state.OpportunisticLocking == *change.OpportunisticLocking) &&
+		(change.SMB2Leases == nil || state.SMB2Leases == *change.SMB2Leases) &&
+		(change.DurableHandles == nil || state.DurableHandles == *change.DurableHandles) &&
+		(change.LocalMasterBrowser == nil || state.LocalMasterBrowser == *change.LocalMasterBrowser)
 }
 
 func nfsChangeMatches(state synology.NFSState, change controlpanel.NFSChange) bool {

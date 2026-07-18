@@ -43,6 +43,18 @@ func encodeSMBChange(change controlpanel.SMBChange) (map[string]any, error) {
 		}
 		parameters["enable_server_signing"] = value
 	}
+	if change.OpportunisticLocking != nil {
+		parameters["enable_op_lock"] = *change.OpportunisticLocking
+	}
+	if change.SMB2Leases != nil {
+		parameters["enable_smb2_leases"] = *change.SMB2Leases
+	}
+	if change.DurableHandles != nil {
+		parameters["enable_durable_handles"] = *change.DurableHandles
+	}
+	if change.LocalMasterBrowser != nil {
+		parameters["enable_local_master_browser"] = *change.LocalMasterBrowser
+	}
 	if len(parameters) == 0 {
 		return nil, fmt.Errorf("SMB change has no fields")
 	}

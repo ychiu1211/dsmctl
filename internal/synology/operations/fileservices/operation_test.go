@@ -64,6 +64,41 @@ func TestSMBV3ReadAndSetContract(t *testing.T) {
 	}
 }
 
+func TestSMBAdvancedFieldsReadAndSetContract(t *testing.T) {
+	target := compatibility.NewTarget()
+	target.SetAPI(SMBAPIName, compatibility.APIInfo{MinVersion: 1, MaxVersion: 3})
+	executor := &captureExecutor{responses: map[string]json.RawMessage{
+		SMBAPIName + ".get": json.RawMessage(`{
+			"enable_samba":true,"workgroup":"WORKGROUP","smb_min_protocol":1,
+			"smb_max_protocol":3,"smb_encrypt_transport":1,"enable_server_signing":0,
+			"enable_op_lock":true,"enable_smb2_leases":1,"enable_durable_handles":false,
+			"enable_local_master_browser":0
+		}`),
+	}}
+
+	state, _, err := ExecuteSMBRead(context.Background(), target, executor)
+	if err != nil {
+		t.Fatalf("ExecuteSMBRead() error = %v", err)
+	}
+	if !state.OpportunisticLocking || !state.SMB2Leases || state.DurableHandles || state.LocalMasterBrowser {
+		t.Fatalf("SMB advanced state = %#v", state)
+	}
+
+	oplock := false
+	master := true
+	_, _, err = ExecuteSMBSet(context.Background(), target, executor, controlpanel.SMBChange{
+		OpportunisticLocking: &oplock, LocalMasterBrowser: &master,
+	})
+	if err != nil {
+		t.Fatalf("ExecuteSMBSet() error = %v", err)
+	}
+	want := map[string]any{"enable_op_lock": false, "enable_local_master_browser": true}
+	request := executor.requests[len(executor.requests)-1]
+	if request.Method != "set" || !reflect.DeepEqual(request.JSONParameters, want) {
+		t.Fatalf("SMB advanced set request = %#v, want %#v", request, want)
+	}
+}
+
 func TestNFSV3ReadBaseSetAndAdvancedReadContract(t *testing.T) {
 	target := compatibility.NewTarget()
 	target.SetAPI(NFSAPIName, compatibility.APIInfo{MinVersion: 1, MaxVersion: 3})

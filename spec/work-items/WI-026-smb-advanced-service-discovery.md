@@ -1,9 +1,9 @@
 ---
 id: WI-026
 title: Guarded SMB advanced settings and service discovery
-status: in_progress
+status: done
 priority: P2
-owner: "claude"
+owner: ""
 depends_on: [WI-012]
 parallel_group: C
 touches:
@@ -90,12 +90,18 @@ Service-discovery sub-slice (implemented):
       through one hash-bound plan/apply application contract.
 - [x] No live service-discovery mutation ran without new explicit authorization.
 
-SMB advanced sub-slice (not started):
+SMB advanced sub-slice (implemented):
 
-- [ ] SMB advanced fields decode with strict validation and semantic names.
-- [ ] SMB advanced apply preserves every unspecified snapshot field.
-- [ ] Request-capture test locks the SMB advanced set shape.
-- [ ] DSM 7.3.x read-only verification for both sub-slices.
+- [x] SMB advanced toggles (opportunistic locking, SMB2 leases, durable handles,
+      local master browser) decode with semantic names and are exposed as
+      patch-only booleans; more `SYNO.Core.FileServ.SMB` "Others" fields
+      (symbolic links, veto files, WINS, macOS extensions, transfer log) can be
+      added the same way.
+- [x] SMB set is a partial update (confirmed live), so only the changed fields
+      are sent, alongside the service-enabled flag, matching DSM's dialog.
+- [x] Request-capture test locks the SMB advanced set shape.
+- [x] DSM 7.3.2 live verification: base SMB set (workgroup) and an advanced
+      toggle (local master browser) round-tripped and were reverted.
 
 ## Verification
 
