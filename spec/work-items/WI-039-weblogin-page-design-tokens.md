@@ -1,9 +1,9 @@
 ---
 id: WI-039
 title: Redesign the CLI web-login helper page with shared design tokens
-status: proposed
+status: in_progress
 priority: P2
-owner: ""
+owner: "weblogin-design"
 depends_on: [WI-037]
 parallel_group: G
 touches:
