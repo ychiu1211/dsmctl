@@ -20,10 +20,10 @@ import (
 // the server's static public key drive a Noise_KK handshake that re-establishes
 // a session for the same account.
 type ResumeInput struct {
-	Account         string
-	SessionName     string
-	ClientID        string
-	DeviceID        string
+	Account     string
+	SessionName string
+	ClientID    string
+	DeviceID    string
 	// SID is the last-known session id. The webui session refreshes an existing
 	// (active or suspended) session identified by this id rather than minting one
 	// from scratch, so DSM rejects a resume that omits it (error 400). A sid that

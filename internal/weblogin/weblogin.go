@@ -75,7 +75,7 @@ type Options struct {
 	// manually.
 	OpenBrowser func(url string) error
 	// Prompt receives human-facing progress lines (the URL to open, status).
-	Prompt io.Writer
+	Prompt  io.Writer
 	Timeout time.Duration
 }
 
@@ -127,15 +127,15 @@ func Login(ctx context.Context, baseURL string, opts Options) (Result, error) {
 	loopback := fmt.Sprintf("http://127.0.0.1:%d", listener.Addr().(*net.TCPAddr).Port)
 
 	loginURL := base + "/?" + url.Values{
-		"forceDesktop":         {"1"},
-		"client_id":            {clientID},
-		"code_challenge":       {challenge},
+		"forceDesktop":          {"1"},
+		"client_id":             {clientID},
+		"code_challenge":        {challenge},
 		"code_challenge_method": {"S256"},
-		"response_type":        {"code"},
-		"opener":               {loopback},
-		"state":                {state},
-		"session":              {sessionName},
-		"force_login":          {"yes"},
+		"response_type":         {"code"},
+		"opener":                {loopback},
+		"state":                 {state},
+		"session":               {sessionName},
+		"force_login":           {"yes"},
 	}.Encode() + "#/signin"
 
 	page := buildPage(loginURL, origin)
@@ -300,38 +300,6 @@ func exchange(ctx context.Context, base, clientID, sessionName, code, verifier, 
 		LocalPublicKey:  keypair.Public,
 		LocalPrivateKey: keypair.Private,
 	}, nil
-}
-
-func buildPage(loginURL, dsmOrigin string) string {
-	// loginURL and dsmOrigin are produced internally from a validated base URL,
-	// so they are safe to embed in the JS string literals below.
-	return `<!doctype html>
-<html><head><meta charset="utf-8"><title>dsmctl sign-in</title>
-<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:3rem auto;padding:0 1rem;color:#222}
-button{font-size:1rem;padding:.6rem 1.1rem;cursor:pointer}</style></head>
-<body>
-<h2>Sign in to DSM</h2>
-<p id="status">Opening the sign-in window&hellip; if nothing appears, click the button.</p>
-<button id="go">Open sign-in window</button>
-<script>
-var loginUrl = "` + loginURL + `";
-var dsmOrigin = "` + dsmOrigin + `";
-function start(){ window.open(loginUrl, "dsmctl_signin", "width=560,height=720"); }
-document.getElementById("go").onclick = start;
-window.addEventListener("message", function(e){
-  if (e.origin !== dsmOrigin) return;
-  var d = e.data || {};
-  if (!d.code) return;
-  document.getElementById("status").textContent = "Completing sign-in…";
-  fetch("/callback", {method:"POST", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({code:d.code, rs:d.rs, state:d.state || ""})})
-    .then(function(r){ return r.text(); })
-    .then(function(t){ document.getElementById("status").textContent = t; })
-    .catch(function(){ document.getElementById("status").textContent = "Sign-in failed; return to the terminal."; });
-});
-window.addEventListener("load", function(){ try { start(); } catch (e) {} });
-</script>
-</body></html>`
 }
 
 func newPKCE() (verifier, challenge string, err error) {
