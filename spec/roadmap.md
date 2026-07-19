@@ -35,6 +35,7 @@ flowchart LR
   WI035 --> WI037["WI-037 Gateway design tokens"]
   WI037 --> WI038["WI-038 MCP Server flow refinements"]
   WI038 --> WI017["WI-017 amd64 Linux/Synology distribution"]
+  WI037 --> WI039["WI-039 Web-login page design tokens"]
   WI019["WI-019 Package Center"] --> WI022["WI-022 Package-scoped operations + Drive Admin"]
   WI023["WI-023 LAN device discovery"]
 ```
@@ -81,6 +82,7 @@ flowchart LR
 | [WI-036](work-items/WI-036-surveillance-home-mode.md) | P2 | `done` | C | WI-034 | Guarded Surveillance Station Home Mode switch (on/off) via `SYNO.SurveillanceStation.HomeMode`; first Surveillance write, CLI + MCP, live-verified. |
 | [WI-037](work-items/WI-037-gateway-design-tokens.md) | P1 | `done` | G | WI-035 | Unify authentication and administration colors through shared brand-blue and slate design tokens. |
 | [WI-038](work-items/WI-038-mcp-server-flow-refinements.md) | P1 | `ready` | G | WI-037 | Streamline high-risk approval, MCP-token lifecycle, NAS enrollment, and audit flows; require explicit remote NAS targets; rename `nas.admin` to `lan.discover`. |
+| [WI-039](work-items/WI-039-weblogin-page-design-tokens.md) | P2 | `proposed` | G | WI-037 | Restyle the `auth login` loopback helper page with the shared design tokens, four localized sign-in states, and browser-language detection. |
 
 Parallel groups indicate likely file overlap. Items in different groups may run
 at the same time after checking their `touches` lists. Only one agent should
