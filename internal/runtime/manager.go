@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -61,6 +62,24 @@ type Client interface {
 	DownloadStationTasks(ctx context.Context) (synology.DownloadStationTasks, error)
 	DownloadStationStatistics(ctx context.Context) (synology.DownloadStationStatistics, error)
 	DownloadStationCapabilities(ctx context.Context) (synology.DownloadStationCapabilities, synology.CompatibilityReport, error)
+	FileStationCapabilities(ctx context.Context) (synology.FileStationCapabilities, synology.CompatibilityReport, error)
+	FileStationInfoState(ctx context.Context) (synology.FileStationService, error)
+	FileStationListShares(ctx context.Context, query synology.FileStationListShareQuery) (synology.FileStationListing, error)
+	FileStationList(ctx context.Context, query synology.FileStationListQuery) (synology.FileStationListing, error)
+	FileStationGetInfo(ctx context.Context, query synology.FileStationGetInfoQuery) (synology.FileStationInfo, error)
+	FileStationSearch(ctx context.Context, query synology.FileStationSearchQuery) (synology.FileStationSearchResult, error)
+	FileStationDirSize(ctx context.Context, query synology.FileStationDirSizeQuery) (synology.FileStationDirSize, error)
+	FileStationMD5(ctx context.Context, query synology.FileStationMD5Query) (synology.FileStationMD5, error)
+	FileStationVirtualFolders(ctx context.Context, query synology.FileStationVirtualFolderQuery) (synology.FileStationListing, error)
+	FileStationCheckPermission(ctx context.Context, query synology.FileStationCheckPermissionQuery) (synology.FileStationPermissionCheck, error)
+	DownloadFile(ctx context.Context, path string) (*synology.DownloadContent, error)
+	UploadFile(ctx context.Context, dir, name string, src io.Reader, size int64, opts synology.UploadOptions) (synology.UploadResult, error)
+	ApplyFileStationChange(ctx context.Context, request synology.FileStationChangeRequest, password string) (synology.FileStationMutationResult, error)
+	FileStationFavoriteList(ctx context.Context) (synology.FileStationFavorites, error)
+	FileStationFavoriteAdd(ctx context.Context, path, name string) error
+	FileStationFavoriteDelete(ctx context.Context, path string) error
+	FileStationSharingList(ctx context.Context) (synology.FileStationSharingLinks, error)
+	FileStationBackgroundTasks(ctx context.Context) (synology.FileStationBackgroundTasks, error)
 }
 
 type Option func(*Manager)

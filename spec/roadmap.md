@@ -41,6 +41,7 @@ flowchart LR
   WI041 -. "reach a NAS by QC id" .-> WI042["WI-042 QuickConnect transport"]
   WI019["WI-019 Package Center"] --> WI022["WI-022 Package-scoped operations + Drive Admin"]
   WI022 --> WI043["WI-043 Download Station"]
+  WI006 --> WI044["WI-044 FileStation module"]
   WI023["WI-023 LAN device discovery"]
 ```
 
@@ -91,6 +92,7 @@ flowchart LR
 | [WI-041](work-items/WI-041-external-access.md) | P2 | `in_progress` | C | WI-006 | External Access module: read-only Synology Account/QuickConnect/DDNS/port-forward + guarded QuickConnect relay write shipped and live-verified (reverted). DDNS-record CRUD and QuickConnect enable/alias writes still deferred. QuickConnect-as-transport carved out to WI-042. |
 | [WI-042](work-items/WI-042-quickconnect-transport.md) | P3 | `proposed` | H | — | Reach a NAS by its QuickConnect ID: coordinator resolution (get_site_list/get_server_info) to a Direct endpoint, then the existing login/client path; relay/hole-punch is a stretch. Connection-layer, not a Control Panel module. |
 | [WI-043](work-items/WI-043-download-station.md) | P2 | `in_progress` | C | WI-019, WI-022 | Read-only Download Station module (service config, task list, statistics), package-gated on DownloadStation (legacy SYNO.DownloadStation.* API); shipped + live-verified on 4.1.2. Task/config writes deferred. |
+| [WI-044](work-items/WI-044-file-station.md) | P1 | `in_progress` | C | WI-006 | Full read/write FileStation module (core SYNO.FileStation.*), shipped + live-verified end-to-end on DSM 7.3: reads (list/stat/search/dir-size/md5/virtual-folders/permission-check), streaming download+upload binary transport, and the mutation surface (create/rename/copy/move/delete/compress/extract/upload + sharing links) via hash-bound plan/apply, plus favorites and background-task list — across CLI (`file …`) and MCP (109 tools; read-only gateway strips writes + content transfer). Optional follow-ons: Sharing.edit/clear_invalid, Thumb, BackgroundTask.clear_finished. |
 
 Parallel groups indicate likely file overlap. Items in different groups may run
 at the same time after checking their `touches` lists. Only one agent should

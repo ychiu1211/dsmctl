@@ -15,6 +15,12 @@ func NewReadOnly(service *application.Service, version string) *mcp.Server {
 	server := New(service, version)
 	server.RemoveTools(
 		"discover_lan_devices",
+		// FileStation content transfer and mutations never reach the read-only
+		// gateway: get_filestation_file_content would exfiltrate arbitrary file
+		// bytes to a remote caller, and the plan/apply pair mutates the NAS.
+		"get_filestation_file_content",
+		"plan_filestation_change",
+		"apply_filestation_plan",
 		"plan_account_change",
 		"plan_control_panel_time_change",
 		"plan_drive_config_change",

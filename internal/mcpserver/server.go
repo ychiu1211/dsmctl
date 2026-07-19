@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"encoding/base64"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -13,6 +14,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/domain/discovery"
 	"github.com/ychiu1211/dsmctl/internal/domain/driveadmin"
 	"github.com/ychiu1211/dsmctl/internal/domain/externalaccess"
+	"github.com/ychiu1211/dsmctl/internal/domain/filestation"
 	"github.com/ychiu1211/dsmctl/internal/domain/ftpservices"
 	"github.com/ychiu1211/dsmctl/internal/domain/identity"
 	"github.com/ychiu1211/dsmctl/internal/domain/nfsexport"
@@ -29,6 +31,10 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/domain/tftpservice"
 	"github.com/ychiu1211/dsmctl/internal/synology"
 )
+
+// maxInlineFileDownload bounds how many bytes get_filestation_file_content will
+// return inline; larger files must be streamed with the CLI.
+const maxInlineFileDownload = 8 << 20
 
 type discoverLANDevicesInput struct {
 	TimeoutSeconds int `json:"timeout_seconds,omitempty" jsonschema:"How long to listen for device responses, in seconds; defaults to 3 and is capped at 60"`
@@ -169,6 +175,149 @@ type getDownloadStationTasksOutput struct {
 type getDownloadStationStatisticsOutput struct {
 	NAS        string                             `json:"nas" jsonschema:"NAS profile used for the request"`
 	Statistics synology.DownloadStationStatistics `json:"statistics" jsonschema:"Aggregate transfer statistics"`
+}
+
+type fileStationNASInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getFileStationCapabilitiesOutput struct {
+	NAS          string                           `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.FileStationCapabilities `json:"capabilities" jsonschema:"FileStation reads currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport     `json:"report" jsonschema:"Discovered APIs and selected FileStation backends"`
+}
+
+type getFileStationInfoOutput struct {
+	NAS     string                      `json:"nas" jsonschema:"NAS profile used for the request"`
+	Service synology.FileStationService `json:"service" jsonschema:"FileStation service information for the current session"`
+}
+
+type listFileStationSharesInput struct {
+	NAS          string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	OnlyWritable bool   `json:"only_writable,omitempty" jsonschema:"Return only shared folders the current session can write"`
+	Limit        int    `json:"limit,omitempty" jsonschema:"Maximum number of shared folders to return; 0 uses the DSM default"`
+	Offset       int    `json:"offset,omitempty" jsonschema:"Offset of the first shared folder to return"`
+}
+
+type fileStationListingOutput struct {
+	NAS     string                      `json:"nas" jsonschema:"NAS profile used for the request"`
+	Listing synology.FileStationListing `json:"listing" jsonschema:"Shared-folder, directory, or virtual-folder listing"`
+}
+
+type listFileStationInput struct {
+	NAS           string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Path          string `json:"path" jsonschema:"Absolute folder path to enumerate, for example /share/dir"`
+	Limit         int    `json:"limit,omitempty" jsonschema:"Maximum number of entries to return; 0 uses the DSM default"`
+	Offset        int    `json:"offset,omitempty" jsonschema:"Offset of the first entry to return"`
+	SortBy        string `json:"sort_by,omitempty" jsonschema:"Sort key: name, size, mtime, atime, ctime, crtime, user, group, posix, or type"`
+	SortDirection string `json:"sort_direction,omitempty" jsonschema:"Sort direction: asc or desc"`
+	Pattern       string `json:"pattern,omitempty" jsonschema:"Glob pattern that entry names must match"`
+	FileType      string `json:"file_type,omitempty" jsonschema:"Restrict to file, dir, or all (default)"`
+}
+
+type getFileStationEntryInfoInput struct {
+	NAS   string   `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Paths []string `json:"paths" jsonschema:"Absolute paths whose information is requested"`
+}
+
+type fileStationEntryInfoOutput struct {
+	NAS  string                   `json:"nas" jsonschema:"NAS profile used for the request"`
+	Info synology.FileStationInfo `json:"info" jsonschema:"Requested entry details"`
+}
+
+type searchFileStationInput struct {
+	NAS       string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Path      string `json:"path" jsonschema:"Absolute folder path to search within"`
+	Pattern   string `json:"pattern,omitempty" jsonschema:"Glob pattern that entry names must match"`
+	Extension string `json:"extension,omitempty" jsonschema:"File extension filter, without a leading dot"`
+	FileType  string `json:"file_type,omitempty" jsonschema:"Restrict to file, dir, or all (default)"`
+	Recursive bool   `json:"recursive,omitempty" jsonschema:"Search subdirectories recursively"`
+}
+
+type fileStationSearchOutput struct {
+	NAS    string                           `json:"nas" jsonschema:"NAS profile used for the request"`
+	Result synology.FileStationSearchResult `json:"result" jsonschema:"Completed search result"`
+}
+
+type fileStationDirSizeInput struct {
+	NAS   string   `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Paths []string `json:"paths" jsonschema:"Absolute folder paths whose aggregate size is computed"`
+}
+
+type fileStationDirSizeOutput struct {
+	NAS     string                      `json:"nas" jsonschema:"NAS profile used for the request"`
+	DirSize synology.FileStationDirSize `json:"dir_size" jsonschema:"Aggregate directory size"`
+}
+
+type fileStationMD5Input struct {
+	NAS  string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Path string `json:"path" jsonschema:"Absolute file path whose MD5 digest is computed"`
+}
+
+type fileStationMD5Output struct {
+	NAS string                  `json:"nas" jsonschema:"NAS profile used for the request"`
+	MD5 synology.FileStationMD5 `json:"md5" jsonschema:"Computed MD5 digest"`
+}
+
+type checkFileStationPermissionInput struct {
+	NAS           string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Path          string `json:"path" jsonschema:"Absolute folder path where a write is probed"`
+	Filename      string `json:"filename,omitempty" jsonschema:"Optional file name to probe within the folder"`
+	Overwrite     bool   `json:"overwrite,omitempty" jsonschema:"Probe assuming an existing file would be overwritten"`
+	CreateParents bool   `json:"create_parents,omitempty" jsonschema:"Probe assuming missing parent folders would be created"`
+}
+
+type fileStationPermissionOutput struct {
+	NAS        string                              `json:"nas" jsonschema:"NAS profile used for the request"`
+	Permission synology.FileStationPermissionCheck `json:"permission" jsonschema:"Write-permission probe result"`
+}
+
+type getFileStationFileContentInput struct {
+	NAS      string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Path     string `json:"path" jsonschema:"Absolute file path to download"`
+	MaxBytes int64  `json:"max_bytes,omitempty" jsonschema:"Maximum bytes to return inline; capped at 8 MiB regardless"`
+}
+
+type getFileStationFileContentOutput struct {
+	NAS           string `json:"nas" jsonschema:"NAS profile used for the request"`
+	Path          string `json:"path" jsonschema:"Downloaded NAS path"`
+	Size          int64  `json:"size" jsonschema:"Number of bytes returned"`
+	ContentType   string `json:"content_type,omitempty" jsonschema:"Content type reported by DSM"`
+	Filename      string `json:"filename,omitempty" jsonschema:"File name reported by DSM"`
+	ContentBase64 string `json:"content_base64" jsonschema:"Base64-encoded file content"`
+}
+
+type getFileStationFavoritesOutput struct {
+	NAS       string                        `json:"nas" jsonschema:"NAS profile used for the request"`
+	Favorites synology.FileStationFavorites `json:"favorites" jsonschema:"Personal FileStation favorites"`
+}
+
+type planFileStationChangeInput struct {
+	NAS     string                    `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request filestation.ChangeRequest `json:"request" jsonschema:"FileStation mutation: create_folder, rename, copy, move, delete, compress, extract, or upload. Upload reads local_path on the machine running dsmctl"`
+}
+
+type planFileStationChangeOutput struct {
+	Plan application.FilePlan `json:"plan" jsonschema:"Validated plan bound to the observed path state and approval hash"`
+}
+
+type applyFileStationPlanInput struct {
+	Plan         application.FilePlan `json:"plan" jsonschema:"Unmodified plan returned by plan_filestation_change"`
+	ApprovalHash string               `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved FileStation plan"`
+}
+
+type applyFileStationPlanOutput struct {
+	Result application.FileApplyResult `json:"result" jsonschema:"FileStation mutation result after stale-state and postcondition checks"`
+}
+
+type getFileStationSharingLinksOutput struct {
+	NAS   string                           `json:"nas" jsonschema:"NAS profile used for the request"`
+	Links synology.FileStationSharingLinks `json:"links" jsonschema:"Public sharing links"`
+}
+
+type getFileStationBackgroundTasksOutput struct {
+	NAS   string                              `json:"nas" jsonschema:"NAS profile used for the request"`
+	Tasks synology.FileStationBackgroundTasks `json:"tasks" jsonschema:"Background file-operation tasks"`
 }
 
 type planControlPanelTimeChangeInput struct {
@@ -1015,6 +1164,248 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getDownloadStationStatisticsOutput{}, err
 		}
 		return nil, getDownloadStationStatisticsOutput{NAS: result.NAS, Statistics: result.Statistics}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_filestation_capabilities",
+		Title:       "Get FileStation capabilities",
+		Description: "Report which FileStation reads (info, list, search, directory size, MD5, virtual folders, permission check) are available for a NAS and the DSM API version-specific backend selected for each. FileStation is a core DSM surface, so no package is required.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input fileStationNASInput) (*mcp.CallToolResult, getFileStationCapabilitiesOutput, error) {
+		result, err := service.GetFileStationCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getFileStationCapabilitiesOutput{}, err
+		}
+		return nil, getFileStationCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_filestation_info",
+		Title:       "Get FileStation service information",
+		Description: "Read FileStation-wide information for the current session on a NAS: host name, whether the account has manager rights, whether public file sharing is supported, and the supported virtual mount protocols. This tool is read-only.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input fileStationNASInput) (*mcp.CallToolResult, getFileStationInfoOutput, error) {
+		result, err := service.GetFileStationInfo(ctx, input.NAS)
+		if err != nil {
+			return nil, getFileStationInfoOutput{}, err
+		}
+		return nil, getFileStationInfoOutput{NAS: result.NAS, Service: result.Service}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_filestation_shares",
+		Title:       "List FileStation shared folders",
+		Description: "List the shared folders visible to the current session on a NAS, each with its path, real volume path, size, owner, timestamps, and permission summary. This tool never changes anything.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input listFileStationSharesInput) (*mcp.CallToolResult, fileStationListingOutput, error) {
+		result, err := service.ListFileStationShares(ctx, input.NAS, filestation.ListShareQuery{
+			OnlyWritable: input.OnlyWritable,
+			Limit:        input.Limit,
+			Offset:       input.Offset,
+		})
+		if err != nil {
+			return nil, fileStationListingOutput{}, err
+		}
+		return nil, fileStationListingOutput{NAS: result.NAS, Listing: result.Listing}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_filestation_directory",
+		Title:       "List a FileStation directory",
+		Description: "List the entries of one folder on a NAS with optional pattern, file-type, sort, and paging, returning each entry's path, size, owner, timestamps, and permission summary. This tool never changes anything.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input listFileStationInput) (*mcp.CallToolResult, fileStationListingOutput, error) {
+		result, err := service.ListFileStationDirectory(ctx, input.NAS, filestation.ListQuery{
+			Path:          input.Path,
+			Limit:         input.Limit,
+			Offset:        input.Offset,
+			SortBy:        input.SortBy,
+			SortDirection: input.SortDirection,
+			Pattern:       input.Pattern,
+			FileType:      input.FileType,
+		})
+		if err != nil {
+			return nil, fileStationListingOutput{}, err
+		}
+		return nil, fileStationListingOutput{NAS: result.NAS, Listing: result.Listing}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_filestation_entry_info",
+		Title:       "Get FileStation entry information",
+		Description: "Read detailed information for one or more files or folders on a NAS by absolute path: type, real volume path, size, owner, timestamps, and permission summary. This tool is read-only.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getFileStationEntryInfoInput) (*mcp.CallToolResult, fileStationEntryInfoOutput, error) {
+		result, err := service.GetFileStationEntryInfo(ctx, input.NAS, filestation.GetInfoQuery{Paths: input.Paths})
+		if err != nil {
+			return nil, fileStationEntryInfoOutput{}, err
+		}
+		return nil, fileStationEntryInfoOutput{NAS: result.NAS, Info: result.Info}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_filestation_search",
+		Title:       "Search FileStation",
+		Description: "Search a folder subtree on a NAS for entries matching a name pattern, extension, or file type, and return the completed result. The search runs as a background task that this tool starts, polls to completion, and cleans up. It never changes anything.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input searchFileStationInput) (*mcp.CallToolResult, fileStationSearchOutput, error) {
+		result, err := service.SearchFileStation(ctx, input.NAS, filestation.SearchQuery{
+			Path:      input.Path,
+			Pattern:   input.Pattern,
+			Extension: input.Extension,
+			FileType:  input.FileType,
+			Recursive: input.Recursive,
+		})
+		if err != nil {
+			return nil, fileStationSearchOutput{}, err
+		}
+		return nil, fileStationSearchOutput{NAS: result.NAS, Result: result.Result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_filestation_directory_size",
+		Title:       "Get FileStation directory size",
+		Description: "Compute the aggregate size and file/directory counts of one or more folders on a NAS. The computation runs as a background task that this tool starts, polls to completion, and stops. It never changes anything.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input fileStationDirSizeInput) (*mcp.CallToolResult, fileStationDirSizeOutput, error) {
+		result, err := service.GetFileStationDirSize(ctx, input.NAS, filestation.DirSizeQuery{Paths: input.Paths})
+		if err != nil {
+			return nil, fileStationDirSizeOutput{}, err
+		}
+		return nil, fileStationDirSizeOutput{NAS: result.NAS, DirSize: result.DirSize}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_filestation_md5",
+		Title:       "Get FileStation file MD5",
+		Description: "Compute the MD5 digest of a file on a NAS. The computation runs as a background task that this tool starts and polls to completion. It never changes anything.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input fileStationMD5Input) (*mcp.CallToolResult, fileStationMD5Output, error) {
+		result, err := service.GetFileStationMD5(ctx, input.NAS, filestation.MD5Query{Path: input.Path})
+		if err != nil {
+			return nil, fileStationMD5Output{}, err
+		}
+		return nil, fileStationMD5Output{NAS: result.NAS, MD5: result.MD5}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_filestation_virtual_folders",
+		Title:       "List FileStation virtual folders",
+		Description: "List the mounted virtual folders (for example remote CIFS or NFS mounts) visible to the current session on a NAS. This tool is read-only.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input fileStationNASInput) (*mcp.CallToolResult, fileStationListingOutput, error) {
+		result, err := service.ListFileStationVirtualFolders(ctx, input.NAS, filestation.VirtualFolderQuery{})
+		if err != nil {
+			return nil, fileStationListingOutput{}, err
+		}
+		return nil, fileStationListingOutput{NAS: result.NAS, Listing: result.Listing}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_filestation_write_permission",
+		Title:       "Check FileStation write permission",
+		Description: "Probe whether the current session may create or write at a path on a NAS, without creating or modifying any file. It is a read-only permission check.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input checkFileStationPermissionInput) (*mcp.CallToolResult, fileStationPermissionOutput, error) {
+		result, err := service.CheckFileStationPermission(ctx, input.NAS, filestation.CheckPermissionQuery{
+			Path:          input.Path,
+			Filename:      input.Filename,
+			Overwrite:     input.Overwrite,
+			CreateParents: input.CreateParents,
+		})
+		if err != nil {
+			return nil, fileStationPermissionOutput{}, err
+		}
+		return nil, fileStationPermissionOutput{NAS: result.NAS, Permission: result.Permission}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_filestation_file_content",
+		Title:       "Download FileStation file content",
+		Description: "Download a file from a NAS and return its content base64-encoded. A file larger than the 8 MiB inline limit is refused — stream it with the CLI 'file get' instead. This reads the NAS and never modifies it.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getFileStationFileContentInput) (*mcp.CallToolResult, getFileStationFileContentOutput, error) {
+		limit := input.MaxBytes
+		if limit <= 0 || limit > maxInlineFileDownload {
+			limit = maxInlineFileDownload
+		}
+		data, meta, err := service.ReadFileStationFile(ctx, input.NAS, input.Path, limit)
+		if err != nil {
+			return nil, getFileStationFileContentOutput{}, err
+		}
+		return nil, getFileStationFileContentOutput{
+			NAS:           meta.NAS,
+			Path:          meta.Path,
+			Size:          meta.Size,
+			ContentType:   meta.ContentType,
+			Filename:      meta.Filename,
+			ContentBase64: base64.StdEncoding.EncodeToString(data),
+		}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_filestation_favorites",
+		Title:       "List FileStation favorites",
+		Description: "List the current session's personal FileStation sidebar favorites (name, path, status). This tool is read-only.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input fileStationNASInput) (*mcp.CallToolResult, getFileStationFavoritesOutput, error) {
+		result, err := service.GetFileStationFavorites(ctx, input.NAS)
+		if err != nil {
+			return nil, getFileStationFavoritesOutput{}, err
+		}
+		return nil, getFileStationFavoritesOutput{NAS: result.NAS, Favorites: result.Favorites}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_filestation_sharing_links",
+		Title:       "List FileStation sharing links",
+		Description: "List the public sharing links on a NAS (id, path, public URL, password protection, status). Manage links with plan_filestation_change using the sharelink_create and sharelink_delete actions. This tool is read-only.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input fileStationNASInput) (*mcp.CallToolResult, getFileStationSharingLinksOutput, error) {
+		result, err := service.GetFileStationSharingLinks(ctx, input.NAS)
+		if err != nil {
+			return nil, getFileStationSharingLinksOutput{}, err
+		}
+		return nil, getFileStationSharingLinksOutput{NAS: result.NAS, Links: result.Links}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_filestation_background_tasks",
+		Title:       "List FileStation background tasks",
+		Description: "List in-progress or finished background file-operation tasks (copy, move, delete, compress, extract) on a NAS. This tool is read-only.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input fileStationNASInput) (*mcp.CallToolResult, getFileStationBackgroundTasksOutput, error) {
+		result, err := service.GetFileStationBackgroundTasks(ctx, input.NAS)
+		if err != nil {
+			return nil, getFileStationBackgroundTasksOutput{}, err
+		}
+		return nil, getFileStationBackgroundTasksOutput{NAS: result.NAS, Tasks: result.Tasks}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_filestation_change",
+		Title:       "Plan a FileStation change",
+		Description: "Validate a FileStation mutation (create_folder, rename, copy, move, delete, compress, extract, upload, sharelink_create, or sharelink_delete) and return an approval plan bound to the observed state. The plan surfaces risk, warnings (data loss, overwrite, public exposure), and a hash. This tool never mutates the NAS. Move, delete, and sharelink_create (anonymous public URL) are high risk; upload reads local_path on the host running dsmctl.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planFileStationChangeInput) (*mcp.CallToolResult, planFileStationChangeOutput, error) {
+		plan, err := service.PlanFileStationChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planFileStationChangeOutput{}, err
+		}
+		return nil, planFileStationChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_filestation_plan",
+		Title:       "Apply an approved FileStation plan",
+		Description: "Apply an unmodified FileStation plan only while its approval hash and the observed path state still match, then verify the postcondition (created/renamed/copied paths present, moved/deleted sources absent). Deletion is permanent and recursive. Archive passwords resolve from env:NAME references at apply time.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyFileStationPlanInput) (*mcp.CallToolResult, applyFileStationPlanOutput, error) {
+		result, err := service.ApplyFileStationPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applyFileStationPlanOutput{}, err
+		}
+		return nil, applyFileStationPlanOutput{Result: result}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

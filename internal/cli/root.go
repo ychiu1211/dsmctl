@@ -33,6 +33,7 @@ func New(version string) *cobra.Command {
 		newDownloadCommand(opts),
 		newDriveCommand(opts),
 		newExternalAccessCommand(opts),
+		newFileCommand(opts),
 		newLogCommand(opts),
 		newNASCommand(opts),
 		newPackageCommand(opts),
