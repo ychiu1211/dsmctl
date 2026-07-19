@@ -33,6 +33,8 @@ import (
 	"time"
 
 	"github.com/flynn/noise"
+
+	"github.com/ychiu1211/dsmctl/internal/webassets"
 )
 
 const (
@@ -143,16 +145,7 @@ func Login(ctx context.Context, baseURL string, opts Options) (Result, error) {
 	resultCh := make(chan Result, 1)
 	errCh := make(chan error, 1)
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = io.WriteString(w, page)
-	})
-	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
+	callback := func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -180,9 +173,9 @@ func Login(ctx context.Context, baseURL string, opts Options) (Result, error) {
 		case resultCh <- res:
 		default:
 		}
-	})
+	}
 
-	server := &http.Server{Handler: mux}
+	server := &http.Server{Handler: newLoopbackHandler(page, callback)}
 	go func() { _ = server.Serve(listener) }()
 	defer func() {
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), time.Second)
@@ -207,6 +200,21 @@ func Login(ctx context.Context, baseURL string, opts Options) (Result, error) {
 		}
 		return Result{}, ctx.Err()
 	}
+}
+
+func newLoopbackHandler(page string, callback http.HandlerFunc) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = io.WriteString(w, page)
+	})
+	mux.HandleFunc("/favicon.svg", webassets.ServeFavicon)
+	mux.HandleFunc("/callback", callback)
+	return mux
 }
 
 // exchange trades the one-time code for a session over a Noise_IK handshake,

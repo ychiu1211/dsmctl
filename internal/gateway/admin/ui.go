@@ -1,10 +1,14 @@
 package admin
 
+import "github.com/ychiu1211/dsmctl/internal/webassets"
+
 const indexHTML = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="` + webassets.ThemeColor + `">
+<link rel="icon" href="/admin/favicon.svg" type="image/svg+xml" sizes="any">
 <title>dsmctl MCP Server</title>
 <style>
 :root{

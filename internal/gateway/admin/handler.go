@@ -22,6 +22,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/remotepolicy"
 	"github.com/ychiu1211/dsmctl/internal/runtime"
 	"github.com/ychiu1211/dsmctl/internal/synology"
+	"github.com/ychiu1211/dsmctl/internal/webassets"
 	"github.com/ychiu1211/dsmctl/internal/weblogin"
 )
 
@@ -136,6 +137,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 	switch req.URL.Path {
+	case "/admin/favicon.svg":
+		webassets.ServeFavicon(w, req)
+		return
 	case "/admin", "/admin/":
 		if req.Method != http.MethodGet {
 			methodNotAllowed(w, http.MethodGet)

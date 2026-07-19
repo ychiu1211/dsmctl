@@ -1,8 +1,12 @@
 package weblogin
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/ychiu1211/dsmctl/internal/webassets"
 )
 
 const (
@@ -25,6 +29,8 @@ func TestPageCarriesSharedDesignTokens(t *testing.T) {
 		`--danger:#cf3f3f`,
 		`font-family:Inter,"Segoe UI","Noto Sans TC",system-ui,-apple-system,sans-serif`,
 		`<meta name="viewport" content="width=device-width,initial-scale=1">`,
+		`<meta name="theme-color" content="#0d263f">`,
+		`<link rel="icon" href="/favicon.svg" type="image/svg+xml" sizes="any">`,
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("page is missing design-token contract value %q", want)
@@ -72,15 +78,35 @@ func TestPageDrivesFourStatesFromCallbackStatus(t *testing.T) {
 
 func TestPageIsSelfContained(t *testing.T) {
 	page := buildPage(testLoginURL, testDSMOrigin)
-	for _, banned := range []string{`<link`, `@import`, `url(`, `src="http`} {
+	for _, banned := range []string{`@import`, `url(`, `src="http`, `href="http`, `href="//`} {
 		if strings.Contains(page, banned) {
 			t.Errorf("page must not reference external resources, found %q", banned)
 		}
+	}
+	if got := strings.Count(page, `<link `); got != 1 {
+		t.Errorf("page link count = %d, want only the same-origin favicon", got)
 	}
 	for _, want := range []string{testLoginURL, testDSMOrigin} {
 		if !strings.Contains(page, want) {
 			t.Errorf("page must embed %q", want)
 		}
+	}
+}
+
+func TestLoopbackHandlerServesSharedFavicon(t *testing.T) {
+	handler := newLoopbackHandler("<html></html>", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/favicon.svg", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("favicon status = %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+	if got := recorder.Header().Get("Content-Type"); got != webassets.FaviconContentType {
+		t.Errorf("favicon Content-Type = %q", got)
+	}
+	if got := recorder.Body.String(); got != webassets.FaviconSVG() {
+		t.Fatal("web-login favicon differs from the shared source")
 	}
 }
 

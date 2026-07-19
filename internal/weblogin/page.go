@@ -1,6 +1,10 @@
 package weblogin
 
-import "net/url"
+import (
+	"net/url"
+
+	"github.com/ychiu1211/dsmctl/internal/webassets"
+)
 
 // buildPage renders the loopback helper page that hosts the DSM sign-in
 // popup and relays the one-time code to the local callback.
@@ -27,6 +31,8 @@ func buildPage(loginURL, dsmOrigin string) string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="` + webassets.ThemeColor + `">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" sizes="any">
 <title>dsmctl sign-in</title>
 <style>
 :root{

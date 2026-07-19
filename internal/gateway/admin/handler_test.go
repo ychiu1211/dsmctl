@@ -23,6 +23,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/gateway/state"
 	"github.com/ychiu1211/dsmctl/internal/remotepolicy"
 	"github.com/ychiu1211/dsmctl/internal/runtime"
+	"github.com/ychiu1211/dsmctl/internal/webassets"
 )
 
 func TestFirstRunSetupAndAuthenticatedProfileCRUD(t *testing.T) {
@@ -450,6 +451,7 @@ func TestAdminUIHasNoEmbeddedCredential(t *testing.T) {
 		`id="view-overview"`, `data-nav="nas"`, `aria-live="polite"`, `@media(max-width:760px)`,
 		`--brand-500:#2588df`, `--brand-950:#0d263f`, `--slate-900:#162334`,
 		`--color-action:var(--brand-500)`, `--color-nav:var(--brand-950)`,
+		`<meta name="theme-color" content="#0d263f">`, `<link rel="icon" href="/admin/favicon.svg" type="image/svg+xml" sizes="any">`,
 		`data-locale-select`, `localStorage.getItem('dsmctl.locale')`, `dataset.i18nDiagnostics`,
 		`pointer-events:none`, `Mindestens 8 Zeichen`,
 		`English`, `繁體中文`, `简体中文`, `日本語`, `Deutsch`, `MCP endpoint`, `/mcp`,
@@ -459,10 +461,27 @@ func TestAdminUIHasNoEmbeddedCredential(t *testing.T) {
 			t.Fatalf("UI is missing redesigned application shell marker %q", required)
 		}
 	}
-	for _, externalAsset := range []string{"<link ", "<script src=", `<img src="http`} {
+	for _, externalAsset := range []string{"<script src=", `<img src="http`, `href="http`, `href="//`, "@import"} {
 		if strings.Contains(recorder.Body.String(), externalAsset) {
 			t.Fatalf("UI loads an external asset matching %q", externalAsset)
 		}
+	}
+}
+
+func TestAdminServesSharedFavicon(t *testing.T) {
+	handler, _, manager, _ := newTestHandler(t)
+	defer manager.Close(context.Background())
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/admin/favicon.svg", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("favicon status = %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+	if got := recorder.Header().Get("Content-Type"); got != webassets.FaviconContentType {
+		t.Errorf("favicon Content-Type = %q", got)
+	}
+	if got := recorder.Body.String(); got != webassets.FaviconSVG() {
+		t.Fatal("admin favicon differs from the shared source")
 	}
 }
 
