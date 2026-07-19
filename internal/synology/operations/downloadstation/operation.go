@@ -339,6 +339,66 @@ func encodeBTSettings(bt downloadstation.BTSettings) url.Values {
 	return v
 }
 
+var ftpHttpGetOp = compatibility.Operation[Input, downloadstation.FtpHttpSettings]{
+	Name: "download.settings.ftphttp.get",
+	Variants: []compatibility.Variant[Input, downloadstation.FtpHttpSettings]{
+		{
+			Name: "downloadstation2-settings-ftphttp-get-v1", API: SettingsFtpHttpAPIName, Version: 1, Priority: 10,
+			Match: compatibility.All(compatibility.APIVersion(SettingsFtpHttpAPIName, 1), baselinePackage),
+			Execute: func(ctx context.Context, executor compatibility.Executor, _ Input) (downloadstation.FtpHttpSettings, error) {
+				data, err := executor.Execute(ctx, compatibility.Request{API: SettingsFtpHttpAPIName, Version: 1, Method: "get"})
+				if err != nil {
+					return downloadstation.FtpHttpSettings{}, fmt.Errorf("call %s.get: %w", SettingsFtpHttpAPIName, err)
+				}
+				return decodeFtpHttpSettings(data)
+			},
+		},
+	},
+}
+
+var ftpHttpSetOp = compatibility.Operation[downloadstation.FtpHttpSettings, downloadstation.SettingsMutationResult]{
+	Name: "download.settings.ftphttp.set",
+	Variants: []compatibility.Variant[downloadstation.FtpHttpSettings, downloadstation.SettingsMutationResult]{
+		{
+			Name: "downloadstation2-settings-ftphttp-set-v1", API: SettingsFtpHttpAPIName, Version: 1, Priority: 10,
+			Match: compatibility.All(compatibility.APIVersion(SettingsFtpHttpAPIName, 1), baselinePackage),
+			Execute: func(ctx context.Context, executor compatibility.Executor, desired downloadstation.FtpHttpSettings) (downloadstation.SettingsMutationResult, error) {
+				if _, err := executor.Execute(ctx, compatibility.Request{API: SettingsFtpHttpAPIName, Version: 1, Method: "set", Parameters: encodeFtpHttpSettings(desired)}); err != nil {
+					return downloadstation.SettingsMutationResult{}, fmt.Errorf("call %s.set: %w", SettingsFtpHttpAPIName, err)
+				}
+				return downloadstation.SettingsMutationResult{API: SettingsFtpHttpAPIName, Version: 1, Method: "set", Group: "ftp_http"}, nil
+			},
+		},
+	},
+}
+
+func encodeFtpHttpSettings(f downloadstation.FtpHttpSettings) url.Values {
+	v := url.Values{}
+	v.Set("enable_ftp_max_conn", boolParam(f.EnableMaxConn))
+	v.Set("ftp_http_max_download_rate", strconv.Itoa(f.MaxDownloadRate))
+	v.Set("ftp_max_conn", strconv.Itoa(f.MaxConn))
+	return v
+}
+
+func boolParam(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
+}
+
+func ExecuteFtpHttpGet(ctx context.Context, target compatibility.Target, executor compatibility.Executor) (downloadstation.FtpHttpSettings, compatibility.Selection, error) {
+	return ftpHttpGetOp.Run(ctx, target, executor, Input{})
+}
+
+func ExecuteFtpHttpSet(ctx context.Context, target compatibility.Target, executor compatibility.Executor, desired downloadstation.FtpHttpSettings) (downloadstation.SettingsMutationResult, compatibility.Selection, error) {
+	result, selection, err := ftpHttpSetOp.Run(ctx, target, executor, desired)
+	if err == nil {
+		result.Backend = selection.Backend
+	}
+	return result, selection, err
+}
+
 func SelectSettingsWrite(target compatibility.Target) (compatibility.Selection, error) {
 	_, selection, err := btSetOp.Select(target)
 	return selection, err

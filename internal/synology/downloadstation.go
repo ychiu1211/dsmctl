@@ -2,6 +2,7 @@ package synology
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/ychiu1211/dsmctl/internal/domain/downloadstation"
@@ -129,44 +130,84 @@ func (c *Client) ApplyDownloadStationTaskChange(ctx context.Context, change Down
 	return result, nil
 }
 
-// DownloadStationBTSettings reads the current BitTorrent settings group.
-func (c *Client) DownloadStationBTSettings(ctx context.Context) (DownloadStationBTSettings, error) {
+// DownloadStationSettingsGroup reads the current state of one settings group as
+// raw JSON, so a guarded plan can bind to the complete group without the
+// application layer needing a typed accessor per group.
+func (c *Client) DownloadStationSettingsGroup(ctx context.Context, group string) (json.RawMessage, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if err := c.preparePackageScopedTargetLocked(ctx, downloadstationops.APINames()...); err != nil {
-		return DownloadStationBTSettings{}, fmt.Errorf("prepare Download Station target: %w", err)
+		return nil, fmt.Errorf("prepare Download Station target: %w", err)
 	}
-	bt, _, err := downloadstationops.ExecuteBTGet(ctx, c.target, lockedExecutor{client: c})
-	if err != nil {
-		return DownloadStationBTSettings{}, downloadStationReadError("BT settings", c.downloadStationEvidenceLocked(), err)
+	evidence := c.downloadStationEvidenceLocked()
+	switch group {
+	case "bt":
+		bt, _, err := downloadstationops.ExecuteBTGet(ctx, c.target, lockedExecutor{client: c})
+		if err != nil {
+			return nil, downloadStationReadError("BT settings", evidence, err)
+		}
+		return json.Marshal(bt)
+	case "ftp_http":
+		fh, _, err := downloadstationops.ExecuteFtpHttpGet(ctx, c.target, lockedExecutor{client: c})
+		if err != nil {
+			return nil, downloadStationReadError("FTP/HTTP settings", evidence, err)
+		}
+		return json.Marshal(fh)
+	default:
+		return nil, fmt.Errorf("unsupported settings group %q", group)
 	}
-	return bt, nil
 }
 
 // ApplyDownloadStationSettingsChange merges a settings-group patch into the
 // freshly read full group object and submits it, so a field the caller did not
-// specify is never reset. Only the BitTorrent group is supported so far.
+// specify is never reset.
 func (c *Client) ApplyDownloadStationSettingsChange(ctx context.Context, change DownloadStationSettingsChange) (DownloadStationSettingsMutationResult, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if change.BT == nil {
-		return DownloadStationSettingsMutationResult{}, fmt.Errorf("settings change has no supported group patch")
-	}
 	if err := c.preparePackageScopedTargetLocked(ctx, downloadstationops.APINames()...); err != nil {
 		return DownloadStationSettingsMutationResult{}, fmt.Errorf("prepare Download Station mutation target: %w", err)
 	}
-	current, _, err := downloadstationops.ExecuteBTGet(ctx, c.target, lockedExecutor{client: c})
-	if err != nil {
-		return DownloadStationSettingsMutationResult{}, downloadStationReadError("BT settings", c.downloadStationEvidenceLocked(), err)
+	evidence := c.downloadStationEvidenceLocked()
+	switch {
+	case change.BT != nil:
+		current, _, err := downloadstationops.ExecuteBTGet(ctx, c.target, lockedExecutor{client: c})
+		if err != nil {
+			return DownloadStationSettingsMutationResult{}, downloadStationReadError("BT settings", evidence, err)
+		}
+		result, _, err := downloadstationops.ExecuteBTSet(ctx, c.target, lockedExecutor{client: c}, mergeBTSettings(current, *change.BT))
+		if err != nil {
+			return DownloadStationSettingsMutationResult{}, fmt.Errorf("apply Download Station BT settings: %w", err)
+		}
+		return result, nil
+	case change.FtpHttp != nil:
+		current, _, err := downloadstationops.ExecuteFtpHttpGet(ctx, c.target, lockedExecutor{client: c})
+		if err != nil {
+			return DownloadStationSettingsMutationResult{}, downloadStationReadError("FTP/HTTP settings", evidence, err)
+		}
+		result, _, err := downloadstationops.ExecuteFtpHttpSet(ctx, c.target, lockedExecutor{client: c}, mergeFtpHttpSettings(current, *change.FtpHttp))
+		if err != nil {
+			return DownloadStationSettingsMutationResult{}, fmt.Errorf("apply Download Station FTP/HTTP settings: %w", err)
+		}
+		return result, nil
+	default:
+		return DownloadStationSettingsMutationResult{}, fmt.Errorf("settings change has no supported group patch")
 	}
-	desired := mergeBTSettings(current, *change.BT)
-	result, _, err := downloadstationops.ExecuteBTSet(ctx, c.target, lockedExecutor{client: c}, desired)
-	if err != nil {
-		return DownloadStationSettingsMutationResult{}, fmt.Errorf("apply Download Station BT settings: %w", err)
+}
+
+func mergeFtpHttpSettings(current downloadstation.FtpHttpSettings, patch downloadstation.FtpHttpSettingsChange) downloadstation.FtpHttpSettings {
+	desired := current
+	if patch.MaxDownloadRate != nil {
+		desired.MaxDownloadRate = *patch.MaxDownloadRate
 	}
-	return result, nil
+	if patch.EnableMaxConn != nil {
+		desired.EnableMaxConn = *patch.EnableMaxConn
+	}
+	if patch.MaxConn != nil {
+		desired.MaxConn = *patch.MaxConn
+	}
+	return desired
 }
 
 func mergeBTSettings(current downloadstation.BTSettings, patch downloadstation.BTSettingsChange) downloadstation.BTSettings {

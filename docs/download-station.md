@@ -70,9 +70,11 @@ external content and `delete` removes the task, so those are **high** risk;
 
 ## Guarded settings write
 
-Settings are changed through the same plan/apply contract. A change is a
-patch-only per-group patch; so far the **BitTorrent** group is writable (ports,
-DHT, port forwarding, preview, encryption, rate limits, max peers, seeding):
+Settings are changed through the same plan/apply contract. A change carries
+exactly one patch-only group patch; the writable groups are added one at a time
+(so far **BitTorrent** — ports, DHT, port forwarding, preview, encryption, rate
+limits, max peers, seeding — and **FTP/HTTP** — rate limit and connection
+limit):
 
 ```console
 echo '{"bt":{"max_upload_rate":15,"enable_preview":false}}' | dsmctl download settings plan --nas office -o bt.plan.json
@@ -88,7 +90,7 @@ exposes `plan_download_station_settings_change` and
 `apply_download_station_settings_plan` (excluded from the read-only gateway).
 
 Field shapes are live-verified on Download Station 4.1.2. Still out of scope:
-task `edit` (rename/re-target), settings writes for the other groups (eMule,
-FTP/HTTP, NZB, auto-extraction, location, RSS, scheduler, global), BT/eMule
-search, RSS management, and eMule server management — see
+task `edit` (rename/re-target), settings writes for the remaining groups (eMule,
+NZB, auto-extraction, location, RSS, scheduler, global), BT/eMule search, RSS
+management, and eMule server management — see
 [WI-043](../spec/work-items/WI-043-download-station.md).

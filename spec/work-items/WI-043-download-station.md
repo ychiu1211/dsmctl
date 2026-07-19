@@ -57,9 +57,10 @@ are present on DSM 7.3; the legacy surface is simpler and version-stable).
 - RSS (`RSS.Site` / `RSS.Feed`), BT search (`BTSearch`), eMule search, eMule
   server management, and the per-task BT/file/tracker/peer/NZB detail
   sub-resources.
-- **Settings writes** for the non-BT groups (eMule, FtpHttp, Nzb, AutoExtraction,
-  Location, Rss, Scheduler, Global) — the BitTorrent group `set` is implemented;
-  the rest follow the same full-object read-merge-set pattern.
+- **Settings writes** for the remaining groups (eMule, Nzb, AutoExtraction,
+  Location, Rss, Scheduler, Global) — the BitTorrent and FTP/HTTP group `set`s
+  are implemented via a group-dispatched plan/apply; the rest follow the same
+  full-object read-merge-set pattern.
 - The task-management side of `SYNO.DownloadStation2.*` (`Task`, `Task.List`,
   `Task.BT.*`); the read module uses only the `Settings.*` slice of that
   generation plus the legacy Task list.
@@ -101,12 +102,14 @@ are present on DSM 7.3; the legacy surface is simpler and version-stable).
       postcondition verification and per-task failure surfacing; live-verified on
       4.1.2 (create→pause→resume→delete round-trip, fully reverted), which also
       confirmed the populated task-entry shape (uri/create_time added).
-- [x] Guarded settings write (BitTorrent group) via hash-bound plan/apply:
+- [x] Guarded settings write via a group-dispatched hash-bound plan/apply:
       full-object read-merge-set (the DSM set is a full replace), bound to the
-      complete observed group, per-field postcondition; enabling port forwarding
-      is high risk. Live-verified on 4.1.2 (max-upload + preview change, reverted).
-      `set` method + full-object form encoding confirmed against the C++ handler
-      registry and a reverted live probe.
+      complete observed group, per-field postcondition; enabling BT port
+      forwarding is high risk. BitTorrent and FTP/HTTP groups implemented and
+      live-verified on 4.1.2 (BT max-upload+preview, FTP/HTTP max-conn — both
+      reverted); `set` method + full-object form encoding confirmed against the
+      C++ handler registry and a reverted live probe. Remaining groups plug into
+      the same dispatch.
 - [ ] `edit` (rename/re-target) and settings writes for the other groups (eMule,
       FTP/HTTP, NZB, auto-extraction, location, RSS, scheduler, global).
 

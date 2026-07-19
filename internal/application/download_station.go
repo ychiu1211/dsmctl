@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -393,16 +394,17 @@ var _ downloadStationTaskClient = (*synology.Client)(nil)
 // --- Guarded settings write (BitTorrent group) ---
 
 type DownloadStationSettingsPlan struct {
-	APIVersion          string                             `json:"api_version" jsonschema:"Plan schema version"`
-	NAS                 string                             `json:"nas" jsonschema:"NAS profile selected during planning"`
-	ProfileRevision     uint64                             `json:"profile_revision,omitempty" jsonschema:"Persistent gateway profile revision selected during planning"`
-	Request             downloadstation.SettingsChange     `json:"request" jsonschema:"Validated patch-only settings intent"`
-	Observed            synology.DownloadStationBTSettings `json:"observed" jsonschema:"Complete BT settings observed during planning"`
-	ObservedFingerprint string                             `json:"observed_fingerprint" jsonschema:"SHA-256 hash of the complete observed settings group"`
-	Risk                string                             `json:"risk" jsonschema:"Plan risk level"`
-	Warnings            []string                           `json:"warnings" jsonschema:"Operational warnings"`
-	Summary             []string                           `json:"summary" jsonschema:"Human-readable patch operations"`
-	Hash                string                             `json:"hash" jsonschema:"SHA-256 approval hash covering intent and full observed state"`
+	APIVersion          string                         `json:"api_version" jsonschema:"Plan schema version"`
+	NAS                 string                         `json:"nas" jsonschema:"NAS profile selected during planning"`
+	ProfileRevision     uint64                         `json:"profile_revision,omitempty" jsonschema:"Persistent gateway profile revision selected during planning"`
+	Request             downloadstation.SettingsChange `json:"request" jsonschema:"Validated patch-only settings intent"`
+	Group               string                         `json:"group" jsonschema:"Settings group being changed, such as bt or ftp_http"`
+	Observed            json.RawMessage                `json:"observed" jsonschema:"Complete observed state of the changed settings group"`
+	ObservedFingerprint string                         `json:"observed_fingerprint" jsonschema:"SHA-256 hash of the complete observed settings group"`
+	Risk                string                         `json:"risk" jsonschema:"Plan risk level"`
+	Warnings            []string                       `json:"warnings" jsonschema:"Operational warnings"`
+	Summary             []string                       `json:"summary" jsonschema:"Human-readable patch operations"`
+	Hash                string                         `json:"hash" jsonschema:"SHA-256 approval hash covering intent and full observed state"`
 }
 
 type DownloadStationSettingsApplyResult struct {
@@ -413,7 +415,7 @@ type DownloadStationSettingsApplyResult struct {
 }
 
 type downloadStationSettingsClient interface {
-	DownloadStationBTSettings(context.Context) (synology.DownloadStationBTSettings, error)
+	DownloadStationSettingsGroup(context.Context, string) (json.RawMessage, error)
 	DownloadStationCapabilities(context.Context) (synology.DownloadStationCapabilities, synology.CompatibilityReport, error)
 	ApplyDownloadStationSettingsChange(context.Context, synology.DownloadStationSettingsChange) (synology.DownloadStationSettingsMutationResult, error)
 }
@@ -495,13 +497,37 @@ func (s *Service) ApplyDownloadStationSettingsPlan(ctx context.Context, plan Dow
 	if err != nil {
 		return DownloadStationSettingsApplyResult{}, authenticationError(plan.NAS, err)
 	}
-	if err := verifyDownloadStationBTPostcondition(ctx, client, *plan.Request.BT); err != nil {
+	if err := verifySettingsGroupPostcondition(ctx, client, plan.Request); err != nil {
 		return DownloadStationSettingsApplyResult{}, fmt.Errorf("verify settings change: %w", err)
 	}
 	return DownloadStationSettingsApplyResult{NAS: plan.NAS, PlanHash: plan.Hash, Applied: true, Result: result}, nil
 }
 
+// activeSettingsGroup returns the single group a change targets. Exactly one
+// group patch must be present.
+func activeSettingsGroup(change downloadstation.SettingsChange) (string, error) {
+	groups := []string{}
+	if change.BT != nil {
+		groups = append(groups, "bt")
+	}
+	if change.FtpHttp != nil {
+		groups = append(groups, "ftp_http")
+	}
+	switch len(groups) {
+	case 0:
+		return "", fmt.Errorf("settings change requires exactly one group patch (bt, ftp_http)")
+	case 1:
+		return groups[0], nil
+	default:
+		return "", fmt.Errorf("a settings change must target exactly one group, got %s", strings.Join(groups, ", "))
+	}
+}
+
 func planDownloadStationSettingsWithClient(ctx context.Context, nas string, client downloadStationSettingsClient, request downloadstation.SettingsChange) (DownloadStationSettingsPlan, error) {
+	group, err := activeSettingsGroup(request)
+	if err != nil {
+		return DownloadStationSettingsPlan{}, err
+	}
 	capabilities, _, err := client.DownloadStationCapabilities(ctx)
 	if err != nil {
 		return DownloadStationSettingsPlan{}, authenticationError(nas, err)
@@ -509,19 +535,23 @@ func planDownloadStationSettingsWithClient(ctx context.Context, nas string, clie
 	if !capabilities.SettingsRead || !capabilities.SettingsWrite {
 		return DownloadStationSettingsPlan{}, fmt.Errorf("NAS %q does not expose a verified Download Station settings read/write backend", nas)
 	}
-	observed, err := client.DownloadStationBTSettings(ctx)
+	observed, err := client.DownloadStationSettingsGroup(ctx, group)
 	if err != nil {
 		return DownloadStationSettingsPlan{}, authenticationError(nas, err)
 	}
-	if btChangeIsNoOp(observed, *request.BT) {
-		return DownloadStationSettingsPlan{}, fmt.Errorf("settings patch would not change the current BT settings")
+	noop, risk, warnings, summary, err := settingsGroupEffects(group, request, observed)
+	if err != nil {
+		return DownloadStationSettingsPlan{}, err
 	}
-	plan := DownloadStationSettingsPlan{APIVersion: downloadStationAPIVersion, NAS: nas, Request: request, Observed: observed}
+	if noop {
+		return DownloadStationSettingsPlan{}, fmt.Errorf("settings patch would not change the current %s settings", group)
+	}
+	plan := DownloadStationSettingsPlan{APIVersion: downloadStationAPIVersion, NAS: nas, Request: request, Group: group, Observed: observed}
 	plan.ObservedFingerprint, err = hashJSON(plan.Observed)
 	if err != nil {
 		return DownloadStationSettingsPlan{}, err
 	}
-	plan.Risk, plan.Warnings, plan.Summary = btSettingsEffects(observed, *request.BT)
+	plan.Risk, plan.Warnings, plan.Summary = risk, warnings, summary
 	plan.Hash, err = downloadStationSettingsPlanHash(plan)
 	if err != nil {
 		return DownloadStationSettingsPlan{}, err
@@ -529,11 +559,118 @@ func planDownloadStationSettingsWithClient(ctx context.Context, nas string, clie
 	return plan, nil
 }
 
-func validateSettingsChangeShape(change downloadstation.SettingsChange) error {
-	if change.BT == nil {
-		return fmt.Errorf("settings change requires a supported group patch (bt)")
+// settingsGroupEffects unmarshals the observed group and returns the no-op flag,
+// risk, warnings, and summary for the patch.
+func settingsGroupEffects(group string, change downloadstation.SettingsChange, observed json.RawMessage) (bool, string, []string, []string, error) {
+	switch group {
+	case "bt":
+		var current downloadstation.BTSettings
+		if err := json.Unmarshal(observed, &current); err != nil {
+			return false, "", nil, nil, fmt.Errorf("decode observed BT settings: %w", err)
+		}
+		risk, warnings, summary := btSettingsEffects(current, *change.BT)
+		return btChangeIsNoOp(current, *change.BT), risk, warnings, summary, nil
+	case "ftp_http":
+		var current downloadstation.FtpHttpSettings
+		if err := json.Unmarshal(observed, &current); err != nil {
+			return false, "", nil, nil, fmt.Errorf("decode observed FTP/HTTP settings: %w", err)
+		}
+		risk, warnings, summary := ftpHttpSettingsEffects(current, *change.FtpHttp)
+		return ftpHttpChangeIsNoOp(current, *change.FtpHttp), risk, warnings, summary, nil
+	default:
+		return false, "", nil, nil, fmt.Errorf("unsupported settings group %q", group)
 	}
-	bt := change.BT
+}
+
+func verifySettingsGroupPostcondition(ctx context.Context, client downloadStationSettingsClient, change downloadstation.SettingsChange) error {
+	group, err := activeSettingsGroup(change)
+	if err != nil {
+		return err
+	}
+	raw, err := client.DownloadStationSettingsGroup(ctx, group)
+	if err != nil {
+		return err
+	}
+	switch group {
+	case "bt":
+		var bt downloadstation.BTSettings
+		if err := json.Unmarshal(raw, &bt); err != nil {
+			return err
+		}
+		return verifyBTPostcondition(bt, *change.BT)
+	case "ftp_http":
+		var fh downloadstation.FtpHttpSettings
+		if err := json.Unmarshal(raw, &fh); err != nil {
+			return err
+		}
+		return verifyFtpHttpPostcondition(fh, *change.FtpHttp)
+	default:
+		return fmt.Errorf("unsupported settings group %q", group)
+	}
+}
+
+func ftpHttpChangeIsNoOp(current downloadstation.FtpHttpSettings, patch downloadstation.FtpHttpSettingsChange) bool {
+	return (patch.MaxDownloadRate == nil || *patch.MaxDownloadRate == current.MaxDownloadRate) &&
+		(patch.EnableMaxConn == nil || *patch.EnableMaxConn == current.EnableMaxConn) &&
+		(patch.MaxConn == nil || *patch.MaxConn == current.MaxConn)
+}
+
+func ftpHttpSettingsEffects(current downloadstation.FtpHttpSettings, patch downloadstation.FtpHttpSettingsChange) (string, []string, []string) {
+	summary := []string{}
+	if patch.MaxDownloadRate != nil && *patch.MaxDownloadRate != current.MaxDownloadRate {
+		summary = append(summary, fmt.Sprintf("set the FTP/HTTP max download rate to %d KB/s", *patch.MaxDownloadRate))
+	}
+	if patch.EnableMaxConn != nil && *patch.EnableMaxConn != current.EnableMaxConn {
+		summary = append(summary, fmt.Sprintf("set the per-task FTP connection limit to %t", *patch.EnableMaxConn))
+	}
+	if patch.MaxConn != nil && *patch.MaxConn != current.MaxConn {
+		summary = append(summary, fmt.Sprintf("set max FTP connections per task to %d", *patch.MaxConn))
+	}
+	return "medium", []string{}, summary
+}
+
+func verifyFtpHttpPostcondition(current downloadstation.FtpHttpSettings, patch downloadstation.FtpHttpSettingsChange) error {
+	if patch.MaxDownloadRate != nil && current.MaxDownloadRate != *patch.MaxDownloadRate {
+		return fmt.Errorf("max_download_rate is %d, want %d", current.MaxDownloadRate, *patch.MaxDownloadRate)
+	}
+	if patch.EnableMaxConn != nil && current.EnableMaxConn != *patch.EnableMaxConn {
+		return fmt.Errorf("enable_max_conn mismatch")
+	}
+	if patch.MaxConn != nil && current.MaxConn != *patch.MaxConn {
+		return fmt.Errorf("max_conn is %d, want %d", current.MaxConn, *patch.MaxConn)
+	}
+	return nil
+}
+
+func validateSettingsChangeShape(change downloadstation.SettingsChange) error {
+	group, err := activeSettingsGroup(change)
+	if err != nil {
+		return err
+	}
+	switch group {
+	case "bt":
+		return validateBTPatch(change.BT)
+	case "ftp_http":
+		return validateFtpHttpPatch(change.FtpHttp)
+	default:
+		return fmt.Errorf("unsupported settings group %q", group)
+	}
+}
+
+func validateFtpHttpPatch(fh *downloadstation.FtpHttpSettingsChange) error {
+	if fh.MaxDownloadRate == nil && fh.EnableMaxConn == nil && fh.MaxConn == nil {
+		return fmt.Errorf("ftp_http settings patch has no fields")
+	}
+	if fh.MaxDownloadRate != nil && *fh.MaxDownloadRate < 0 {
+		return fmt.Errorf("max_download_rate must not be negative")
+	}
+	if fh.MaxConn != nil && *fh.MaxConn < 1 {
+		return fmt.Errorf("max_conn must be at least 1")
+	}
+	return nil
+}
+
+func validateBTPatch(bt *downloadstation.BTSettingsChange) error {
 	if bt.TCPPort == nil && bt.DHTPort == nil && bt.EnableDHT == nil && bt.EnablePortForwarding == nil &&
 		bt.EnablePreview == nil && bt.Encryption == nil && bt.MaxDownloadRate == nil && bt.MaxUploadRate == nil &&
 		bt.MaxPeer == nil && bt.SeedingRatio == nil && bt.SeedingInterval == nil && bt.EnableSeedingAutoRemove == nil {
@@ -622,11 +759,7 @@ func btSettingsEffects(current synology.DownloadStationBTSettings, patch downloa
 	return risk, warnings, summary
 }
 
-func verifyDownloadStationBTPostcondition(ctx context.Context, client downloadStationSettingsClient, patch downloadstation.BTSettingsChange) error {
-	bt, err := client.DownloadStationBTSettings(ctx)
-	if err != nil {
-		return err
-	}
+func verifyBTPostcondition(bt synology.DownloadStationBTSettings, patch downloadstation.BTSettingsChange) error {
 	if patch.TCPPort != nil && bt.TCPPort != *patch.TCPPort {
 		return fmt.Errorf("tcp_port is %d, want %d", bt.TCPPort, *patch.TCPPort)
 	}

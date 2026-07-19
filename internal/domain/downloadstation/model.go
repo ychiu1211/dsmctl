@@ -156,11 +156,19 @@ type BTSettingsChange struct {
 	EnableSeedingAutoRemove *bool   `json:"enable_seeding_auto_remove,omitempty" jsonschema:"Auto-remove completed tasks when seeding stops"`
 }
 
+// FtpHttpSettingsChange is a patch-only FTP/HTTP settings intent.
+type FtpHttpSettingsChange struct {
+	MaxDownloadRate *int  `json:"max_download_rate,omitempty" jsonschema:"FTP/HTTP maximum download rate in KB/s; 0 = unlimited"`
+	EnableMaxConn   *bool `json:"enable_max_conn,omitempty" jsonschema:"Enforce the per-task FTP connection limit"`
+	MaxConn         *int  `json:"max_conn,omitempty" jsonschema:"Maximum FTP connections per task"`
+}
+
 // SettingsChange is a patch across Download Station settings groups. Exactly one
 // group patch is present per change. More groups are added as they are
 // implemented as guarded writes.
 type SettingsChange struct {
-	BT *BTSettingsChange `json:"bt,omitempty" jsonschema:"BitTorrent settings patch"`
+	BT      *BTSettingsChange      `json:"bt,omitempty" jsonschema:"BitTorrent settings patch"`
+	FtpHttp *FtpHttpSettingsChange `json:"ftp_http,omitempty" jsonschema:"FTP/HTTP settings patch"`
 }
 
 // SettingsMutationResult records the DSM backend that accepted a settings write.

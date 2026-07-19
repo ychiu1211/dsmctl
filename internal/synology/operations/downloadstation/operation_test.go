@@ -301,6 +301,24 @@ func TestSettingsWriteFailsClosedWithoutPackage(t *testing.T) {
 	}
 }
 
+func TestFtpHttpSetEncodesFullObject(t *testing.T) {
+	target := dsTarget("4.1.2-5012")
+	exec := &captureExecutor{response: `{}`}
+	result, _, err := ExecuteFtpHttpSet(context.Background(), target, exec, downloadstation.FtpHttpSettings{
+		MaxDownloadRate: 100, EnableMaxConn: true, MaxConn: 5,
+	})
+	if err != nil {
+		t.Fatalf("ExecuteFtpHttpSet() error = %v", err)
+	}
+	if result.Group != "ftp_http" || result.Method != "set" {
+		t.Fatalf("result = %#v", result)
+	}
+	req := exec.requests[0]
+	if req.Parameters.Get("ftp_http_max_download_rate") != "100" || req.Parameters.Get("enable_ftp_max_conn") != "true" || req.Parameters.Get("ftp_max_conn") != "5" {
+		t.Fatalf("ftphttp set params = %#v", req.Parameters)
+	}
+}
+
 func TestFailsClosedWithoutPackage(t *testing.T) {
 	// APIs present but the package catalog does not contain DownloadStation.
 	target := dsTarget("")

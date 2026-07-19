@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"crypto/tls"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -63,7 +64,7 @@ type Client interface {
 	DownloadStationSettings(ctx context.Context) (synology.DownloadStationSettings, error)
 	DownloadStationCapabilities(ctx context.Context) (synology.DownloadStationCapabilities, synology.CompatibilityReport, error)
 	ApplyDownloadStationTaskChange(ctx context.Context, change synology.DownloadStationTaskChange) (synology.DownloadStationTaskMutationResult, error)
-	DownloadStationBTSettings(ctx context.Context) (synology.DownloadStationBTSettings, error)
+	DownloadStationSettingsGroup(ctx context.Context, group string) (json.RawMessage, error)
 	ApplyDownloadStationSettingsChange(ctx context.Context, change synology.DownloadStationSettingsChange) (synology.DownloadStationSettingsMutationResult, error)
 }
 
