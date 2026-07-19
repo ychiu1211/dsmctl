@@ -24,7 +24,7 @@ const (
 
 var validScopes = map[string]struct{}{
 	remotepolicy.ScopeRead: {}, remotepolicy.ScopePlan: {},
-	remotepolicy.ScopeApply: {}, remotepolicy.ScopeAdmin: {},
+	remotepolicy.ScopeApply: {}, remotepolicy.ScopeLANDiscover: {},
 }
 
 var errApprovalMatch = errors.New("approval match")
@@ -76,6 +76,23 @@ type ApprovalInput struct {
 	ProfileRevision   uint64        `json:"profile_revision"`
 	RequestingTokenID string        `json:"requesting_token_id"`
 	TTL               time.Duration `json:"-"`
+}
+
+// PendingApproval is advisory administrator UI state derived from the closed,
+// non-secret fields of a successful remote high-risk plan result.
+type PendingApproval struct {
+	ID                string    `json:"id"`
+	PlanHash          string    `json:"plan_hash"`
+	NAS               string    `json:"nas"`
+	ProfileRevision   uint64    `json:"profile_revision"`
+	RequestingTokenID string    `json:"requesting_token_id"`
+	RequestingToken   string    `json:"requesting_token,omitempty"`
+	Tool              string    `json:"tool"`
+	Risk              string    `json:"risk"`
+	ResourceID        string    `json:"resource_id,omitempty"`
+	Summary           string    `json:"summary"`
+	CreatedAt         time.Time `json:"created_at"`
+	ExpiresAt         time.Time `json:"expires_at"`
 }
 
 type AuditEvent = remotepolicy.AuditEvent
@@ -231,7 +248,13 @@ func (r *Repository) changeMCPToken(ctx context.Context, id string, change func(
 		if err != nil {
 			return err
 		}
-		return tx.Bucket(bucketMCPTokens).Put([]byte(id), encoded)
+		if err := tx.Bucket(bucketMCPTokens).Put([]byte(id), encoded); err != nil {
+			return err
+		}
+		if record.RevokedAt != nil {
+			return deletePendingApprovalsForToken(tx, record.ID)
+		}
+		return nil
 	})
 	return token, err
 }
@@ -283,56 +306,89 @@ func (r *Repository) CreateApproval(ctx context.Context, input ApprovalInput, ad
 	input.PlanHash = strings.ToLower(strings.TrimSpace(input.PlanHash))
 	input.NAS = strings.TrimSpace(input.NAS)
 	input.RequestingTokenID = strings.TrimSpace(input.RequestingTokenID)
+	administrator = strings.TrimSpace(administrator)
+	if err := validateApprovalInput(input, administrator); err != nil {
+		return Approval{}, err
+	}
+	var approval Approval
+	err := r.db.Update(func(tx *bolt.Tx) error {
+		var err error
+		approval, _, err = r.createApprovalTx(tx, input, administrator, r.now().UTC())
+		return err
+	})
+	return approval, err
+}
+
+func validateApprovalInput(input ApprovalInput, administrator string) error {
 	if len(input.PlanHash) != 64 {
-		return Approval{}, errors.New("plan_hash must be a SHA-256 hash")
+		return errors.New("plan_hash must be a SHA-256 hash")
 	}
 	for _, char := range input.PlanHash {
 		if !strings.ContainsRune("0123456789abcdef", char) {
-			return Approval{}, errors.New("plan_hash must be a SHA-256 hash")
+			return errors.New("plan_hash must be a SHA-256 hash")
 		}
 	}
-	if input.NAS == "" || input.ProfileRevision == 0 || input.RequestingTokenID == "" {
-		return Approval{}, errors.New("NAS, profile_revision, and requesting_token_id are required")
+	if input.NAS == "" || input.RequestingTokenID == "" {
+		return errors.New("NAS and requesting_token_id are required")
 	}
-	administrator = strings.TrimSpace(administrator)
 	if administrator == "" {
-		return Approval{}, errors.New("administrator identity is required")
+		return errors.New("administrator identity is required")
+	}
+	if input.TTL < 0 || input.TTL > DefaultApprovalTTL {
+		return fmt.Errorf("approval TTL must be at most %s", DefaultApprovalTTL)
+	}
+	return nil
+}
+
+func (r *Repository) createApprovalTx(tx *bolt.Tx, input ApprovalInput, administrator string, now time.Time) (Approval, bool, error) {
+	profile, err := readProfile(tx, input.NAS)
+	if err != nil {
+		return Approval{}, false, err
+	}
+	if input.ProfileRevision == 0 {
+		input.ProfileRevision = profile.Revision
+	}
+	if profile.Revision != input.ProfileRevision {
+		return Approval{}, false, errors.New("NAS profile revision does not match")
+	}
+	token, err := readMCPToken(tx, input.RequestingTokenID)
+	if err != nil {
+		return Approval{}, false, err
+	}
+	if err := validateActiveToken(token, now); err != nil {
+		return Approval{}, false, err
+	}
+	if !sliceContains(token.Scopes, remotepolicy.ScopeApply) || !sliceContains(token.NASAllowlist, input.NAS) {
+		return Approval{}, false, remotepolicy.ErrDenied
+	}
+	if existing, ok, err := existingApproval(tx, input, now); err != nil {
+		return Approval{}, false, err
+	} else if ok {
+		if err := deleteMatchingApprovalRequests(tx, input.PlanHash, input.RequestingTokenID); err != nil {
+			return Approval{}, false, err
+		}
+		return existing, false, nil
+	}
+	id, err := randomID(16)
+	if err != nil {
+		return Approval{}, false, err
 	}
 	ttl := input.TTL
 	if ttl == 0 {
 		ttl = DefaultApprovalTTL
 	}
-	if ttl <= 0 || ttl > DefaultApprovalTTL {
-		return Approval{}, fmt.Errorf("approval TTL must be at most %s", DefaultApprovalTTL)
-	}
-	id, err := randomID(16)
-	if err != nil {
-		return Approval{}, err
-	}
-	now := time.Now().UTC()
 	approval := Approval{ID: id, PlanHash: input.PlanHash, NAS: input.NAS, ProfileRevision: input.ProfileRevision, RequestingTokenID: input.RequestingTokenID, Administrator: administrator, CreatedAt: now, ExpiresAt: now.Add(ttl)}
-	err = r.db.Update(func(tx *bolt.Tx) error {
-		profile, err := readProfile(tx, input.NAS)
-		if err != nil || profile.Revision != input.ProfileRevision {
-			return errors.New("NAS profile revision does not match")
-		}
-		token, err := readMCPToken(tx, input.RequestingTokenID)
-		if err != nil {
-			return err
-		}
-		if err := validateActiveToken(token, now); err != nil {
-			return err
-		}
-		if !sliceContains(token.Scopes, remotepolicy.ScopeApply) || !sliceContains(token.NASAllowlist, input.NAS) {
-			return remotepolicy.ErrDenied
-		}
-		encoded, err := json.Marshal(approval)
-		if err != nil {
-			return err
-		}
-		return tx.Bucket(bucketApprovals).Put([]byte(id), encoded)
-	})
-	return approval, err
+	encoded, err := json.Marshal(approval)
+	if err != nil {
+		return Approval{}, false, err
+	}
+	if err := tx.Bucket(bucketApprovals).Put([]byte(id), encoded); err != nil {
+		return Approval{}, false, err
+	}
+	if err := deleteMatchingApprovalRequests(tx, input.PlanHash, input.RequestingTokenID); err != nil {
+		return Approval{}, false, err
+	}
+	return approval, true, nil
 }
 
 func (r *Repository) Approvals(ctx context.Context, includeConsumed bool) ([]Approval, error) {
@@ -354,6 +410,151 @@ func (r *Repository) Approvals(ctx context.Context, includeConsumed bool) ([]App
 	})
 	sort.Slice(result, func(i, j int) bool { return result[i].CreatedAt.After(result[j].CreatedAt) })
 	return result, err
+}
+
+// RecordPendingApproval stores only the closed plan summary supplied by the
+// remote policy boundary. Requests are deduplicated per plan hash and token,
+// refreshed on re-plan, and bounded independently of standard approvals.
+func (r *Repository) RecordPendingApproval(ctx context.Context, input remotepolicy.PendingApprovalRequest) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	input.PlanHash = strings.ToLower(strings.TrimSpace(input.PlanHash))
+	input.NAS = strings.TrimSpace(input.NAS)
+	input.RequestingTokenID = strings.TrimSpace(input.RequestingTokenID)
+	input.Tool = strings.TrimSpace(input.Tool)
+	input.Risk = strings.ToLower(strings.TrimSpace(input.Risk))
+	input.ResourceID = strings.TrimSpace(input.ResourceID)
+	input.Summary = strings.TrimSpace(input.Summary)
+	if err := validatePendingApproval(input); err != nil {
+		return err
+	}
+	now := r.now().UTC()
+	return r.db.Update(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket(bucketApprovalRequests)
+		if err := prunePendingApprovals(bucket, now); err != nil {
+			return err
+		}
+		var current PendingApproval
+		if err := bucket.ForEach(func(_, value []byte) error {
+			var candidate PendingApproval
+			if err := json.Unmarshal(value, &candidate); err != nil {
+				return err
+			}
+			if candidate.PlanHash == input.PlanHash && candidate.RequestingTokenID == input.RequestingTokenID {
+				current = candidate
+				return errApprovalMatch
+			}
+			return nil
+		}); err != nil && !errors.Is(err, errApprovalMatch) {
+			return err
+		}
+		if current.ID == "" {
+			id, err := randomID(16)
+			if err != nil {
+				return err
+			}
+			current.ID = id
+		}
+		current.PlanHash = input.PlanHash
+		current.NAS = input.NAS
+		current.ProfileRevision = input.ProfileRevision
+		current.RequestingTokenID = input.RequestingTokenID
+		current.Tool = input.Tool
+		current.Risk = input.Risk
+		current.ResourceID = input.ResourceID
+		current.Summary = input.Summary
+		current.CreatedAt = now
+		current.ExpiresAt = now.Add(PendingApprovalTTL)
+		encoded, err := json.Marshal(current)
+		if err != nil {
+			return err
+		}
+		if err := bucket.Put([]byte(current.ID), encoded); err != nil {
+			return err
+		}
+		return boundPendingApprovals(bucket)
+	})
+}
+
+func (r *Repository) PendingApprovals(ctx context.Context) ([]PendingApproval, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	var result []PendingApproval
+	now := r.now().UTC()
+	err := r.db.Update(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket(bucketApprovalRequests)
+		if err := prunePendingApprovals(bucket, now); err != nil {
+			return err
+		}
+		return bucket.ForEach(func(_, value []byte) error {
+			var item PendingApproval
+			if err := json.Unmarshal(value, &item); err != nil {
+				return err
+			}
+			if token, err := readMCPToken(tx, item.RequestingTokenID); err == nil {
+				item.RequestingToken = token.Name
+			}
+			result = append(result, item)
+			return nil
+		})
+	})
+	sort.Slice(result, func(i, j int) bool { return result[i].CreatedAt.After(result[j].CreatedAt) })
+	return result, err
+}
+
+func (r *Repository) ApprovePendingApproval(ctx context.Context, id, administrator string) (Approval, error) {
+	if err := ctx.Err(); err != nil {
+		return Approval{}, err
+	}
+	id = strings.TrimSpace(id)
+	administrator = strings.TrimSpace(administrator)
+	if id == "" || administrator == "" {
+		return Approval{}, errors.New("approval request and administrator are required")
+	}
+	var approval Approval
+	now := r.now().UTC()
+	err := r.db.Update(func(tx *bolt.Tx) error {
+		value := tx.Bucket(bucketApprovalRequests).Get([]byte(id))
+		if value == nil {
+			return fmt.Errorf("%w: pending approval", ErrNotFound)
+		}
+		var request PendingApproval
+		if err := json.Unmarshal(value, &request); err != nil {
+			return err
+		}
+		if !now.Before(request.ExpiresAt) {
+			if err := tx.Bucket(bucketApprovalRequests).Delete([]byte(id)); err != nil {
+				return err
+			}
+			return fmt.Errorf("%w: pending approval expired", ErrNotFound)
+		}
+		var err error
+		approval, _, err = r.createApprovalTx(tx, ApprovalInput{PlanHash: request.PlanHash, NAS: request.NAS, ProfileRevision: request.ProfileRevision, RequestingTokenID: request.RequestingTokenID}, administrator, now)
+		if err != nil {
+			return err
+		}
+		return r.appendAuditTx(tx, AuditEvent{Time: now, ActorType: "gateway_admin", ActorID: administrator, Action: "approval.request.approve", Tool: request.Tool, NAS: request.NAS, Outcome: "success"})
+	})
+	return approval, err
+}
+
+func (r *Repository) DismissPendingApproval(ctx context.Context, id string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return errors.New("approval request is required")
+	}
+	return r.db.Update(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket(bucketApprovalRequests)
+		if bucket.Get([]byte(id)) == nil {
+			return fmt.Errorf("%w: pending approval", ErrNotFound)
+		}
+		return bucket.Delete([]byte(id))
+	})
 }
 
 // AdmitRemoteApply re-evaluates token validity, scope, target access, profile
@@ -489,6 +690,28 @@ func (r *Repository) AuditEvents(ctx context.Context, query AuditQuery) ([]Audit
 	return result, err
 }
 
+// AuditExport returns every retained event in chronological order. The store
+// is already bounded to maxAuditEvents, so export never inherits the 1,000-row
+// interactive-view limit.
+func (r *Repository) AuditExport(ctx context.Context) ([]AuditEvent, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	result := make([]AuditEvent, 0)
+	err := r.db.View(func(tx *bolt.Tx) error {
+		cursor := tx.Bucket(bucketAudit).Cursor()
+		for _, value := cursor.First(); value != nil; _, value = cursor.Next() {
+			var event AuditEvent
+			if err := json.Unmarshal(value, &event); err != nil {
+				return err
+			}
+			result = append(result, event)
+		}
+		return nil
+	})
+	return result, err
+}
+
 func normalizeMCPTokenInput(input MCPTokenInput) (MCPTokenInput, error) {
 	input.Name = strings.TrimSpace(input.Name)
 	if input.Name == "" || len(input.Name) > MaxMCPTokenNameBytes {
@@ -515,6 +738,165 @@ func normalizeMCPTokenInput(input MCPTokenInput) (MCPTokenInput, error) {
 		input.ExpiresAt = &value
 	}
 	return input, nil
+}
+
+func migrateLANDiscoveryScope(tx *bolt.Tx) error {
+	bucket := tx.Bucket(bucketMCPTokens)
+	return bucket.ForEach(func(key, value []byte) error {
+		record, err := decodeMCPToken(value)
+		if err != nil {
+			return err
+		}
+		changed := false
+		for index, scope := range record.Scopes {
+			if scope == "nas.admin" {
+				record.Scopes[index] = remotepolicy.ScopeLANDiscover
+				changed = true
+			}
+		}
+		if !changed {
+			return nil
+		}
+		record.Scopes = uniqueSorted(record.Scopes)
+		encoded, err := json.Marshal(record)
+		if err != nil {
+			return err
+		}
+		return bucket.Put(key, encoded)
+	})
+}
+
+func validatePendingApproval(input remotepolicy.PendingApprovalRequest) error {
+	if len(input.PlanHash) != 64 {
+		return errors.New("plan hash must be a SHA-256 hash")
+	}
+	for _, char := range input.PlanHash {
+		if !strings.ContainsRune("0123456789abcdef", char) {
+			return errors.New("plan hash must be a SHA-256 hash")
+		}
+	}
+	if input.NAS == "" || input.ProfileRevision == 0 || input.RequestingTokenID == "" || input.Tool == "" || input.Risk != "high" || input.Summary == "" {
+		return errors.New("pending approval requires NAS, revision, token, tool, high risk, and summary")
+	}
+	if len(input.NAS) > 64 || len(input.RequestingTokenID) > 64 || len(input.Tool) > 128 || len(input.ResourceID) > 256 || len(input.Summary) > 4096 {
+		return errors.New("pending approval scalar exceeds its size limit")
+	}
+	return nil
+}
+
+func existingApproval(tx *bolt.Tx, input ApprovalInput, now time.Time) (Approval, bool, error) {
+	var match Approval
+	err := tx.Bucket(bucketApprovals).ForEach(func(_, value []byte) error {
+		var candidate Approval
+		if err := json.Unmarshal(value, &candidate); err != nil {
+			return err
+		}
+		if candidate.ConsumedAt == nil && now.Before(candidate.ExpiresAt) && candidate.PlanHash == input.PlanHash && candidate.NAS == input.NAS && candidate.ProfileRevision == input.ProfileRevision && candidate.RequestingTokenID == input.RequestingTokenID {
+			match = candidate
+			return errApprovalMatch
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, errApprovalMatch) {
+		return Approval{}, false, err
+	}
+	return match, match.ID != "", nil
+}
+
+func deleteMatchingApprovalRequests(tx *bolt.Tx, hash, tokenID string) error {
+	bucket := tx.Bucket(bucketApprovalRequests)
+	var ids [][]byte
+	if err := bucket.ForEach(func(key, value []byte) error {
+		var request PendingApproval
+		if err := json.Unmarshal(value, &request); err != nil {
+			return err
+		}
+		if request.PlanHash == hash && request.RequestingTokenID == tokenID {
+			ids = append(ids, append([]byte(nil), key...))
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if err := bucket.Delete(id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func deletePendingApprovalsForToken(tx *bolt.Tx, tokenID string) error {
+	bucket := tx.Bucket(bucketApprovalRequests)
+	var ids [][]byte
+	if err := bucket.ForEach(func(key, value []byte) error {
+		var request PendingApproval
+		if err := json.Unmarshal(value, &request); err != nil {
+			return err
+		}
+		if request.RequestingTokenID == tokenID {
+			ids = append(ids, append([]byte(nil), key...))
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if err := bucket.Delete(id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func prunePendingApprovals(bucket *bolt.Bucket, now time.Time) error {
+	var ids [][]byte
+	if err := bucket.ForEach(func(key, value []byte) error {
+		var request PendingApproval
+		if err := json.Unmarshal(value, &request); err != nil {
+			return err
+		}
+		if !now.Before(request.ExpiresAt) {
+			ids = append(ids, append([]byte(nil), key...))
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if err := bucket.Delete(id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func boundPendingApprovals(bucket *bolt.Bucket) error {
+	for {
+		count := 0
+		var oldest PendingApproval
+		var oldestKey []byte
+		if err := bucket.ForEach(func(key, value []byte) error {
+			count++
+			var request PendingApproval
+			if err := json.Unmarshal(value, &request); err != nil {
+				return err
+			}
+			if oldestKey == nil || request.CreatedAt.Before(oldest.CreatedAt) {
+				oldest = request
+				oldestKey = append([]byte(nil), key...)
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+		if count <= MaxPendingApprovals || oldestKey == nil {
+			return nil
+		}
+		if err := bucket.Delete(oldestKey); err != nil {
+			return err
+		}
+	}
 }
 
 func uniqueSorted(values []string) []string {

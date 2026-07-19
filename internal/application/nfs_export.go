@@ -20,16 +20,17 @@ type NFSExportStateResult struct {
 }
 
 type NFSExportCapabilitiesResult struct {
-	NAS          string                          `json:"nas" jsonschema:"NAS profile used for the request"`
-	Capabilities synology.NFSExportCapabilities  `json:"capabilities" jsonschema:"Selected NFS export read and set operations"`
-	Report       synology.CompatibilityReport    `json:"report" jsonschema:"Discovered APIs and selected NFS export backend"`
+	NAS          string                         `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.NFSExportCapabilities `json:"capabilities" jsonschema:"Selected NFS export read and set operations"`
+	Report       synology.CompatibilityReport   `json:"report" jsonschema:"Discovered APIs and selected NFS export backend"`
 }
 
 type NFSExportPlan struct {
 	APIVersion          string                  `json:"api_version" jsonschema:"Plan schema version"`
 	NAS                 string                  `json:"nas" jsonschema:"NAS profile selected during planning"`
+	ProfileRevision     uint64                  `json:"profile_revision,omitempty" jsonschema:"Persistent gateway profile revision selected during planning"`
 	Request             nfsexport.ChangeRequest `json:"request" jsonschema:"Complete desired NFS export rule set for one shared folder"`
-	Observed            synology.NFSShareExport  `json:"observed" jsonschema:"Complete NFS export rule set observed during planning"`
+	Observed            synology.NFSShareExport `json:"observed" jsonschema:"Complete NFS export rule set observed during planning"`
 	ObservedFingerprint string                  `json:"observed_fingerprint" jsonschema:"SHA-256 hash of the complete observed rule set"`
 	Destructive         bool                    `json:"destructive" jsonschema:"Whether the plan removes an existing export rule"`
 	Risk                string                  `json:"risk" jsonschema:"Plan risk level: medium or high"`
@@ -86,11 +87,25 @@ func (s *Service) PlanNFSExportChange(ctx context.Context, requestedNAS string, 
 	if err != nil {
 		return NFSExportPlan{}, err
 	}
-	return planNFSExportChangeWithClient(ctx, name, client, request)
+	plan, err := planNFSExportChangeWithClient(ctx, name, client, request)
+	if err != nil {
+		return NFSExportPlan{}, err
+	}
+	plan.ProfileRevision, err = s.profileRevision(ctx, name)
+	if err == nil {
+		plan.Hash, err = nfsExportPlanHash(plan)
+	}
+	return plan, err
 }
 
 func (s *Service) ApplyNFSExportPlan(ctx context.Context, plan NFSExportPlan, approvalHash string) (NFSExportApplyResult, error) {
 	if err := validateNFSExportPlan(plan, approvalHash); err != nil {
+		return NFSExportApplyResult{}, err
+	}
+	if err := s.authorizeRemoteApply(ctx, plan.NAS, plan.ProfileRevision, plan.Hash, plan.Risk); err != nil {
+		return NFSExportApplyResult{}, err
+	}
+	if err := s.verifyProfileRevision(ctx, plan.NAS, plan.ProfileRevision); err != nil {
 		return NFSExportApplyResult{}, err
 	}
 	name, client, err := s.nfsExportClient(ctx, plan.NAS)
@@ -107,6 +122,11 @@ func applyNFSExportPlanWithClient(ctx context.Context, client nfsExportClient, p
 	current, err := planNFSExportChangeWithClient(ctx, plan.NAS, client, plan.Request)
 	if err != nil {
 		return NFSExportApplyResult{}, fmt.Errorf("NFS export plan precondition no longer holds: %w", err)
+	}
+	current.ProfileRevision = plan.ProfileRevision
+	current.Hash, err = nfsExportPlanHash(current)
+	if err != nil {
+		return NFSExportApplyResult{}, err
 	}
 	if current.ObservedFingerprint != plan.ObservedFingerprint || current.Hash != plan.Hash {
 		return NFSExportApplyResult{}, fmt.Errorf("NFS export plan is stale; create a new plan")

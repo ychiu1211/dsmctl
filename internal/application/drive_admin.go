@@ -139,27 +139,28 @@ func validateDriveAdminLogQuery(query *driveadmin.LogQuery) error {
 const driveConfigAPIVersion = "dsmctl.io/v1alpha1"
 
 type DriveServerConfigResult struct {
-	NAS    string                    `json:"nas" jsonschema:"NAS profile used for the request"`
+	NAS    string                     `json:"nas" jsonschema:"NAS profile used for the request"`
 	Config synology.DriveServerConfig `json:"config" jsonschema:"Normalized Drive server database configuration"`
 }
 
 type DriveConfigPlan struct {
-	APIVersion          string                         `json:"api_version" jsonschema:"Plan schema version"`
-	NAS                 string                         `json:"nas" jsonschema:"NAS profile selected during planning"`
-	Request             driveadmin.ServerConfigChange  `json:"request" jsonschema:"Patch-only Drive server config intent"`
-	Observed            synology.DriveServerConfig     `json:"observed" jsonschema:"Complete config observed during planning"`
-	ObservedFingerprint string                         `json:"observed_fingerprint" jsonschema:"SHA-256 hash of the complete observed config"`
-	Risk                string                         `json:"risk" jsonschema:"Plan risk level: medium or high"`
-	Warnings            []string                       `json:"warnings" jsonschema:"Resource-impact warnings"`
-	Summary             []string                       `json:"summary" jsonschema:"Human-readable patch operations"`
-	Hash                string                         `json:"hash" jsonschema:"SHA-256 approval hash covering intent and full observed config"`
+	APIVersion          string                        `json:"api_version" jsonschema:"Plan schema version"`
+	NAS                 string                        `json:"nas" jsonschema:"NAS profile selected during planning"`
+	ProfileRevision     uint64                        `json:"profile_revision,omitempty" jsonschema:"Persistent gateway profile revision selected during planning"`
+	Request             driveadmin.ServerConfigChange `json:"request" jsonschema:"Patch-only Drive server config intent"`
+	Observed            synology.DriveServerConfig    `json:"observed" jsonschema:"Complete config observed during planning"`
+	ObservedFingerprint string                        `json:"observed_fingerprint" jsonschema:"SHA-256 hash of the complete observed config"`
+	Risk                string                        `json:"risk" jsonschema:"Plan risk level: medium or high"`
+	Warnings            []string                      `json:"warnings" jsonschema:"Resource-impact warnings"`
+	Summary             []string                      `json:"summary" jsonschema:"Human-readable patch operations"`
+	Hash                string                        `json:"hash" jsonschema:"SHA-256 approval hash covering intent and full observed config"`
 }
 
 type DriveConfigApplyResult struct {
-	NAS      string                              `json:"nas" jsonschema:"NAS profile used for apply"`
-	PlanHash string                              `json:"plan_hash" jsonschema:"Approved plan hash"`
-	Applied  bool                                `json:"applied" jsonschema:"Whether DSM accepted the change and postcondition verification passed"`
-	Result   synology.DriveConfigMutationResult  `json:"result" jsonschema:"Selected DSM mutation backend"`
+	NAS      string                             `json:"nas" jsonschema:"NAS profile used for apply"`
+	PlanHash string                             `json:"plan_hash" jsonschema:"Approved plan hash"`
+	Applied  bool                               `json:"applied" jsonschema:"Whether DSM accepted the change and postcondition verification passed"`
+	Result   synology.DriveConfigMutationResult `json:"result" jsonschema:"Selected DSM mutation backend"`
 }
 
 func (s *Service) GetDriveServerConfig(ctx context.Context, requestedNAS string) (DriveServerConfigResult, error) {
@@ -182,11 +183,25 @@ func (s *Service) PlanDriveConfigChange(ctx context.Context, requestedNAS string
 	if err != nil {
 		return DriveConfigPlan{}, err
 	}
-	return planDriveConfigChangeWithClient(ctx, name, client, request)
+	plan, err := planDriveConfigChangeWithClient(ctx, name, client, request)
+	if err != nil {
+		return DriveConfigPlan{}, err
+	}
+	plan.ProfileRevision, err = s.profileRevision(ctx, name)
+	if err == nil {
+		plan.Hash, err = driveConfigPlanHash(plan)
+	}
+	return plan, err
 }
 
 func (s *Service) ApplyDriveConfigPlan(ctx context.Context, plan DriveConfigPlan, approvalHash string) (DriveConfigApplyResult, error) {
 	if err := validateDriveConfigPlan(plan, approvalHash); err != nil {
+		return DriveConfigApplyResult{}, err
+	}
+	if err := s.authorizeRemoteApply(ctx, plan.NAS, plan.ProfileRevision, plan.Hash, plan.Risk); err != nil {
+		return DriveConfigApplyResult{}, err
+	}
+	if err := s.verifyProfileRevision(ctx, plan.NAS, plan.ProfileRevision); err != nil {
 		return DriveConfigApplyResult{}, err
 	}
 	name, client, err := s.driveAdminClient(ctx, plan.NAS)
@@ -199,6 +214,11 @@ func (s *Service) ApplyDriveConfigPlan(ctx context.Context, plan DriveConfigPlan
 	current, err := planDriveConfigChangeWithClient(ctx, plan.NAS, client, plan.Request)
 	if err != nil {
 		return DriveConfigApplyResult{}, fmt.Errorf("Drive config plan precondition no longer holds: %w", err)
+	}
+	current.ProfileRevision = plan.ProfileRevision
+	current.Hash, err = driveConfigPlanHash(current)
+	if err != nil {
+		return DriveConfigApplyResult{}, err
 	}
 	if current.ObservedFingerprint != plan.ObservedFingerprint || current.Hash != plan.Hash {
 		return DriveConfigApplyResult{}, fmt.Errorf("Drive config plan is stale; create a new plan")

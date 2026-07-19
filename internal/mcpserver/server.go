@@ -180,7 +180,7 @@ type planNFSExportChangeOutput struct {
 
 type applyNFSExportPlanInput struct {
 	Plan         application.NFSExportPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_nfs_export_change"`
-	ApprovalHash string                   `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved NFS export plan"`
+	ApprovalHash string                    `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved NFS export plan"`
 }
 
 type applyNFSExportPlanOutput struct {
@@ -209,7 +209,7 @@ type planServiceDiscoveryChangeOutput struct {
 
 type applyServiceDiscoveryPlanInput struct {
 	Plan         application.ServiceDiscoveryPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_service_discovery_change"`
-	ApprovalHash string                          `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved service discovery plan"`
+	ApprovalHash string                           `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved service discovery plan"`
 }
 
 type applyServiceDiscoveryPlanOutput struct {
@@ -238,7 +238,7 @@ type planFTPServicesChangeOutput struct {
 
 type applyFTPServicesPlanInput struct {
 	Plan         application.FTPServicesPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_ftp_service_change"`
-	ApprovalHash string                     `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved FTP services plan"`
+	ApprovalHash string                      `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved FTP services plan"`
 }
 
 type applyFTPServicesPlanOutput struct {
@@ -296,7 +296,7 @@ type planTFTPServiceChangeOutput struct {
 
 type applyTFTPServicePlanInput struct {
 	Plan         application.TFTPServicePlan `json:"plan" jsonschema:"Unmodified plan returned by plan_tftp_service_change"`
-	ApprovalHash string                     `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved TFTP service plan"`
+	ApprovalHash string                      `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved TFTP service plan"`
 }
 
 type applyTFTPServicePlanOutput struct {
@@ -329,7 +329,7 @@ type planPhotosChangeOutput struct {
 
 type applyPhotosPlanInput struct {
 	Plan         application.PhotosPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_photos_change"`
-	ApprovalHash string                `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved Photos plan"`
+	ApprovalHash string                 `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved Photos plan"`
 }
 
 type applyPhotosPlanOutput struct {
@@ -372,7 +372,7 @@ type planSurveillanceHomeModeChangeOutput struct {
 
 type applySurveillanceHomeModePlanInput struct {
 	Plan         application.SurveillanceHomeModePlan `json:"plan" jsonschema:"Unmodified plan returned by plan_surveillance_home_mode_change"`
-	ApprovalHash string                              `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved Home Mode plan"`
+	ApprovalHash string                               `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved Home Mode plan"`
 }
 
 type applySurveillanceHomeModePlanOutput struct {
@@ -687,7 +687,7 @@ type planDriveConfigChangeOutput struct {
 
 type applyDriveConfigPlanInput struct {
 	Plan         application.DriveConfigPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_drive_config_change"`
-	ApprovalHash string                     `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved Drive config plan"`
+	ApprovalHash string                      `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved Drive config plan"`
 }
 
 type applyDriveConfigPlanOutput struct {

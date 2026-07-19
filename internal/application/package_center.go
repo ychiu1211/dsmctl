@@ -68,7 +68,7 @@ type packageClient interface {
 
 // PackageCatalogResult is the online-catalog read result.
 type PackageCatalogResult struct {
-	NAS     string                 `json:"nas" jsonschema:"NAS profile used for the request"`
+	NAS     string                  `json:"nas" jsonschema:"NAS profile used for the request"`
 	Catalog synology.PackageCatalog `json:"catalog" jsonschema:"Packages offered by the online package server"`
 }
 

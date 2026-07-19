@@ -25,6 +25,7 @@ type RsyncServiceCapabilitiesResult struct {
 type RsyncServicePlan struct {
 	APIVersion          string                     `json:"api_version" jsonschema:"Plan schema version"`
 	NAS                 string                     `json:"nas" jsonschema:"NAS profile selected during planning"`
+	ProfileRevision     uint64                     `json:"profile_revision,omitempty" jsonschema:"Persistent gateway profile revision selected during planning"`
 	Request             rsyncservice.Change        `json:"request" jsonschema:"Patch-only rsync-service intent"`
 	Observed            synology.RsyncServiceState `json:"observed" jsonschema:"Complete rsync-service state observed during planning"`
 	ObservedFingerprint string                     `json:"observed_fingerprint" jsonschema:"SHA-256 hash of the complete observed state"`
@@ -80,11 +81,25 @@ func (s *Service) PlanRsyncServiceChange(ctx context.Context, requestedNAS strin
 	if err != nil {
 		return RsyncServicePlan{}, err
 	}
-	return planRsyncServiceChangeWithClient(ctx, name, client, request)
+	plan, err := planRsyncServiceChangeWithClient(ctx, name, client, request)
+	if err != nil {
+		return RsyncServicePlan{}, err
+	}
+	plan.ProfileRevision, err = s.profileRevision(ctx, name)
+	if err == nil {
+		plan.Hash, err = rsyncServicePlanHash(plan)
+	}
+	return plan, err
 }
 
 func (s *Service) ApplyRsyncServicePlan(ctx context.Context, plan RsyncServicePlan, approvalHash string) (RsyncServiceApplyResult, error) {
 	if err := validateRsyncServicePlan(plan, approvalHash); err != nil {
+		return RsyncServiceApplyResult{}, err
+	}
+	if err := s.authorizeRemoteApply(ctx, plan.NAS, plan.ProfileRevision, plan.Hash, plan.Risk); err != nil {
+		return RsyncServiceApplyResult{}, err
+	}
+	if err := s.verifyProfileRevision(ctx, plan.NAS, plan.ProfileRevision); err != nil {
 		return RsyncServiceApplyResult{}, err
 	}
 	name, client, err := s.rsyncServiceClient(ctx, plan.NAS)
@@ -101,6 +116,11 @@ func applyRsyncServicePlanWithClient(ctx context.Context, client rsyncServiceCli
 	current, err := planRsyncServiceChangeWithClient(ctx, plan.NAS, client, plan.Request)
 	if err != nil {
 		return RsyncServiceApplyResult{}, fmt.Errorf("rsync service plan precondition no longer holds: %w", err)
+	}
+	current.ProfileRevision = plan.ProfileRevision
+	current.Hash, err = rsyncServicePlanHash(current)
+	if err != nil {
+		return RsyncServiceApplyResult{}, err
 	}
 	if current.ObservedFingerprint != plan.ObservedFingerprint || current.Hash != plan.Hash {
 		return RsyncServiceApplyResult{}, fmt.Errorf("rsync service plan is stale; create a new plan")

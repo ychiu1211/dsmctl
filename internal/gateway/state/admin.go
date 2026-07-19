@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	bolt "go.etcd.io/bbolt"
 	"golang.org/x/crypto/argon2"
@@ -75,8 +76,8 @@ func normalizeAdministratorUsername(value string) (string, error) {
 }
 
 func validateNewAdministratorPassword(value string) error {
-	if len(value) < 12 || len(value) > 1024 {
-		return errors.New("administrator password must be between 12 and 1024 bytes")
+	if utf8.RuneCountInString(value) < 12 || len(value) > 4096 {
+		return errors.New("administrator password must be at least 12 characters")
 	}
 	return nil
 }
@@ -448,7 +449,7 @@ func (r *Repository) legacyAdministrationState() (bool, bool, error) {
 			return nil
 		}
 		legacyAdmin = len(meta.Get(keyAdminDigest)) > 0 || len(meta.Get(keyBootstrapDigest)) > 0 || len(meta.Get(keyBootstrapUsed)) > 0 || len(meta.Get(keyAdminMode)) > 0
-		for _, name := range [][]byte{bucketProfiles, bucketSecrets, bucketMCPTokens, bucketTokenDigests, bucketApprovals} {
+		for _, name := range [][]byte{bucketProfiles, bucketSecrets, bucketMCPTokens, bucketTokenDigests, bucketApprovals, bucketApprovalRequests} {
 			if bucket := tx.Bucket(name); bucket != nil && bucket.Stats().KeyN > 0 {
 				managedData = true
 			}

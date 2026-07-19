@@ -3,7 +3,9 @@ package state
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +18,226 @@ import (
 
 	"github.com/ychiu1211/dsmctl/internal/remotepolicy"
 )
+
+func TestPendingApprovalLifecycleIsDeduplicatedBoundedAndAdvisory(t *testing.T) {
+	now := time.Date(2026, 7, 19, 8, 0, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "gateway.db")
+	repository, err := OpenWithOptions(path, bytes.Repeat([]byte{9}, 32), OpenOptions{Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	ctx := context.Background()
+	profile, err := repository.CreateProfile(ctx, ProfileInput{Name: "office", URL: "https://office.example"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	issued, err := repository.CreateMCPToken(ctx, MCPTokenInput{Name: "operator", Scopes: []string{remotepolicy.ScopeApply}, NASAllowlist: []string{"office"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := func(hash, summary string) {
+		t.Helper()
+		if err := repository.RecordPendingApproval(ctx, remotepolicy.PendingApprovalRequest{PlanHash: hash, NAS: "office", ProfileRevision: profile.Revision, RequestingTokenID: issued.Token.ID, Tool: "plan_storage_change", Risk: "high", ResourceID: "pool-1", Summary: summary}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	hash := fmt.Sprintf("%064x", 1)
+	beforeRequest := repository.AdmitRemoteApply(ctx, issued.Token.ID, "office", profile.Revision, hash, "high")
+	if !errors.Is(beforeRequest, ErrApprovalRequired) {
+		t.Fatalf("admission before pending request = %v", beforeRequest)
+	}
+	record(hash, "delete pool")
+	afterRequest := repository.AdmitRemoteApply(ctx, issued.Token.ID, "office", profile.Revision, hash, "high")
+	if !errors.Is(afterRequest, ErrApprovalRequired) || afterRequest.Error() != beforeRequest.Error() {
+		t.Fatalf("pending request changed admission: before=%v after=%v", beforeRequest, afterRequest)
+	}
+	now = now.Add(time.Hour)
+	record(hash, "delete pool after refresh")
+	items, err := repository.PendingApprovals(ctx)
+	if err != nil || len(items) != 1 || items[0].Summary != "delete pool after refresh" || !items[0].CreatedAt.Equal(now) || items[0].RequestingToken != "operator" {
+		t.Fatalf("deduplicated requests = %#v, %v", items, err)
+	}
+
+	for index := 2; index <= MaxPendingApprovals+2; index++ {
+		now = now.Add(time.Second)
+		record(fmt.Sprintf("%064x", index), fmt.Sprintf("plan %d", index))
+	}
+	items, err = repository.PendingApprovals(ctx)
+	if err != nil || len(items) != MaxPendingApprovals {
+		t.Fatalf("bounded requests = %d, %v", len(items), err)
+	}
+	for _, item := range items {
+		if item.PlanHash == hash {
+			t.Fatal("oldest pending approval was not evicted")
+		}
+	}
+
+	request := items[0]
+	approval, err := repository.ApprovePendingApproval(ctx, request.ID, "local:owner")
+	if err != nil || approval.PlanHash != request.PlanHash || approval.ProfileRevision != profile.Revision {
+		t.Fatalf("one-click approval = %#v, %v", approval, err)
+	}
+	items, _ = repository.PendingApprovals(ctx)
+	for _, item := range items {
+		if item.ID == request.ID {
+			t.Fatal("approved pending request remains")
+		}
+	}
+
+	now = now.Add(PendingApprovalTTL + time.Second)
+	items, err = repository.PendingApprovals(ctx)
+	if err != nil || len(items) != 0 {
+		t.Fatalf("expired requests = %#v, %v", items, err)
+	}
+
+	now = now.Add(time.Second)
+	revokeHash := fmt.Sprintf("%064x", 999)
+	record(revokeHash, "revoke cleanup")
+	if _, err := repository.RevokeMCPToken(ctx, issued.Token.ID); err != nil {
+		t.Fatal(err)
+	}
+	items, err = repository.PendingApprovals(ctx)
+	if err != nil || len(items) != 0 {
+		t.Fatalf("revoked-token requests = %#v, %v", items, err)
+	}
+}
+
+func TestSchemaFourMigratesNASAdminToLANDiscover(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "gateway.db")
+	key := bytes.Repeat([]byte{8}, 32)
+	repository, err := Open(path, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.CreateProfile(context.Background(), ProfileInput{Name: "office", URL: "https://office.example"}); err != nil {
+		t.Fatal(err)
+	}
+	issued, err := repository.CreateMCPToken(context.Background(), MCPTokenInput{Name: "discoverer", Scopes: []string{remotepolicy.ScopeLANDiscover}, NASAllowlist: []string{"office"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.db.Update(func(tx *bolt.Tx) error {
+		record, err := readMCPToken(tx, issued.Token.ID)
+		if err != nil {
+			return err
+		}
+		record.Scopes = []string{"nas.admin"}
+		encoded, err := json.Marshal(record)
+		if err != nil {
+			return err
+		}
+		if err := tx.Bucket(bucketMCPTokens).Put([]byte(record.ID), encoded); err != nil {
+			return err
+		}
+		return tx.Bucket(bucketMeta).Put(keySchemaVersion, encodeUint64(4))
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Close(); err != nil {
+		t.Fatal(err)
+	}
+	repository, err = Open(path, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	token, err := repository.MCPToken(context.Background(), issued.Token.ID)
+	if err != nil || len(token.Scopes) != 1 || token.Scopes[0] != remotepolicy.ScopeLANDiscover {
+		t.Fatalf("migrated token = %#v, %v", token, err)
+	}
+	principal, err := repository.AuthenticateMCPToken(context.Background(), issued.BearerToken)
+	if err != nil || !principal.HasScope(remotepolicy.ScopeLANDiscover) {
+		t.Fatalf("migrated principal = %#v, %v", principal, err)
+	}
+	if _, err := repository.CreateMCPToken(context.Background(), MCPTokenInput{Name: "legacy", Scopes: []string{"nas.admin"}, NASAllowlist: []string{"office"}}); err == nil {
+		t.Fatal("nas.admin token creation was accepted after migration")
+	}
+	backups, _ := filepath.Glob(path + ".pre-v4-*.bak")
+	if len(backups) != 1 {
+		t.Fatalf("schema-four backups = %v", backups)
+	}
+}
+
+func TestManualAndOneClickApprovalRaceCreatesOneStandardApproval(t *testing.T) {
+	repository, _ := openTestRepository(t)
+	ctx := context.Background()
+	profile, _ := repository.CreateProfile(ctx, ProfileInput{Name: "office", URL: "https://office.example"})
+	issued, _ := repository.CreateMCPToken(ctx, MCPTokenInput{Name: "operator", Scopes: []string{remotepolicy.ScopeApply}, NASAllowlist: []string{"office"}})
+	hash := strings.Repeat("c", 64)
+	if err := repository.RecordPendingApproval(ctx, remotepolicy.PendingApprovalRequest{PlanHash: hash, NAS: "office", ProfileRevision: profile.Revision, RequestingTokenID: issued.Token.ID, Tool: "plan_storage_change", Risk: "high", Summary: "delete pool"}); err != nil {
+		t.Fatal(err)
+	}
+	requests, _ := repository.PendingApprovals(ctx)
+	var wait sync.WaitGroup
+	wait.Add(2)
+	go func() {
+		defer wait.Done()
+		_, _ = repository.ApprovePendingApproval(ctx, requests[0].ID, "local:owner")
+	}()
+	go func() {
+		defer wait.Done()
+		_, _ = repository.CreateApproval(ctx, ApprovalInput{PlanHash: hash, NAS: "office", RequestingTokenID: issued.Token.ID}, "local:owner")
+	}()
+	wait.Wait()
+	approvals, err := repository.Approvals(ctx, false)
+	if err != nil || len(approvals) != 1 {
+		t.Fatalf("raced approvals = %#v, %v", approvals, err)
+	}
+}
+
+func TestDeletingProfileCleansTokenAllowlistsBeforeNameReuse(t *testing.T) {
+	repository, _ := openTestRepository(t)
+	ctx := context.Background()
+	profile, _ := repository.CreateProfile(ctx, ProfileInput{Name: "office", URL: "https://office.example"})
+	issued, err := repository.CreateMCPToken(ctx, MCPTokenInput{Name: "reader", NASAllowlist: []string{"office"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.DeleteProfile(ctx, "office", profile.Revision, false); err != nil {
+		t.Fatal(err)
+	}
+	token, err := repository.MCPToken(ctx, issued.Token.ID)
+	if err != nil || len(token.NASAllowlist) != 0 {
+		t.Fatalf("cleaned token = %#v, %v", token, err)
+	}
+	if _, err := repository.CreateProfile(ctx, ProfileInput{Name: "office", URL: "https://replacement.example"}); err != nil {
+		t.Fatal(err)
+	}
+	principal, err := repository.AuthenticateMCPToken(ctx, issued.BearerToken)
+	if err != nil || principal.AllowsNAS("office") {
+		t.Fatalf("name-reuse principal = %#v, %v", principal, err)
+	}
+	events, _ := repository.AuditEvents(ctx, AuditQuery{Limit: 20, Action: "token.allowlist.cleanup"})
+	if len(events) != 1 || events[0].NAS != "office" {
+		t.Fatalf("allowlist cleanup audit = %#v", events)
+	}
+}
+
+func TestAuditExportReturnsMoreThanInteractiveLimitInChronologicalOrder(t *testing.T) {
+	repository, _ := openTestRepository(t)
+	base := time.Date(2026, 7, 19, 0, 0, 0, 0, time.UTC)
+	if err := repository.db.Update(func(tx *bolt.Tx) error {
+		for index := 0; index < 1105; index++ {
+			if err := repository.appendAuditTx(tx, AuditEvent{Time: base.Add(time.Duration(index) * time.Second), ActorType: "test", ActorID: "export", Action: "export.seed", Outcome: "success"}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	events, err := repository.AuditExport(context.Background())
+	if err != nil || len(events) != 1105 {
+		t.Fatalf("export events = %d, %v", len(events), err)
+	}
+	for index := 1; index < len(events); index++ {
+		if events[index].Time.Before(events[index-1].Time) {
+			t.Fatalf("export out of order at %d", index)
+		}
+	}
+}
 
 func TestMCPTokenLifecycleStoresDigestOnlyAndScopesIndependently(t *testing.T) {
 	repository, path := openTestRepository(t)
@@ -237,7 +459,7 @@ func TestSchemaOneStateMigratesToAuthorizationBucketsWithBackup(t *testing.T) {
 		if err := tx.Bucket(bucketMeta).Put(keySchemaVersion, encodeUint64(1)); err != nil {
 			return err
 		}
-		for _, name := range [][]byte{bucketMCPTokens, bucketTokenDigests, bucketApprovals, bucketAudit} {
+		for _, name := range [][]byte{bucketMCPTokens, bucketTokenDigests, bucketApprovals, bucketApprovalRequests, bucketAudit} {
 			if err := tx.DeleteBucket(name); err != nil {
 				return err
 			}

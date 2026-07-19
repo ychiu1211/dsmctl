@@ -193,13 +193,16 @@ func filterRemoteSummaries(ctx context.Context, summaries []config.Summary) []co
 	return filtered
 }
 
-// AuthorizeRemoteTarget resolves an omitted NAS exactly as the application
-// would, then applies the caller's explicit allowlist without revealing which
-// hidden profile (if any) caused the denial.
+// AuthorizeRemoteTarget requires remote callers to name the NAS explicitly,
+// then applies the caller's allowlist without revealing hidden profiles. Local
+// CLI and stdio callers continue to resolve an omitted NAS through Config.
 func (s *Service) AuthorizeRemoteTarget(ctx context.Context, requested string) (string, error) {
 	principal, remote := remotepolicy.PrincipalFromContext(ctx)
 	if !remote {
 		return requested, nil
+	}
+	if requested == "" {
+		return "", fmt.Errorf("remote MCP calls require an explicit nas argument")
 	}
 	cfg, err := s.configSnapshot(ctx)
 	if err != nil {

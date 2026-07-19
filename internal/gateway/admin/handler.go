@@ -205,6 +205,10 @@ func (h *Handler) serveAuthenticated(w http.ResponseWriter, req *http.Request) {
 		h.approvals(w, req)
 		return
 	}
+	if req.URL.Path == "/admin/api/approval-requests" || strings.HasPrefix(req.URL.Path, "/admin/api/approval-requests/") {
+		h.approvalRequests(w, req)
+		return
+	}
 	if req.URL.Path == "/admin/api/audit" || req.URL.Path == "/admin/api/audit/export" {
 		h.audit(w, req)
 		return
@@ -254,7 +258,11 @@ func (h *Handler) setupStatus(w http.ResponseWriter, req *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"state": "setup_expired"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"state": "setup_available", "setup_expires_at": h.setupDeadline})
+	remaining := h.setupDeadline.Sub(h.now().UTC())
+	if remaining < 0 {
+		remaining = 0
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"state": "setup_available", "setup_expires_at": h.setupDeadline, "setup_remaining_seconds": int64(remaining / time.Second)})
 }
 
 func (h *Handler) setup(w http.ResponseWriter, req *http.Request) {
@@ -343,6 +351,10 @@ func (h *Handler) profiles(w http.ResponseWriter, req *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		// Managed profile creation stores connection identity only. The actual
+		// DSM account is committed by password/OTP or Web Login enrollment.
+		input.Username = ""
+		input.TimeoutSeconds = 0
 		var created state.Profile
 		err := h.manager.MutateProfile(req.Context(), input.Name, func() error {
 			var err error
@@ -374,8 +386,6 @@ func (h *Handler) profile(w http.ResponseWriter, req *http.Request) {
 	switch action {
 	case "":
 		h.profileRecord(w, req, name)
-	case "default":
-		h.setDefault(w, req, name)
 	case "test":
 		h.testProfile(w, req, name)
 	case "credentials/status":
@@ -514,7 +524,6 @@ func (h *Handler) approvals(w http.ResponseWriter, req *http.Request) {
 		var input struct {
 			PlanHash          string `json:"plan_hash"`
 			NAS               string `json:"nas"`
-			ProfileRevision   uint64 `json:"profile_revision"`
 			RequestingTokenID string `json:"requesting_token_id"`
 			TTLSeconds        int    `json:"ttl_seconds,omitempty"`
 		}
@@ -522,7 +531,7 @@ func (h *Handler) approvals(w http.ResponseWriter, req *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		approval, err := h.repository.CreateApproval(req.Context(), state.ApprovalInput{PlanHash: input.PlanHash, NAS: input.NAS, ProfileRevision: input.ProfileRevision, RequestingTokenID: input.RequestingTokenID, TTL: time.Duration(input.TTLSeconds) * time.Second}, administratorActor(req.Context()))
+		approval, err := h.repository.CreateApproval(req.Context(), state.ApprovalInput{PlanHash: input.PlanHash, NAS: input.NAS, RequestingTokenID: input.RequestingTokenID, TTL: time.Duration(input.TTLSeconds) * time.Second}, administratorActor(req.Context()))
 		if err != nil {
 			writeRepositoryError(w, err)
 			return
@@ -530,6 +539,53 @@ func (h *Handler) approvals(w http.ResponseWriter, req *http.Request) {
 		writeJSON(w, http.StatusCreated, approval)
 	default:
 		methodNotAllowed(w, http.MethodGet, http.MethodPost)
+	}
+}
+
+func (h *Handler) approvalRequests(w http.ResponseWriter, req *http.Request) {
+	relative := strings.TrimPrefix(req.URL.Path, "/admin/api/approval-requests")
+	if relative == "" || relative == "/" {
+		if req.Method != http.MethodGet {
+			methodNotAllowed(w, http.MethodGet)
+			return
+		}
+		items, err := h.repository.PendingApprovals(req.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "list pending approvals")
+			return
+		}
+		if items == nil {
+			items = []state.PendingApproval{}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"requests": items})
+		return
+	}
+	parts := strings.Split(strings.TrimPrefix(relative, "/"), "/")
+	id, err := url.PathUnescape(parts[0])
+	if err != nil || id == "" {
+		writeError(w, http.StatusBadRequest, "invalid approval request identifier")
+		return
+	}
+	action := ""
+	if len(parts) > 1 {
+		action = parts[1]
+	}
+	switch {
+	case action == "approve" && req.Method == http.MethodPost:
+		approval, err := h.repository.ApprovePendingApproval(req.Context(), id, administratorActor(req.Context()))
+		if err != nil {
+			writeRepositoryError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, approval)
+	case action == "" && req.Method == http.MethodDelete:
+		if err := h.repository.DismissPendingApproval(req.Context(), id); err != nil {
+			writeRepositoryError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"dismissed": true})
+	default:
+		methodNotAllowed(w, http.MethodPost, http.MethodDelete)
 	}
 }
 
@@ -556,6 +612,21 @@ func (h *Handler) audit(w http.ResponseWriter, req *http.Request) {
 		}
 		after = parsed
 	}
+	if req.URL.Path == "/admin/api/audit/export" {
+		events, err := h.repository.AuditExport(req.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "export audit events")
+			return
+		}
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.Header().Set("Content-Disposition", `attachment; filename="dsmctl-audit.jsonl"`)
+		w.WriteHeader(http.StatusOK)
+		encoder := json.NewEncoder(w)
+		for _, event := range events {
+			_ = encoder.Encode(event)
+		}
+		return
+	}
 	events, err := h.repository.AuditEvents(req.Context(), state.AuditQuery{After: after, Limit: limit, ActorID: req.URL.Query().Get("actor_id"), Action: req.URL.Query().Get("action")})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "read audit events")
@@ -563,16 +634,6 @@ func (h *Handler) audit(w http.ResponseWriter, req *http.Request) {
 	}
 	if events == nil {
 		events = []state.AuditEvent{}
-	}
-	if req.URL.Path == "/admin/api/audit/export" {
-		w.Header().Set("Content-Type", "application/x-ndjson")
-		w.Header().Set("Content-Disposition", `attachment; filename="dsmctl-audit.jsonl"`)
-		w.WriteHeader(http.StatusOK)
-		encoder := json.NewEncoder(w)
-		for index := len(events) - 1; index >= 0; index-- {
-			_ = encoder.Encode(events[index])
-		}
-		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"events": events})
 }
@@ -634,8 +695,14 @@ func (h *Handler) profileRecord(w http.ResponseWriter, req *http.Request, name s
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		current, err := h.repository.Profile(req.Context(), name)
+		if err != nil {
+			writeRepositoryError(w, err)
+			return
+		}
+		input.Username = current.Username
 		var updated state.Profile
-		err := h.manager.MutateProfile(req.Context(), name, func() error {
+		err = h.manager.MutateProfile(req.Context(), name, func() error {
 			var err error
 			updated, err = h.repository.UpdateProfile(req.Context(), name, input.ExpectedRevision, input.ProfileInput)
 			return err
@@ -683,18 +750,6 @@ func (h *Handler) profileRecord(w http.ResponseWriter, req *http.Request, name s
 	default:
 		methodNotAllowed(w, http.MethodGet, http.MethodPut, http.MethodDelete)
 	}
-}
-
-func (h *Handler) setDefault(w http.ResponseWriter, req *http.Request, name string) {
-	if req.Method != http.MethodPost {
-		methodNotAllowed(w, http.MethodPost)
-		return
-	}
-	if err := h.manager.MutateProfile(req.Context(), "", func() error { return h.repository.SetDefault(req.Context(), name) }); err != nil {
-		writeRepositoryError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"default": name})
 }
 
 type testStage struct {
@@ -809,14 +864,20 @@ func (h *Handler) passwordEnrollment(w http.ResponseWriter, req *http.Request, n
 		return
 	}
 	var input struct {
-		Password string `json:"password"`
-		OTP      string `json:"otp,omitempty"`
+		Account          string `json:"account"`
+		ExpectedRevision uint64 `json:"expected_revision"`
+		Password         string `json:"password"`
+		OTP              string `json:"otp,omitempty"`
 	}
 	if err := decodeJSON(req, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	defer func() { input.Password, input.OTP = "", "" }()
+	if strings.TrimSpace(input.Account) == "" || input.ExpectedRevision == 0 || input.Password == "" {
+		writeError(w, http.StatusBadRequest, "account, expected_revision, and password are required")
+		return
+	}
 	cfg, err := h.repository.Snapshot(req.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "load profile")
@@ -829,7 +890,7 @@ func (h *Handler) passwordEnrollment(w http.ResponseWriter, req *http.Request, n
 	}
 	device := credentials.TrustedDevice{Name: "dsmctl-gateway"}
 	client, err := synology.NewClient(synology.Options{
-		BaseURL: profile.URL, Username: profile.Username, Password: input.Password,
+		BaseURL: profile.URL, Username: strings.TrimSpace(input.Account), Password: input.Password,
 		DeviceName: device.Name, HTTPClient: runtime.HTTPClient(profile),
 		OTPProvider: func(context.Context) (string, error) {
 			if input.OTP == "" {
@@ -855,14 +916,14 @@ func (h *Handler) passwordEnrollment(w http.ResponseWriter, req *http.Request, n
 		device = credentials.TrustedDevice{}
 	}
 	err = h.manager.MutateProfile(req.Context(), name, func() error {
-		_, err := h.repository.EnrollPassword(req.Context(), name, input.Password, device)
+		_, err := h.repository.EnrollPasswordForAccount(req.Context(), name, input.ExpectedRevision, input.Account, input.Password, device)
 		return err
 	})
 	if err != nil {
 		writeRepositoryError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"nas": name, "password_stored": true, "trusted_device_stored": device.ID != ""})
+	writeJSON(w, http.StatusOK, map[string]any{"nas": name, "account": strings.TrimSpace(input.Account), "password_stored": true, "trusted_device_stored": device.ID != ""})
 }
 
 func (h *Handler) removeSession(w http.ResponseWriter, req *http.Request, name string) {
@@ -1144,6 +1205,8 @@ func adminAuditAction(req *http.Request) string {
 		return "admin.sessions.revoke"
 	case strings.HasPrefix(path, "/admin/api/mcp-tokens"):
 		return "token.lifecycle"
+	case strings.HasPrefix(path, "/admin/api/approval-requests"):
+		return "approval.request"
 	case path == "/admin/api/approvals":
 		return "approval.lifecycle"
 	case strings.HasPrefix(path, "/admin/api/audit"):

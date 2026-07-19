@@ -25,6 +25,7 @@ type FTPServicesCapabilitiesResult struct {
 type FTPServicesPlan struct {
 	APIVersion          string                    `json:"api_version" jsonschema:"Plan schema version"`
 	NAS                 string                    `json:"nas" jsonschema:"NAS profile selected during planning"`
+	ProfileRevision     uint64                    `json:"profile_revision,omitempty" jsonschema:"Persistent gateway profile revision selected during planning"`
 	Request             ftpservices.Change        `json:"request" jsonschema:"Patch-only FTP/SFTP intent"`
 	Observed            synology.FTPServicesState `json:"observed" jsonschema:"Complete FTP/SFTP state observed during planning"`
 	ObservedFingerprint string                    `json:"observed_fingerprint" jsonschema:"SHA-256 hash of the complete observed state"`
@@ -80,11 +81,25 @@ func (s *Service) PlanFTPServicesChange(ctx context.Context, requestedNAS string
 	if err != nil {
 		return FTPServicesPlan{}, err
 	}
-	return planFTPServicesChangeWithClient(ctx, name, client, request)
+	plan, err := planFTPServicesChangeWithClient(ctx, name, client, request)
+	if err != nil {
+		return FTPServicesPlan{}, err
+	}
+	plan.ProfileRevision, err = s.profileRevision(ctx, name)
+	if err == nil {
+		plan.Hash, err = ftpServicesPlanHash(plan)
+	}
+	return plan, err
 }
 
 func (s *Service) ApplyFTPServicesPlan(ctx context.Context, plan FTPServicesPlan, approvalHash string) (FTPServicesApplyResult, error) {
 	if err := validateFTPServicesPlan(plan, approvalHash); err != nil {
+		return FTPServicesApplyResult{}, err
+	}
+	if err := s.authorizeRemoteApply(ctx, plan.NAS, plan.ProfileRevision, plan.Hash, plan.Risk); err != nil {
+		return FTPServicesApplyResult{}, err
+	}
+	if err := s.verifyProfileRevision(ctx, plan.NAS, plan.ProfileRevision); err != nil {
 		return FTPServicesApplyResult{}, err
 	}
 	name, client, err := s.ftpServicesClient(ctx, plan.NAS)
@@ -101,6 +116,11 @@ func applyFTPServicesPlanWithClient(ctx context.Context, client ftpServicesClien
 	current, err := planFTPServicesChangeWithClient(ctx, plan.NAS, client, plan.Request)
 	if err != nil {
 		return FTPServicesApplyResult{}, fmt.Errorf("FTP services plan precondition no longer holds: %w", err)
+	}
+	current.ProfileRevision = plan.ProfileRevision
+	current.Hash, err = ftpServicesPlanHash(current)
+	if err != nil {
+		return FTPServicesApplyResult{}, err
 	}
 	if current.ObservedFingerprint != plan.ObservedFingerprint || current.Hash != plan.Hash {
 		return FTPServicesApplyResult{}, fmt.Errorf("FTP services plan is stale; create a new plan")

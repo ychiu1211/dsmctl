@@ -13,7 +13,7 @@ database and exposes an authenticated administration page at `/admin/`.
 Profiles, credentials, MCP tokens, and authorization changes take effect
 without restarting the process. Managed mode exposes the complete MCP tool
 surface through per-token NAS allowlists and independent `nas.read`,
-`nas.plan`, `nas.apply`, and `nas.admin` scopes. The static WI-014 developer
+`nas.plan`, `nas.apply`, and `lan.discover` scopes. The static WI-014 developer
 mode remains read-only.
 
 ## Session model
@@ -52,6 +52,10 @@ creates an expiring HttpOnly/SameSite browser session; the password is stored
 only as an Argon2id verifier. There is no setup code or long-lived
 administrator bearer token.
 
+Administrator passwords contain at least 12 Unicode characters. First-run
+setup shows both the absolute deadline and remaining time, and later password
+changes require the new password twice because there is no recovery path.
+
 An initialized unauthenticated browser sees the normal login page. The Gateway
 cannot determine whether that viewer was the installer. If the first visit is
 unexpectedly initialized, reset the empty deployment state before enrolling a
@@ -70,9 +74,16 @@ stored in browser-local storage; it is not authentication state. On narrow
 screens navigation and tables scroll independently. The embedded page uses no
 CDN, remote font, translation service, or other external rendering asset.
 
-Add each NAS from the page and choose one of two TLS policies: `system_ca`, or
+Add each NAS from the page using its permanent profile name, DSM URL, and one
+of two TLS policies: `system_ca`, or
 `pinned_fingerprint` with an explicitly confirmed SHA-256 leaf-certificate
-fingerprint. Production managed mode has no skip-verification option. Sign in
+fingerprint. The DSM account is deliberately not guessed during profile
+creation. Password/OTP enrollment collects the account together with masked
+credentials and commits the verified account and encrypted credentials in one
+revision-checked transaction. Web Login likewise records the account that DSM
+actually signed in. Profiles can later edit URL, TLS policy/fingerprint, and
+timeout, but not their name. Production managed mode has no skip-verification
+option. Sign in
 through the NAS's own DSM page (the gateway stores the resulting SID,
 SynoToken, and Noise resume keys), or use the bounded password/OTP enrollment
 for an automation account. Web sessions resume headlessly and survive gateway
@@ -96,12 +107,26 @@ are tracked independently by token identity. `/healthz` is local process
 liveness and never contacts DSM. `/readyz` verifies the state schema,
 established admin, and mounted master key; it does not poll the NAS fleet.
 
+Every remote NAS-scoped tool call must include an explicit `nas` argument. The
+gateway never resolves an omitted remote target through the default profile;
+`list_nas`, `discover_lan_devices`, and the targetless `get_auth_status` form
+are the only targetless exceptions. Local CLI and stdio calls retain default
+profile resolution.
+
 `nas.read` exposes only read tools and filters profile/fleet/credential views to
 the token's NAS allowlist. `nas.plan` and `nas.apply` are independent: a token
 may prepare plans without applying, or apply a previously delivered canonical
-plan without gaining general read access. `nas.admin` currently admits LAN
-discovery because that operation can reveal devices outside the configured
-allowlist. Every request re-evaluates token status, scope, and target.
+plan without gaining general read access. `lan.discover` admits only
+`discover_lan_devices`. Its distinct prefix is deliberate: discovery may reveal
+devices outside the configured NAS allowlist, while gateway administration is
+never an MCP scope. Every request re-evaluates token status, scope, and target.
+
+Token creation may set no expiry (the default) or an explicit expiry. The page
+shows token ID, creation time, expiry, and last-used time and can expire, rotate,
+or revoke a token. Scopes and NAS allowlists are immutable after creation;
+changing authority means issuing a new token or rotating it. Deleting a NAS
+transactionally removes that name from every token allowlist, so recreating the
+same profile name never restores old access.
 
 Low- and medium-risk remote plans require `nas.apply` and retain the existing
 plan hash, profile revision, stable-ID, precondition, protected-resource, and
@@ -111,8 +136,20 @@ revision, requesting token, and local administrator, expires after at most ten
 minutes, and is atomically consumed once before application precondition reads.
 A stale or failed apply never restores a consumed approval.
 
-The administration page can query and download the immutable, redacted audit
-stream as JSONL. Records use a closed scalar schema and never include request
+Successful remote high-risk `plan_*` calls create a bounded, 24-hour pending
+request containing only the plan hash, NAS/revision, requesting token, tool,
+risk, optional stable resource ID, and canonical summary. The Approvals page
+can approve that request in one click or dismiss it. Requests deduplicate per
+plan hash and token, keep at most 50 entries, and never affect admission checks.
+The manual fallback selects an existing profile and active token, validates the
+64-hex plan hash, and captures the current profile revision server-side. If an
+approval was created by mistake, revoke or rotate the requesting token; apply
+admission rechecks token status before consuming the approval.
+
+The administration page displays newest events first in a filterable table
+using time, actor, and action query fields. JSONL export contains every retained
+event in chronological order, not only the current page. Records use a closed
+scalar schema and never include request
 bodies, authorization headers, passwords, OTPs, trusted-device values,
 SynoTokens, SIDs, cookies, master keys, or encrypted vault payloads. Retention
 is bounded to 10,000 events and 30 days. A mandatory audit write failure blocks
@@ -165,6 +202,10 @@ already contains profiles, encrypted secrets, MCP tokens, or approvals, schema
 4 writes a pre-migration backup and refuses to expose a fresh setup window;
 the operator must deliberately reset that pre-release state or restore and
 migrate it with a version that still understands the old credential.
+
+Schema 5 adds pending approval requests and transactionally rewrites every
+stored `nas.admin` scope to `lan.discover`. After migration `nas.admin` is
+invalid input; there is no alias or dual-acceptance window.
 
 The admin API can create opaque `vault:<id>` apply-time references. Only the
 application's apply-time resolver can decrypt those values; MCP results and

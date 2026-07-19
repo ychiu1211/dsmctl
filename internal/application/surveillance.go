@@ -18,12 +18,12 @@ type SurveillanceCapabilitiesResult struct {
 }
 
 type SurveillanceInfoResult struct {
-	NAS  string                  `json:"nas" jsonschema:"NAS profile used for the request"`
+	NAS  string                    `json:"nas" jsonschema:"NAS profile used for the request"`
 	Info synology.SurveillanceInfo `json:"info" jsonschema:"Normalized Surveillance Station system information"`
 }
 
 type SurveillanceCamerasResult struct {
-	NAS     string                     `json:"nas" jsonschema:"NAS profile used for the request"`
+	NAS     string                       `json:"nas" jsonschema:"NAS profile used for the request"`
 	Cameras synology.SurveillanceCameras `json:"cameras" jsonschema:"Configured cameras reported by Surveillance Station"`
 }
 
@@ -43,6 +43,7 @@ type SurveillanceHomeModeResult struct {
 type SurveillanceHomeModePlan struct {
 	APIVersion          string                        `json:"api_version" jsonschema:"Plan schema version"`
 	NAS                 string                        `json:"nas" jsonschema:"NAS profile selected during planning"`
+	ProfileRevision     uint64                        `json:"profile_revision,omitempty" jsonschema:"Persistent gateway profile revision selected during planning"`
 	Request             surveillance.HomeModeChange   `json:"request" jsonschema:"Patch-only Home Mode intent"`
 	Observed            synology.SurveillanceHomeMode `json:"observed" jsonschema:"Home Mode state observed during planning"`
 	ObservedFingerprint string                        `json:"observed_fingerprint" jsonschema:"SHA-256 hash of the observed state"`
@@ -53,10 +54,10 @@ type SurveillanceHomeModePlan struct {
 }
 
 type SurveillanceHomeModeApplyResult struct {
-	NAS      string                                        `json:"nas" jsonschema:"NAS profile used for apply"`
-	PlanHash string                                        `json:"plan_hash" jsonschema:"Approved plan hash"`
-	Applied  bool                                          `json:"applied" jsonschema:"Whether DSM accepted the change and postcondition verification passed"`
-	Result   synology.SurveillanceHomeModeMutationResult   `json:"result" jsonschema:"Selected DSM mutation backend"`
+	NAS      string                                      `json:"nas" jsonschema:"NAS profile used for apply"`
+	PlanHash string                                      `json:"plan_hash" jsonschema:"Approved plan hash"`
+	Applied  bool                                        `json:"applied" jsonschema:"Whether DSM accepted the change and postcondition verification passed"`
+	Result   synology.SurveillanceHomeModeMutationResult `json:"result" jsonschema:"Selected DSM mutation backend"`
 }
 
 func (s *Service) GetSurveillanceCapabilities(ctx context.Context, requestedNAS string) (SurveillanceCapabilitiesResult, error) {
@@ -115,7 +116,15 @@ func (s *Service) PlanSurveillanceHomeModeChange(ctx context.Context, requestedN
 	if err != nil {
 		return SurveillanceHomeModePlan{}, err
 	}
-	return planSurveillanceHomeModeWithClient(ctx, name, client, request)
+	plan, err := planSurveillanceHomeModeWithClient(ctx, name, client, request)
+	if err != nil {
+		return SurveillanceHomeModePlan{}, err
+	}
+	plan.ProfileRevision, err = s.profileRevision(ctx, name)
+	if err == nil {
+		plan.Hash, err = surveillanceHomeModePlanHash(plan)
+	}
+	return plan, err
 }
 
 func (s *Service) ApplySurveillanceHomeModePlan(ctx context.Context, plan SurveillanceHomeModePlan, approvalHash string) (SurveillanceHomeModeApplyResult, error) {
@@ -132,6 +141,12 @@ func (s *Service) ApplySurveillanceHomeModePlan(ctx context.Context, plan Survei
 	if expectedHash != plan.Hash {
 		return SurveillanceHomeModeApplyResult{}, fmt.Errorf("home mode plan contents were modified after planning")
 	}
+	if err := s.authorizeRemoteApply(ctx, plan.NAS, plan.ProfileRevision, plan.Hash, plan.Risk); err != nil {
+		return SurveillanceHomeModeApplyResult{}, err
+	}
+	if err := s.verifyProfileRevision(ctx, plan.NAS, plan.ProfileRevision); err != nil {
+		return SurveillanceHomeModeApplyResult{}, err
+	}
 	name, client, err := s.surveillanceClient(ctx, plan.NAS)
 	if err != nil {
 		return SurveillanceHomeModeApplyResult{}, err
@@ -142,6 +157,11 @@ func (s *Service) ApplySurveillanceHomeModePlan(ctx context.Context, plan Survei
 	current, err := planSurveillanceHomeModeWithClient(ctx, plan.NAS, client, plan.Request)
 	if err != nil {
 		return SurveillanceHomeModeApplyResult{}, fmt.Errorf("home mode plan precondition no longer holds: %w", err)
+	}
+	current.ProfileRevision = plan.ProfileRevision
+	current.Hash, err = surveillanceHomeModePlanHash(current)
+	if err != nil {
+		return SurveillanceHomeModeApplyResult{}, err
 	}
 	if current.ObservedFingerprint != plan.ObservedFingerprint || current.Hash != plan.Hash {
 		return SurveillanceHomeModeApplyResult{}, fmt.Errorf("home mode plan is stale; create a new plan")

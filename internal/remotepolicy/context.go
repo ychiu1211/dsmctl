@@ -10,10 +10,10 @@ import (
 )
 
 const (
-	ScopeRead  = "nas.read"
-	ScopePlan  = "nas.plan"
-	ScopeApply = "nas.apply"
-	ScopeAdmin = "nas.admin"
+	ScopeRead        = "nas.read"
+	ScopePlan        = "nas.plan"
+	ScopeApply       = "nas.apply"
+	ScopeLANDiscover = "lan.discover"
 )
 
 var ErrDenied = errors.New("remote request is not authorized")
@@ -42,6 +42,26 @@ type AuditEvent struct {
 
 type Auditor interface {
 	AppendAudit(context.Context, AuditEvent) error
+}
+
+// PendingApprovalRequest is the closed, non-secret subset of a typed plan
+// result that the remote gateway may expose to its local administrator. It
+// deliberately cannot carry the plan payload, request body, or DSM response.
+type PendingApprovalRequest struct {
+	PlanHash          string
+	NAS               string
+	ProfileRevision   uint64
+	RequestingTokenID string
+	Tool              string
+	Risk              string
+	ResourceID        string
+	Summary           string
+}
+
+// ApprovalRequestRecorder is advisory UI state. Recording failures must never
+// weaken or block the existing manual, out-of-band approval path.
+type ApprovalRequestRecorder interface {
+	RecordPendingApproval(context.Context, PendingApprovalRequest) error
 }
 
 func (p Principal) HasScope(scope string) bool {

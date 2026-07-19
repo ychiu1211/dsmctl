@@ -212,16 +212,22 @@ func (h *Handler) changePassword(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	var input struct {
-		CurrentPassword string `json:"current_password"`
-		NewPassword     string `json:"new_password"`
+		CurrentPassword    string `json:"current_password"`
+		NewPassword        string `json:"new_password"`
+		ConfirmNewPassword string `json:"confirm_new_password"`
 	}
 	if err := decodeJSON(req, &input); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if input.NewPassword != input.ConfirmNewPassword {
+		input.CurrentPassword, input.NewPassword, input.ConfirmNewPassword = "", "", ""
+		writeError(w, http.StatusBadRequest, "new passwords do not match")
+		return
+	}
 	token, _ := req.Context().Value(sessionTokenContextKey{}).(string)
 	err := h.repository.ChangeAdministratorPassword(req.Context(), token, input.CurrentPassword, input.NewPassword)
-	input.CurrentPassword, input.NewPassword = "", ""
+	input.CurrentPassword, input.NewPassword, input.ConfirmNewPassword = "", "", ""
 	if err != nil {
 		if errors.Is(err, state.ErrUnauthorized) {
 			writeError(w, http.StatusUnauthorized, "current password is invalid")

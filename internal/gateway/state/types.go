@@ -11,10 +11,12 @@ import (
 )
 
 const (
-	SchemaVersion        = 4
+	SchemaVersion        = 5
 	MaxProfiles          = 32
 	MaxMCPTokenNameBytes = 64
 	DefaultApprovalTTL   = 10 * time.Minute
+	PendingApprovalTTL   = 24 * time.Hour
+	MaxPendingApprovals  = 50
 	AdminModeLocal       = "local"
 	MaxAdminSessions     = 16
 	AdminSessionTTL      = 12 * time.Hour

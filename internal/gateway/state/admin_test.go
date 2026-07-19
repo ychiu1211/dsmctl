@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -225,6 +226,15 @@ func TestPartialAdministratorRecordNeverReopensSetup(t *testing.T) {
 	}
 	if err := repository.Ready(context.Background()); err == nil || errors.Is(err, ErrAdministratorRequired) {
 		t.Fatalf("partial record readiness did not fail closed: %v", err)
+	}
+}
+
+func TestAdministratorPasswordMinimumCountsRunes(t *testing.T) {
+	if err := validateNewAdministratorPassword(strings.Repeat("界", 11)); err == nil {
+		t.Fatal("11-rune administrator password was accepted")
+	}
+	if err := validateNewAdministratorPassword(strings.Repeat("界", 12)); err != nil {
+		t.Fatalf("12-rune administrator password = %v", err)
 	}
 }
 

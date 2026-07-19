@@ -81,7 +81,7 @@ flowchart LR
 | [WI-035](work-items/WI-035-mcp-server-product-copy.md) | P1 | `done` | G | WI-033 | Add concise MCP Server product copy in English, Traditional Chinese, Simplified Chinese, Japanese, and German. |
 | [WI-036](work-items/WI-036-surveillance-home-mode.md) | P2 | `done` | C | WI-034 | Guarded Surveillance Station Home Mode switch (on/off) via `SYNO.SurveillanceStation.HomeMode`; first Surveillance write, CLI + MCP, live-verified. |
 | [WI-037](work-items/WI-037-gateway-design-tokens.md) | P1 | `done` | G | WI-035 | Unify authentication and administration colors through shared brand-blue and slate design tokens. |
-| [WI-038](work-items/WI-038-mcp-server-flow-refinements.md) | P1 | `ready` | G | WI-037 | Streamline high-risk approval, MCP-token lifecycle, NAS enrollment, and audit flows; require explicit remote NAS targets; rename `nas.admin` to `lan.discover`. |
+| [WI-038](work-items/WI-038-mcp-server-flow-refinements.md) | P1 | `done` | G | WI-037 | Streamline high-risk approval, MCP-token lifecycle, NAS enrollment, and audit flows; require explicit remote NAS targets; rename `nas.admin` to `lan.discover`. |
 | [WI-039](work-items/WI-039-weblogin-page-design-tokens.md) | P2 | `in_progress` | G | WI-037 | Restyle the `auth login` loopback helper page with the shared design tokens, four localized sign-in states, and browser-language detection. |
 
 Parallel groups indicate likely file overlap. Items in different groups may run

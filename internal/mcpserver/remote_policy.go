@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -26,7 +27,7 @@ func NewRemote(service *application.Service, version string, auditor remotepolic
 func ToolScope(name string) (string, bool) {
 	switch {
 	case name == "discover_lan_devices":
-		return remotepolicy.ScopeAdmin, true
+		return remotepolicy.ScopeLANDiscover, true
 	case strings.HasPrefix(name, "plan_"):
 		return remotepolicy.ScopePlan, true
 	case strings.HasPrefix(name, "apply_"):
@@ -36,6 +37,19 @@ func ToolScope(name string) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+type remotePlanResult struct {
+	Plan struct {
+		NAS             string   `json:"nas"`
+		ProfileRevision uint64   `json:"profile_revision"`
+		Hash            string   `json:"hash"`
+		Risk            string   `json:"risk"`
+		Summary         []string `json:"summary"`
+		References      struct {
+			ResourceID string `json:"resource_id"`
+		} `json:"references"`
+	} `json:"plan"`
 }
 
 type remoteToolTarget struct {
@@ -98,6 +112,10 @@ func remotePolicyMiddleware(service *application.Service, auditor remotepolicy.A
 			}
 			needsTarget := params.Name != "list_nas" && params.Name != "discover_lan_devices" && !(params.Name == "get_auth_status" && nas == "")
 			if needsTarget {
+				if strings.TrimSpace(nas) == "" {
+					auditRemote(ctx, auditor, principal, params.Name, "", "denied", "denied")
+					return nil, fmt.Errorf("remote MCP tool %q requires an explicit nas argument", params.Name)
+				}
 				resolved, err := service.AuthorizeRemoteTarget(ctx, nas)
 				if err != nil {
 					auditRemote(ctx, auditor, principal, params.Name, "", "denied", "denied")
@@ -116,10 +134,41 @@ func remotePolicyMiddleware(service *application.Service, auditor remotepolicy.A
 			if callResult, ok := result.(*mcp.CallToolResult); ok && callResult.IsError {
 				outcome = "failure"
 			}
+			if err == nil && outcome == "success" && strings.HasPrefix(params.Name, "plan_") {
+				recordPendingApproval(ctx, auditor, principal, params.Name, result)
+			}
 			auditRemote(ctx, auditor, principal, params.Name, nas, outcome, "")
 			return result, err
 		}
 	}
+}
+
+func recordPendingApproval(ctx context.Context, target any, principal remotepolicy.Principal, tool string, result mcp.Result) {
+	recorder, ok := target.(remotepolicy.ApprovalRequestRecorder)
+	if !ok {
+		return
+	}
+	callResult, ok := result.(*mcp.CallToolResult)
+	if !ok || callResult.IsError || callResult.StructuredContent == nil {
+		return
+	}
+	encoded, err := json.Marshal(callResult.StructuredContent)
+	if raw, ok := callResult.StructuredContent.(json.RawMessage); ok {
+		encoded = raw
+		err = nil
+	}
+	if err != nil {
+		return
+	}
+	var value remotePlanResult
+	if json.Unmarshal(encoded, &value) != nil || !strings.EqualFold(value.Plan.Risk, "high") || value.Plan.ProfileRevision == 0 {
+		return
+	}
+	_ = recorder.RecordPendingApproval(ctx, remotepolicy.PendingApprovalRequest{
+		PlanHash: value.Plan.Hash, NAS: value.Plan.NAS, ProfileRevision: value.Plan.ProfileRevision,
+		RequestingTokenID: principal.TokenID, Tool: tool, Risk: value.Plan.Risk,
+		ResourceID: value.Plan.References.ResourceID, Summary: strings.Join(value.Plan.Summary, "; "),
+	})
 }
 
 func auditRemote(ctx context.Context, auditor remotepolicy.Auditor, principal remotepolicy.Principal, tool, nas, outcome, reason string) {

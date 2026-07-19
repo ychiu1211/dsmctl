@@ -153,6 +153,25 @@ func (r *Repository) SavePassword(ctx context.Context, profileName, password str
 // EnrollPassword persists a verified password and optional trusted-device
 // credential in one transaction and advances the profile revision once.
 func (r *Repository) EnrollPassword(ctx context.Context, profileName, password string, device credentials.TrustedDevice) (uint64, error) {
+	return r.enrollPassword(ctx, profileName, 0, "", password, device)
+}
+
+// EnrollPasswordForAccount commits the verified DSM identity and credentials
+// together. The expected revision closes the network-authentication race: a
+// concurrent profile edit invalidates the enrollment instead of attaching a
+// credential to changed connection settings.
+func (r *Repository) EnrollPasswordForAccount(ctx context.Context, profileName string, expectedRevision uint64, account, password string, device credentials.TrustedDevice) (uint64, error) {
+	account = strings.TrimSpace(account)
+	if account == "" {
+		return 0, errors.New("DSM account is required")
+	}
+	if expectedRevision == 0 {
+		return 0, errors.New("expected profile revision is required")
+	}
+	return r.enrollPassword(ctx, profileName, expectedRevision, account, password, device)
+}
+
+func (r *Repository) enrollPassword(ctx context.Context, profileName string, expectedRevision uint64, account, password string, device credentials.TrustedDevice) (uint64, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
@@ -176,11 +195,17 @@ func (r *Repository) EnrollPassword(ctx context.Context, profileName, password s
 		if err != nil {
 			return err
 		}
+		if expectedRevision != 0 && record.Revision != expectedRevision {
+			return fmt.Errorf("%w: expected %d, current %d", ErrRevisionConflict, expectedRevision, record.Revision)
+		}
 		passwordID, err := r.putSecret(tx, &record, secretPassword, []byte(password), record.PasswordSecretID)
 		if err != nil {
 			return err
 		}
 		record.PasswordSecretID = passwordID
+		if account != "" {
+			record.Username = account
+		}
 		if len(devicePayload) > 0 {
 			deviceID, err := r.putSecret(tx, &record, secretTrustedDevice, devicePayload, record.TrustedDeviceSecretID)
 			if err != nil {
@@ -341,6 +366,9 @@ func (r *Repository) saveSession(ctx context.Context, profileName string, sessio
 		}
 		record.SessionSecretID = id
 		if advanceRevision {
+			if strings.TrimSpace(session.Account) != "" {
+				record.Username = strings.TrimSpace(session.Account)
+			}
 			record.Revision, err = nextProfileRevision(tx)
 			if err != nil {
 				return err

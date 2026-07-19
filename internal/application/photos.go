@@ -13,7 +13,7 @@ import (
 const photosAPIVersion = "dsmctl.io/v1alpha1"
 
 type PhotosSettingsResult struct {
-	NAS      string                    `json:"nas" jsonschema:"NAS profile used for the request"`
+	NAS      string                       `json:"nas" jsonschema:"NAS profile used for the request"`
 	Settings synology.PhotosAdminSettings `json:"settings" jsonschema:"Normalized Synology Photos administration settings"`
 }
 
@@ -26,6 +26,7 @@ type PhotosCapabilitiesResult struct {
 type PhotosPlan struct {
 	APIVersion          string                       `json:"api_version" jsonschema:"Plan schema version"`
 	NAS                 string                       `json:"nas" jsonschema:"NAS profile selected during planning"`
+	ProfileRevision     uint64                       `json:"profile_revision,omitempty" jsonschema:"Persistent gateway profile revision selected during planning"`
 	Request             photos.AdminChange           `json:"request" jsonschema:"Patch-only Photos administration intent"`
 	Observed            synology.PhotosAdminSettings `json:"observed" jsonschema:"Complete settings observed during planning"`
 	ObservedFingerprint string                       `json:"observed_fingerprint" jsonschema:"SHA-256 hash of the complete observed settings"`
@@ -36,10 +37,10 @@ type PhotosPlan struct {
 }
 
 type PhotosApplyResult struct {
-	NAS      string                         `json:"nas" jsonschema:"NAS profile used for apply"`
-	PlanHash string                         `json:"plan_hash" jsonschema:"Approved plan hash"`
-	Applied  bool                           `json:"applied" jsonschema:"Whether DSM accepted the change and postcondition verification passed"`
-	Result   synology.PhotosMutationResult  `json:"result" jsonschema:"Selected DSM mutation backend"`
+	NAS      string                        `json:"nas" jsonschema:"NAS profile used for apply"`
+	PlanHash string                        `json:"plan_hash" jsonschema:"Approved plan hash"`
+	Applied  bool                          `json:"applied" jsonschema:"Whether DSM accepted the change and postcondition verification passed"`
+	Result   synology.PhotosMutationResult `json:"result" jsonschema:"Selected DSM mutation backend"`
 }
 
 type photosClient interface {
@@ -80,11 +81,25 @@ func (s *Service) PlanPhotosChange(ctx context.Context, requestedNAS string, req
 	if err != nil {
 		return PhotosPlan{}, err
 	}
-	return planPhotosChangeWithClient(ctx, name, client, request)
+	plan, err := planPhotosChangeWithClient(ctx, name, client, request)
+	if err != nil {
+		return PhotosPlan{}, err
+	}
+	plan.ProfileRevision, err = s.profileRevision(ctx, name)
+	if err == nil {
+		plan.Hash, err = photosPlanHash(plan)
+	}
+	return plan, err
 }
 
 func (s *Service) ApplyPhotosPlan(ctx context.Context, plan PhotosPlan, approvalHash string) (PhotosApplyResult, error) {
 	if err := validatePhotosPlan(plan, approvalHash); err != nil {
+		return PhotosApplyResult{}, err
+	}
+	if err := s.authorizeRemoteApply(ctx, plan.NAS, plan.ProfileRevision, plan.Hash, plan.Risk); err != nil {
+		return PhotosApplyResult{}, err
+	}
+	if err := s.verifyProfileRevision(ctx, plan.NAS, plan.ProfileRevision); err != nil {
 		return PhotosApplyResult{}, err
 	}
 	name, client, err := s.photosClient(ctx, plan.NAS)
@@ -101,6 +116,11 @@ func applyPhotosPlanWithClient(ctx context.Context, client photosClient, plan Ph
 	current, err := planPhotosChangeWithClient(ctx, plan.NAS, client, plan.Request)
 	if err != nil {
 		return PhotosApplyResult{}, fmt.Errorf("Photos plan precondition no longer holds: %w", err)
+	}
+	current.ProfileRevision = plan.ProfileRevision
+	current.Hash, err = photosPlanHash(current)
+	if err != nil {
+		return PhotosApplyResult{}, err
 	}
 	if current.ObservedFingerprint != plan.ObservedFingerprint || current.Hash != plan.Hash {
 		return PhotosApplyResult{}, fmt.Errorf("Photos plan is stale; create a new plan")

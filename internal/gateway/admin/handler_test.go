@@ -20,6 +20,7 @@ import (
 
 	"github.com/ychiu1211/dsmctl/internal/config"
 	"github.com/ychiu1211/dsmctl/internal/gateway/state"
+	"github.com/ychiu1211/dsmctl/internal/remotepolicy"
 	"github.com/ychiu1211/dsmctl/internal/runtime"
 )
 
@@ -227,7 +228,7 @@ func TestProfileMutationEvictsOnlyChangedNAS(t *testing.T) {
 func TestMCPTokenApprovalAndAuditAdministration(t *testing.T) {
 	handler, repository, manager, adminSession := newTestHandler(t)
 	defer manager.Close(context.Background())
-	profile, err := repository.CreateProfile(context.Background(), state.ProfileInput{Name: "office", URL: "https://office.example"})
+	_, err := repository.CreateProfile(context.Background(), state.ProfileInput{Name: "office", URL: "https://office.example"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +248,7 @@ func TestMCPTokenApprovalAndAuditAdministration(t *testing.T) {
 		t.Fatalf("list tokens=%d %s", listed.Code, listed.Body.String())
 	}
 	hash := strings.Repeat("a", 64)
-	approvalBody := fmt.Sprintf(`{"plan_hash":%q,"nas":"office","profile_revision":%d,"requesting_token_id":%q}`, hash, profile.Revision, issued.Token.ID)
+	approvalBody := fmt.Sprintf(`{"plan_hash":%q,"nas":"office","requesting_token_id":%q}`, hash, issued.Token.ID)
 	approved := performJSON(handler, http.MethodPost, "/admin/api/approvals", approvalBody, adminSession)
 	if approved.Code != http.StatusCreated {
 		t.Fatalf("create approval=%d %s", approved.Code, approved.Body.String())
@@ -263,6 +264,108 @@ func TestMCPTokenApprovalAndAuditAdministration(t *testing.T) {
 	revoked := performJSON(handler, http.MethodDelete, "/admin/api/mcp-tokens/"+issued.Token.ID, "", adminSession)
 	if revoked.Code != http.StatusOK || !strings.Contains(revoked.Body.String(), "revoked_at") {
 		t.Fatalf("revoke=%d %s", revoked.Code, revoked.Body.String())
+	}
+}
+
+func TestPendingApprovalAdministrationSupportsOneClickAndDismiss(t *testing.T) {
+	handler, repository, manager, adminSession := newTestHandler(t)
+	defer manager.Close(context.Background())
+	profile, _ := repository.CreateProfile(context.Background(), state.ProfileInput{Name: "office", URL: "https://office.example"})
+	issued, _ := repository.CreateMCPToken(context.Background(), state.MCPTokenInput{Name: "operator", Scopes: []string{remotepolicy.ScopeApply}, NASAllowlist: []string{"office"}})
+	request := remotepolicy.PendingApprovalRequest{PlanHash: strings.Repeat("d", 64), NAS: "office", ProfileRevision: profile.Revision, RequestingTokenID: issued.Token.ID, Tool: "plan_storage_change", Risk: "high", Summary: "delete storage pool"}
+	if err := repository.RecordPendingApproval(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	listed := performJSON(handler, http.MethodGet, "/admin/api/approval-requests", "", adminSession)
+	if listed.Code != http.StatusOK || !strings.Contains(listed.Body.String(), "delete storage pool") || !strings.Contains(listed.Body.String(), "operator") {
+		t.Fatalf("pending list = %d %s", listed.Code, listed.Body.String())
+	}
+	var payload struct {
+		Requests []state.PendingApproval `json:"requests"`
+	}
+	if err := json.Unmarshal(listed.Body.Bytes(), &payload); err != nil || len(payload.Requests) != 1 {
+		t.Fatalf("decode pending list = %#v, %v", payload, err)
+	}
+	approved := performJSON(handler, http.MethodPost, "/admin/api/approval-requests/"+payload.Requests[0].ID+"/approve", `{}`, adminSession)
+	if approved.Code != http.StatusCreated || !strings.Contains(approved.Body.String(), request.PlanHash) {
+		t.Fatalf("one-click approval = %d %s", approved.Code, approved.Body.String())
+	}
+	listed = performJSON(handler, http.MethodGet, "/admin/api/approval-requests", "", adminSession)
+	if listed.Code != http.StatusOK || !strings.Contains(listed.Body.String(), `"requests":[]`) {
+		t.Fatalf("pending list after approval = %d %s", listed.Code, listed.Body.String())
+	}
+
+	request.PlanHash = strings.Repeat("e", 64)
+	if err := repository.RecordPendingApproval(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	requests, _ := repository.PendingApprovals(context.Background())
+	dismissed := performJSON(handler, http.MethodDelete, "/admin/api/approval-requests/"+requests[0].ID, "", adminSession)
+	if dismissed.Code != http.StatusOK {
+		t.Fatalf("dismiss = %d %s", dismissed.Code, dismissed.Body.String())
+	}
+	approvals, _ := repository.Approvals(context.Background(), false)
+	if len(approvals) != 1 {
+		t.Fatalf("dismiss created an approval: %#v", approvals)
+	}
+}
+
+func TestManagedProfileCreationAndEditDoNotAcceptDSMIdentity(t *testing.T) {
+	handler, repository, manager, adminSession := newTestHandler(t)
+	defer manager.Close(context.Background())
+	created := performJSON(handler, http.MethodPost, "/admin/api/profiles", `{"name":"office","url":"https://office.example","username":"unverified","tls_mode":"system_ca"}`, adminSession)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create profile = %d %s", created.Code, created.Body.String())
+	}
+	profile, _ := repository.Profile(context.Background(), "office")
+	if profile.Username != "" {
+		t.Fatalf("profile creation stored unverified account %q", profile.Username)
+	}
+	updated := performJSON(handler, http.MethodPut, "/admin/api/profiles/office", fmt.Sprintf(`{"expected_revision":%d,"url":"https://office-new.example","username":"attacker","tls_mode":"system_ca","timeout_seconds":25}`, profile.Revision), adminSession)
+	if updated.Code != http.StatusOK {
+		t.Fatalf("update profile = %d %s", updated.Code, updated.Body.String())
+	}
+	profile, _ = repository.Profile(context.Background(), "office")
+	if profile.Username != "" || profile.URL != "https://office-new.example" || profile.TimeoutSeconds != 25 {
+		t.Fatalf("updated profile = %#v", profile)
+	}
+}
+
+func TestAdministratorPasswordChangeRequiresConfirmation(t *testing.T) {
+	handler, _, manager, adminSession := newTestHandler(t)
+	defer manager.Close(context.Background())
+	response := performJSON(handler, http.MethodPut, "/admin/api/password", `{"current_password":"correct horse battery staple","new_password":"another correct horse","confirm_new_password":"different password"}`, adminSession)
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "do not match") {
+		t.Fatalf("password mismatch = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestAuditExportEndpointReturnsEveryRetainedEvent(t *testing.T) {
+	handler, repository, manager, adminSession := newTestHandler(t)
+	defer manager.Close(context.Background())
+	base := time.Now().UTC().Add(-time.Hour)
+	for index := 0; index < 1005; index++ {
+		if err := repository.AppendAudit(context.Background(), state.AuditEvent{Time: base.Add(time.Duration(index) * time.Millisecond), ActorType: "test", ActorID: "export", Action: "export.seed", Outcome: "success"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	response := performJSON(handler, http.MethodGet, "/admin/api/audit/export?limit=1", "", adminSession)
+	if response.Code != http.StatusOK {
+		t.Fatalf("audit export = %d %s", response.Code, response.Body.String())
+	}
+	lines := strings.Split(strings.TrimSpace(response.Body.String()), "\n")
+	if len(lines) < 1005 {
+		t.Fatalf("audit export returned %d lines", len(lines))
+	}
+	var first, last state.AuditEvent
+	if err := json.Unmarshal([]byte(lines[0]), &first); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &last); err != nil {
+		t.Fatal(err)
+	}
+	if last.Time.Before(first.Time) {
+		t.Fatalf("audit export order first=%s last=%s", first.Time, last.Time)
 	}
 }
 
@@ -334,7 +437,7 @@ func TestAdminUIHasNoEmbeddedCredential(t *testing.T) {
 	if recorder.Header().Get("Content-Security-Policy") == "" {
 		t.Fatal("UI response has no content security policy")
 	}
-	for _, forbidden := range []string{"sessionStorage", "admin_token", "platform assertion", "bootstrap token", "--blue:", "--navy:"} {
+	for _, forbidden := range []string{"sessionStorage", "admin_token", "platform assertion", "bootstrap token", "--blue:", "--navy:", "window.prompt", "prompt(", `value="nas.admin"`, `onclick="setDefault`} {
 		if strings.Contains(recorder.Body.String(), forbidden) {
 			t.Fatalf("UI contains superseded administrator mechanism %q", forbidden)
 		}
@@ -347,7 +450,9 @@ func TestAdminUIHasNoEmbeddedCredential(t *testing.T) {
 		`--brand-500:#2588df`, `--brand-950:#0d263f`, `--slate-900:#162334`,
 		`--color-action:var(--brand-500)`, `--color-nav:var(--brand-950)`,
 		`data-locale-select`, `localStorage.getItem('dsmctl.locale')`, `dataset.i18nDiagnostics`,
+		`pointer-events:none`, `Mindestens 12 Zeichen`,
 		`English`, `繁體中文`, `简体中文`, `日本語`, `Deutsch`, `MCP endpoint`, `/mcp`,
+		`value="lan.discover"`, `id="credentialDialog"`, `id="profileDialog"`, `id="approvalRequests"`, `id="auditRows"`, `confirm_new_password`,
 	} {
 		if !strings.Contains(recorder.Body.String(), required) {
 			t.Fatalf("UI is missing redesigned application shell marker %q", required)
@@ -392,10 +497,11 @@ func TestPasswordOTPEnrollmentStoresTrustedDeviceWithoutReturningSecrets(t *test
 
 	handler, repository, manager, adminSession := newTestHandler(t)
 	defer manager.Close(context.Background())
-	if _, err := repository.CreateProfile(context.Background(), state.ProfileInput{Name: "mfa", URL: dsm.URL, Username: "operator"}); err != nil {
+	profile, err := repository.CreateProfile(context.Background(), state.ProfileInput{Name: "mfa", URL: dsm.URL})
+	if err != nil {
 		t.Fatal(err)
 	}
-	body := `{"password":"enrollment-password","otp":"654321"}`
+	body := fmt.Sprintf(`{"account":"operator","expected_revision":%d,"password":"enrollment-password","otp":"654321"}`, profile.Revision)
 	response := performJSON(handler, http.MethodPost, "/admin/api/profiles/mfa/credentials/password", body, adminSession)
 	if response.Code != http.StatusOK {
 		t.Fatalf("enrollment status = %d, body=%s", response.Code, response.Body.String())
@@ -410,6 +516,10 @@ func TestPasswordOTPEnrollmentStoresTrustedDeviceWithoutReturningSecrets(t *test
 	device, err := repository.TrustedDevice(context.Background(), "mfa")
 	if err != nil || device.ID != "trusted-device-id" {
 		t.Fatalf("stored device = %#v, %v", device, err)
+	}
+	updated, err := repository.Profile(context.Background(), "mfa")
+	if err != nil || updated.Username != "operator" || updated.Revision <= profile.Revision {
+		t.Fatalf("enrolled profile = %#v, %v", updated, err)
 	}
 }
 

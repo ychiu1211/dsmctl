@@ -70,6 +70,9 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 			t.Errorf("MCP tool %q has no enforceable remote authorization class", tool.Name)
 		}
 	}
+	if scope, ok := ToolScope("discover_lan_devices"); !ok || scope != "lan.discover" {
+		t.Fatalf("discover_lan_devices scope = %q, %v", scope, ok)
+	}
 	readOnlyTools := map[string]bool{
 		"discover_lan_devices":                false,
 		"explain_effective_access":            false,
@@ -136,22 +139,22 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"plan_surveillance_home_mode_change":  false,
 	}
 	mutationTools := map[string]bool{
-		"apply_account_plan":            false,
-		"apply_control_panel_time_plan": false,
-		"apply_san_plan":                false,
-		"apply_share_plan":              false,
-		"apply_storage_plan":            false,
-		"apply_file_service_plan":       false,
-		"apply_nfs_export_plan":         false,
-		"apply_service_discovery_plan":  false,
-		"apply_ftp_service_plan":        false,
-		"apply_rsync_service_plan":      false,
-		"apply_tftp_service_plan":       false,
-		"apply_photos_plan":             false,
-		"apply_drive_config_plan":       false,
+		"apply_account_plan":                false,
+		"apply_control_panel_time_plan":     false,
+		"apply_san_plan":                    false,
+		"apply_share_plan":                  false,
+		"apply_storage_plan":                false,
+		"apply_file_service_plan":           false,
+		"apply_nfs_export_plan":             false,
+		"apply_service_discovery_plan":      false,
+		"apply_ftp_service_plan":            false,
+		"apply_rsync_service_plan":          false,
+		"apply_tftp_service_plan":           false,
+		"apply_photos_plan":                 false,
+		"apply_drive_config_plan":           false,
 		"apply_surveillance_home_mode_plan": false,
-		"apply_package_plan":            false,
-		"apply_resource_recording_plan": false,
+		"apply_package_plan":                false,
+		"apply_resource_recording_plan":     false,
 	}
 	for _, tool := range tools.Tools {
 		if _, ok := mutationTools[tool.Name]; ok {

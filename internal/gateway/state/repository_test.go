@@ -241,6 +241,34 @@ func TestExistingSchemaZeroIsBackedUpBeforeMigration(t *testing.T) {
 	}
 }
 
+func TestPasswordEnrollmentCommitsAccountAndCredentialAtExpectedRevision(t *testing.T) {
+	repository, _ := openTestRepository(t)
+	ctx := context.Background()
+	profile, err := repository.CreateProfile(ctx, ProfileInput{Name: "office", URL: "https://office.example"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision, err := repository.EnrollPasswordForAccount(ctx, "office", profile.Revision, "actual-operator", "verified-password", credentials.TrustedDevice{Name: "dsmctl-gateway", ID: "device-id"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, _ := repository.Profile(ctx, "office")
+	if updated.Username != "actual-operator" || revision != updated.Revision || revision <= profile.Revision {
+		t.Fatalf("enrolled profile = %#v revision=%d", updated, revision)
+	}
+	if _, err := repository.EnrollPasswordForAccount(ctx, "office", profile.Revision, "stale-account", "stale-password", credentials.TrustedDevice{}); !errors.Is(err, ErrRevisionConflict) {
+		t.Fatalf("stale enrollment = %v", err)
+	}
+	snapshot, err := repository.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	password, err := repository.Password(ctx, "office", snapshot.NAS["office"])
+	if err != nil || password != "verified-password" {
+		t.Fatalf("password after stale enrollment = %q, %v", password, err)
+	}
+}
+
 func TestFailedMigrationRollsBackAndLeavesRecoverableBackup(t *testing.T) {
 	directory := t.TempDir()
 	path := filepath.Join(directory, "gateway.db")

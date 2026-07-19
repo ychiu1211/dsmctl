@@ -27,15 +27,16 @@ import (
 )
 
 var (
-	bucketMeta          = []byte("meta")
-	bucketProfiles      = []byte("profiles")
-	bucketSecrets       = []byte("secrets")
-	bucketMigrations    = []byte("migrations")
-	bucketMCPTokens     = []byte("mcp_tokens")
-	bucketTokenDigests  = []byte("mcp_token_digests")
-	bucketApprovals     = []byte("approvals")
-	bucketAudit         = []byte("audit")
-	bucketAdminSessions = []byte("admin_sessions")
+	bucketMeta             = []byte("meta")
+	bucketProfiles         = []byte("profiles")
+	bucketSecrets          = []byte("secrets")
+	bucketMigrations       = []byte("migrations")
+	bucketMCPTokens        = []byte("mcp_tokens")
+	bucketTokenDigests     = []byte("mcp_token_digests")
+	bucketApprovals        = []byte("approvals")
+	bucketApprovalRequests = []byte("approval_requests")
+	bucketAudit            = []byte("audit")
+	bucketAdminSessions    = []byte("admin_sessions")
 
 	keySchemaVersion  = []byte("schema_version")
 	keyDefaultProfile = []byte("default_profile")
@@ -217,7 +218,7 @@ func (r *Repository) initialize(existed bool, options OpenOptions) error {
 		if err != nil {
 			return err
 		}
-		for _, name := range [][]byte{bucketProfiles, bucketSecrets, bucketMigrations, bucketMCPTokens, bucketTokenDigests, bucketApprovals, bucketAudit, bucketAdminSessions} {
+		for _, name := range [][]byte{bucketProfiles, bucketSecrets, bucketMigrations, bucketMCPTokens, bucketTokenDigests, bucketApprovals, bucketApprovalRequests, bucketAudit, bucketAdminSessions} {
 			if _, err := tx.CreateBucketIfNotExists(name); err != nil {
 				return err
 			}
@@ -251,6 +252,11 @@ func (r *Repository) initialize(existed bool, options OpenOptions) error {
 				return err
 			}
 			if err := meta.Put(keyRevisionCounter, encodeUint64(highest)); err != nil {
+				return err
+			}
+		}
+		if version > 0 && version < 5 {
+			if err := migrateLANDiscoveryScope(tx); err != nil {
 				return err
 			}
 		}
@@ -486,6 +492,38 @@ func (r *Repository) DeleteProfile(ctx context.Context, name string, expectedRev
 		}
 		if err := tx.Bucket(bucketProfiles).Delete([]byte(name)); err != nil {
 			return err
+		}
+		allowlistsChanged := false
+		if err := tx.Bucket(bucketMCPTokens).ForEach(func(key, value []byte) error {
+			token, err := decodeMCPToken(value)
+			if err != nil {
+				return err
+			}
+			filtered := make([]string, 0, len(token.NASAllowlist))
+			for _, allowed := range token.NASAllowlist {
+				if allowed == name {
+					allowlistsChanged = true
+					continue
+				}
+				filtered = append(filtered, allowed)
+			}
+			if len(filtered) == len(token.NASAllowlist) {
+				return nil
+			}
+			token.NASAllowlist = filtered
+			token.UpdatedAt = r.now().UTC()
+			encoded, err := json.Marshal(token)
+			if err != nil {
+				return err
+			}
+			return tx.Bucket(bucketMCPTokens).Put(key, encoded)
+		}); err != nil {
+			return err
+		}
+		if allowlistsChanged {
+			if err := r.appendAuditTx(tx, AuditEvent{Time: r.now().UTC(), ActorType: "gateway_admin", Action: "token.allowlist.cleanup", NAS: name, Outcome: "success"}); err != nil {
+				return err
+			}
 		}
 		meta := tx.Bucket(bucketMeta)
 		if string(meta.Get(keyDefaultProfile)) == name {

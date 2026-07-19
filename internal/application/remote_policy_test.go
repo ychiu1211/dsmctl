@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/ychiu1211/dsmctl/internal/config"
@@ -45,7 +46,7 @@ func TestRemoteApplyAdmissionIsAdditiveAndRechecksPrincipal(t *testing.T) {
 	}
 }
 
-func TestRemoteProfileFilteringAndImplicitTargetAuthorization(t *testing.T) {
+func TestRemoteProfileFilteringAndExplicitTargetAuthorization(t *testing.T) {
 	cfg := &config.Config{DefaultNAS: "hidden", NAS: map[string]config.Profile{"allowed": {URL: "https://allowed.example"}, "hidden": {URL: "https://hidden.example"}}}
 	service := &Service{config: cfg, configSource: config.StaticSource{Config: cfg}}
 	principal := remotepolicy.Principal{TokenID: "reader", Scopes: map[string]struct{}{remotepolicy.ScopeRead: {}}, NAS: map[string]struct{}{"allowed": {}}}
@@ -60,8 +61,8 @@ func TestRemoteProfileFilteringAndImplicitTargetAuthorization(t *testing.T) {
 	if _, err := service.AuthorizeRemoteTarget(ctx, "hidden"); !errors.Is(err, remotepolicy.ErrDenied) {
 		t.Fatalf("hidden target = %v", err)
 	}
-	if _, err := service.AuthorizeRemoteTarget(ctx, ""); !errors.Is(err, remotepolicy.ErrDenied) {
-		t.Fatalf("hidden default target = %v", err)
+	if _, err := service.AuthorizeRemoteTarget(ctx, ""); err == nil || !strings.Contains(err.Error(), "explicit nas") {
+		t.Fatalf("omitted target = %v", err)
 	}
 	if name, err := service.AuthorizeRemoteTarget(ctx, "allowed"); err != nil || name != "allowed" {
 		t.Fatalf("allowed target=%q err=%v", name, err)

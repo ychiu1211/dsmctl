@@ -25,6 +25,7 @@ type TFTPServiceCapabilitiesResult struct {
 type TFTPServicePlan struct {
 	APIVersion          string                    `json:"api_version" jsonschema:"Plan schema version"`
 	NAS                 string                    `json:"nas" jsonschema:"NAS profile selected during planning"`
+	ProfileRevision     uint64                    `json:"profile_revision,omitempty" jsonschema:"Persistent gateway profile revision selected during planning"`
 	Request             tftpservice.Change        `json:"request" jsonschema:"Patch-only TFTP intent"`
 	Observed            synology.TFTPServiceState `json:"observed" jsonschema:"Complete TFTP state observed during planning"`
 	ObservedFingerprint string                    `json:"observed_fingerprint" jsonschema:"SHA-256 hash of the complete observed state"`
@@ -80,11 +81,25 @@ func (s *Service) PlanTFTPServiceChange(ctx context.Context, requestedNAS string
 	if err != nil {
 		return TFTPServicePlan{}, err
 	}
-	return planTFTPServiceChangeWithClient(ctx, name, client, request)
+	plan, err := planTFTPServiceChangeWithClient(ctx, name, client, request)
+	if err != nil {
+		return TFTPServicePlan{}, err
+	}
+	plan.ProfileRevision, err = s.profileRevision(ctx, name)
+	if err == nil {
+		plan.Hash, err = tftpServicePlanHash(plan)
+	}
+	return plan, err
 }
 
 func (s *Service) ApplyTFTPServicePlan(ctx context.Context, plan TFTPServicePlan, approvalHash string) (TFTPServiceApplyResult, error) {
 	if err := validateTFTPServicePlan(plan, approvalHash); err != nil {
+		return TFTPServiceApplyResult{}, err
+	}
+	if err := s.authorizeRemoteApply(ctx, plan.NAS, plan.ProfileRevision, plan.Hash, plan.Risk); err != nil {
+		return TFTPServiceApplyResult{}, err
+	}
+	if err := s.verifyProfileRevision(ctx, plan.NAS, plan.ProfileRevision); err != nil {
 		return TFTPServiceApplyResult{}, err
 	}
 	name, client, err := s.tftpServiceClient(ctx, plan.NAS)
@@ -101,6 +116,11 @@ func applyTFTPServicePlanWithClient(ctx context.Context, client tftpServiceClien
 	current, err := planTFTPServiceChangeWithClient(ctx, plan.NAS, client, plan.Request)
 	if err != nil {
 		return TFTPServiceApplyResult{}, fmt.Errorf("TFTP service plan precondition no longer holds: %w", err)
+	}
+	current.ProfileRevision = plan.ProfileRevision
+	current.Hash, err = tftpServicePlanHash(current)
+	if err != nil {
+		return TFTPServiceApplyResult{}, err
 	}
 	if current.ObservedFingerprint != plan.ObservedFingerprint || current.Hash != plan.Hash {
 		return TFTPServiceApplyResult{}, fmt.Errorf("TFTP service plan is stale; create a new plan")

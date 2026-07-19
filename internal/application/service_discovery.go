@@ -12,8 +12,8 @@ import (
 const serviceDiscoveryAPIVersion = "dsmctl.io/v1alpha1"
 
 type ServiceDiscoveryStateResult struct {
-	NAS              string                          `json:"nas" jsonschema:"NAS profile used for the request"`
-	ServiceDiscovery synology.ServiceDiscoveryState  `json:"service_discovery" jsonschema:"Normalized service-discovery configuration"`
+	NAS              string                         `json:"nas" jsonschema:"NAS profile used for the request"`
+	ServiceDiscovery synology.ServiceDiscoveryState `json:"service_discovery" jsonschema:"Normalized service-discovery configuration"`
 }
 
 type ServiceDiscoveryCapabilitiesResult struct {
@@ -25,6 +25,7 @@ type ServiceDiscoveryCapabilitiesResult struct {
 type ServiceDiscoveryPlan struct {
 	APIVersion          string                         `json:"api_version" jsonschema:"Plan schema version"`
 	NAS                 string                         `json:"nas" jsonschema:"NAS profile selected during planning"`
+	ProfileRevision     uint64                         `json:"profile_revision,omitempty" jsonschema:"Persistent gateway profile revision selected during planning"`
 	Request             servicediscovery.Change        `json:"request" jsonschema:"Patch-only service-discovery intent"`
 	Observed            synology.ServiceDiscoveryState `json:"observed" jsonschema:"Complete service-discovery state observed during planning"`
 	ObservedFingerprint string                         `json:"observed_fingerprint" jsonschema:"SHA-256 hash of the complete observed state"`
@@ -80,11 +81,25 @@ func (s *Service) PlanServiceDiscoveryChange(ctx context.Context, requestedNAS s
 	if err != nil {
 		return ServiceDiscoveryPlan{}, err
 	}
-	return planServiceDiscoveryChangeWithClient(ctx, name, client, request)
+	plan, err := planServiceDiscoveryChangeWithClient(ctx, name, client, request)
+	if err != nil {
+		return ServiceDiscoveryPlan{}, err
+	}
+	plan.ProfileRevision, err = s.profileRevision(ctx, name)
+	if err == nil {
+		plan.Hash, err = serviceDiscoveryPlanHash(plan)
+	}
+	return plan, err
 }
 
 func (s *Service) ApplyServiceDiscoveryPlan(ctx context.Context, plan ServiceDiscoveryPlan, approvalHash string) (ServiceDiscoveryApplyResult, error) {
 	if err := validateServiceDiscoveryPlan(plan, approvalHash); err != nil {
+		return ServiceDiscoveryApplyResult{}, err
+	}
+	if err := s.authorizeRemoteApply(ctx, plan.NAS, plan.ProfileRevision, plan.Hash, plan.Risk); err != nil {
+		return ServiceDiscoveryApplyResult{}, err
+	}
+	if err := s.verifyProfileRevision(ctx, plan.NAS, plan.ProfileRevision); err != nil {
 		return ServiceDiscoveryApplyResult{}, err
 	}
 	name, client, err := s.serviceDiscoveryClient(ctx, plan.NAS)
@@ -101,6 +116,11 @@ func applyServiceDiscoveryPlanWithClient(ctx context.Context, client serviceDisc
 	current, err := planServiceDiscoveryChangeWithClient(ctx, plan.NAS, client, plan.Request)
 	if err != nil {
 		return ServiceDiscoveryApplyResult{}, fmt.Errorf("service discovery plan precondition no longer holds: %w", err)
+	}
+	current.ProfileRevision = plan.ProfileRevision
+	current.Hash, err = serviceDiscoveryPlanHash(current)
+	if err != nil {
+		return ServiceDiscoveryApplyResult{}, err
 	}
 	if current.ObservedFingerprint != plan.ObservedFingerprint || current.Hash != plan.Hash {
 		return ServiceDiscoveryApplyResult{}, fmt.Errorf("service discovery plan is stale; create a new plan")

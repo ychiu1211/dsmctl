@@ -1,7 +1,7 @@
 ---
 id: WI-038
 title: Streamline MCP Server approval and administration flows
-status: ready
+status: done
 priority: P1
 owner: ""
 depends_on: [WI-037]
@@ -219,54 +219,70 @@ collected through masked forms.
 
 ## Acceptance criteria
 
-- [ ] A remote high-risk `plan_*` result creates exactly one pending approval
+- [x] A remote high-risk `plan_*` result creates exactly one pending approval
       request with NAS, revision, requesting token, tool, risk, and summary;
       duplicates refresh rather than accumulate; bounds and TTL are enforced.
-- [ ] One-click approval creates a standard approval bound to the request's
+- [x] One-click approval creates a standard approval bound to the request's
       recorded fields, audit-logs it, and removes the request; dismissing a
       request has no other effect; local/stdio plans never create requests.
-- [ ] The manual approval form offers profile and token selectors, has no
+- [x] The manual approval form offers profile and token selectors, has no
       revision input, captures the selected profile's current revision
       server-side, and rejects malformed hashes client- and server-side.
-- [ ] Remote target-scoped tools reject an omitted `nas` argument with a
+- [x] Remote target-scoped tools reject an omitted `nas` argument with a
       clear error; `list_nas`, `discover_lan_devices`, and targetless
       `get_auth_status` still work; CLI/stdio default resolution is
       unchanged; the managed UI no longer offers a set-default action.
-- [ ] Token creation offers an optional expiry (default: none); the table
+- [x] Token creation offers an optional expiry (default: none); the table
       shows creation time, expiry, and last-used plus a separately copyable
       token ID; an existing token can be expired from the UI; each scope
       shows a localized description and `nas.apply` is visually marked as
       permitting changes.
-- [ ] The allowlist input only offers existing profiles; deleting a profile
+- [x] The allowlist input only offers existing profiles; deleting a profile
       transactionally removes it from every token allowlist and audit-logs
       the cleanup; a recreated same-name profile is not remotely accessible
       through any pre-existing token.
-- [ ] After migration, a token stored with `nas.admin` authorizes
+- [x] After migration, a token stored with `nas.admin` authorizes
       `discover_lan_devices` through `lan.discover`, the UI and tool table
       show only the new name, and creating a token with `nas.admin` is
       rejected.
-- [ ] Profile creation collects name, URL, and TLS only; password/OTP
+- [x] Profile creation collects name, URL, and TLS only; password/OTP
       enrollment collects the DSM account with the credentials and updates
       the stored username transactionally; the profile list shows the
       actually enrolled account; profiles are editable (URL, TLS, timeout)
       with revision-conflict handling and a permanent, non-editable name.
-- [ ] Password/OTP enrollment uses a masked modal that discloses
+- [x] Password/OTP enrollment uses a masked modal that discloses
       trusted-device registration; no `window.prompt` remains for secret
       entry; enrollment secrets stay out of state, logs, and audit.
-- [ ] Administrator password change requires a matching confirmation entry;
+- [x] Administrator password change requires a matching confirmation entry;
       the minimum length is enforced and described as 12 characters; forms
       mark required fields; the setup deadline and approval expiry show
       remaining time.
-- [ ] The audit view is a filterable table backed by the existing query
+- [x] The audit view is a filterable table backed by the existing query
       parameters, and export returns every retained event in documented
       order even when more than 1,000 events are stored.
-- [ ] All five locales cover every new string with English fallback,
+- [x] All five locales cover every new string with English fallback,
       including a localized Audit navigation label; empty states remain
       purposeful; no external asset is introduced.
-- [ ] `go test ./... -count=1`, `go vet ./...`, the amd64 Docker build, and an
+- [x] `go test ./... -count=1`, `go vet ./...`, the amd64 Docker build, and an
       isolated-container browser walkthrough of the changed flows pass.
 
 ## Verification
+
+### Results (2026-07-19)
+
+- `go test ./... -count=1` — passed with Go 1.26.5 on windows/amd64.
+- `go vet ./...` — passed with Go 1.26.5 on windows/amd64.
+- `docker build --platform linux/amd64 -f deploy/container/Dockerfile -t dsmctl:wi-038 .`
+  — passed with Docker Server 29.6.1.
+- Isolated-container browser walkthrough — passed against the amd64 image on
+  `127.0.0.1:18766` with a read-only root filesystem, tmpfs state, all Linux
+  capabilities dropped, and `no-new-privileges`. Verified first-run setup,
+  profile create/edit and masked password/OTP dialogs, token scopes and expiry,
+  approval/manual fallback, audit filters/export copy, password confirmation,
+  all five locale catalogs, CSP/offline assets, and the toast overlay fix. The
+  container and its tmpfs state were removed after verification.
+- All test traffic used fakes, captured requests, or the isolated local
+  container. No live DSM mutation or DSM version certification was performed.
 
 - Unit tests for request lifecycle: creation on high-risk plan, deduplication,
   bounds/TTL eviction, removal on approval and on token revocation, and a race
