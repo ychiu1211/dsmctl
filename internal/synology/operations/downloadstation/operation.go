@@ -457,6 +457,8 @@ var globalGetOp = settingsGetOp("download.settings.global.get", SettingsGlobalAP
 var globalSetOp = settingsSetOp("download.settings.global.set", SettingsGlobalAPIName, 2, "global", encodeGlobalSettings)
 var autoExtractionGetOp = settingsGetOp("download.settings.auto_extraction.get", SettingsAutoExtractionAPIName, 1, decodeAutoExtractionSettings)
 var autoExtractionSetOp = settingsSetOp("download.settings.auto_extraction.set", SettingsAutoExtractionAPIName, 1, "auto_extraction", encodeAutoExtractionChange)
+var nzbGetOp = settingsGetOp("download.settings.nzb.get", SettingsNzbAPIName, 1, decodeNzbSettings)
+var nzbSetOp = settingsSetOp("download.settings.nzb.set", SettingsNzbAPIName, 1, "nzb", encodeNzbChange)
 
 func encodeRssSettings(r downloadstation.RssSettings) url.Values {
 	v := url.Values{}
@@ -489,6 +491,42 @@ func encodeAutoExtractionChange(c downloadstation.AutoExtractionSettingsChange) 
 	}
 	if c.UnzipToPath != nil {
 		v.Set("unzip_to_path", *c.UnzipToPath)
+	}
+	return v
+}
+
+// encodeNzbChange builds a PARTIAL set: only the fields present in the patch are
+// sent. The NZB handler adds each parameter to a commit queue only when it is
+// provided and handles the news-server password separately, so a non-secret
+// patch never disturbs the stored password.
+func encodeNzbChange(c downloadstation.NzbSettingsChange) url.Values {
+	v := url.Values{}
+	if c.Server != nil {
+		v.Set("server", *c.Server)
+	}
+	if c.Port != nil {
+		v.Set("port", strconv.Itoa(*c.Port))
+	}
+	if c.Username != nil {
+		v.Set("username", *c.Username)
+	}
+	if c.EnableAuth != nil {
+		v.Set("enable_auth", boolParam(*c.EnableAuth))
+	}
+	if c.EnableEncryption != nil {
+		v.Set("enable_encryption", boolParam(*c.EnableEncryption))
+	}
+	if c.EnableParchive != nil {
+		v.Set("enable_parchive", boolParam(*c.EnableParchive))
+	}
+	if c.EnableRemoveParfiles != nil {
+		v.Set("enable_remove_parfiles", boolParam(*c.EnableRemoveParfiles))
+	}
+	if c.ConnPerDownload != nil {
+		v.Set("conn_per_download", strconv.Itoa(*c.ConnPerDownload))
+	}
+	if c.MaxDownloadRate != nil {
+		v.Set("max_download_rate", strconv.Itoa(*c.MaxDownloadRate))
 	}
 	return v
 }
@@ -561,6 +599,12 @@ func ExecuteAutoExtractionGet(ctx context.Context, t compatibility.Target, e com
 }
 func ExecuteAutoExtractionSet(ctx context.Context, t compatibility.Target, e compatibility.Executor, change downloadstation.AutoExtractionSettingsChange) (downloadstation.SettingsMutationResult, compatibility.Selection, error) {
 	return runSettingsSet(ctx, autoExtractionSetOp, t, e, change)
+}
+func ExecuteNzbGet(ctx context.Context, t compatibility.Target, e compatibility.Executor) (downloadstation.NzbSettings, compatibility.Selection, error) {
+	return runSettingsGet(ctx, nzbGetOp, t, e)
+}
+func ExecuteNzbSet(ctx context.Context, t compatibility.Target, e compatibility.Executor, change downloadstation.NzbSettingsChange) (downloadstation.SettingsMutationResult, compatibility.Selection, error) {
+	return runSettingsSet(ctx, nzbSetOp, t, e, change)
 }
 
 func SelectSettingsWrite(target compatibility.Target) (compatibility.Selection, error) {

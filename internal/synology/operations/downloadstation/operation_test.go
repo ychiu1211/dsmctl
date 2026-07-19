@@ -425,6 +425,26 @@ func TestEncodeAutoExtractionChangeIsPartialAndNeverSendsPasswords(t *testing.T)
 
 func boolPtr(b bool) *bool { return &b }
 
+func intPtr(i int) *int { return &i }
+
+func TestEncodeNzbChangeIsPartialAndNeverSendsPassword(t *testing.T) {
+	v := encodeNzbChange(downloadstation.NzbSettingsChange{
+		ConnPerDownload: intPtr(4),
+		EnableAuth:      boolPtr(true),
+	})
+	if got := v.Get("conn_per_download"); got != "4" {
+		t.Fatalf("conn_per_download = %q, want 4", got)
+	}
+	if got := v.Get("enable_auth"); got != "true" {
+		t.Fatalf("enable_auth = %q, want true", got)
+	}
+	for _, absent := range []string{"password", "server", "port", "username", "max_download_rate", "enable_encryption"} {
+		if v.Has(absent) {
+			t.Fatalf("unspecified field %q must not be sent, got %q", absent, v.Get(absent))
+		}
+	}
+}
+
 func TestAPINamesCoverLegacyAndSettings(t *testing.T) {
 	got := APINames()
 	want := []string{

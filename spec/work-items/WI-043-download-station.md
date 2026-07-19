@@ -59,10 +59,10 @@ are present on DSM 7.3; the legacy surface is simpler and version-stable).
   sub-resources.
 - **Secret settings and service-starting groups.** The BitTorrent, FTP/HTTP, RSS,
   Location, Scheduler, and Global groups are full-object read-merge-set; the
-  AutoExtraction group is a partial set of its non-secret fields only. Still out
-  of scope: NZB and archive-extraction **passwords** (need credential-ref
-  handling and never enter the model) and the **eMule** group (enabling it starts
-  the eMule service).
+  AutoExtraction and NZB groups are partial sets of their non-secret fields only.
+  Still out of scope: the NZB and archive-extraction **passwords** (need
+  credential-ref handling and never enter the model) and the **eMule** group
+  (enabling it starts the eMule service).
 - The task-management side of `SYNO.DownloadStation2.*` (`Task`, `Task.List`,
   `Task.BT.*`); the read module uses only the `Settings.*` slice of that
   generation plus the legacy Task list.
@@ -119,11 +119,13 @@ are present on DSM 7.3; the legacy surface is simpler and version-stable).
       so it is set-only/irreversible, while an unset watch folder reads back as
       `(null)` and is normalized to empty so a set does not fail path validation
       (code 522).
-- [x] AutoExtraction settings write as a **partial set** (only patched non-secret
-      fields sent) so archive passwords the read never returns stay untouched.
-      Keep-existing semantics live-verified reverted on 4.1.2 (set two fields,
-      change one alone, confirm the other and password_configured survive) and
-      pinned by a unit test asserting the encode never emits `passwords`.
+- [x] AutoExtraction and NZB settings writes as **partial sets** (only patched
+      non-secret fields sent) so the passwords the read never returns stay
+      untouched — confirmed against the `CheckAndAdd`/`HasParam` keep-existing
+      handlers. AutoExtraction keep-existing live-verified reverted on 4.1.2 (set
+      two fields, change one alone, confirm the other and password_configured
+      survive); NZB partial set live-verified reverted. Unit tests pin that
+      neither encode ever emits a password parameter.
 - [ ] `edit` (rename/re-target); NZB and auto-extraction **password** changes via
       credential-ref (never in the model); and the eMule group (enabling it starts
       the eMule service).

@@ -184,6 +184,12 @@ func (c *Client) DownloadStationSettingsGroup(ctx context.Context, group string)
 			return nil, downloadStationReadError("auto-extraction settings", evidence, err)
 		}
 		return json.Marshal(a)
+	case "nzb":
+		n, _, err := downloadstationops.ExecuteNzbGet(ctx, c.target, lockedExecutor{client: c})
+		if err != nil {
+			return nil, downloadStationReadError("NZB settings", evidence, err)
+		}
+		return json.Marshal(n)
 	default:
 		return nil, fmt.Errorf("unsupported settings group %q", group)
 	}
@@ -268,6 +274,14 @@ func (c *Client) ApplyDownloadStationSettingsChange(ctx context.Context, change 
 		result, _, err := downloadstationops.ExecuteAutoExtractionSet(ctx, c.target, lockedExecutor{client: c}, *change.AutoExtraction)
 		if err != nil {
 			return DownloadStationSettingsMutationResult{}, fmt.Errorf("apply Download Station auto-extraction settings: %w", err)
+		}
+		return result, nil
+	case change.Nzb != nil:
+		// NZB is a partial set: only the patched non-secret fields are sent, so
+		// the news-server password the read never returns is left untouched.
+		result, _, err := downloadstationops.ExecuteNzbSet(ctx, c.target, lockedExecutor{client: c}, *change.Nzb)
+		if err != nil {
+			return DownloadStationSettingsMutationResult{}, fmt.Errorf("apply Download Station NZB settings: %w", err)
 		}
 		return result, nil
 	default:

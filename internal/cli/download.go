@@ -227,7 +227,7 @@ func newDownloadSettingsPlanCommand(opts *options) *cobra.Command {
 	var inputPath, outputPath string
 	command := &cobra.Command{
 		Use:   "plan",
-		Short: "Validate a settings patch (BT, FTP/HTTP, RSS, location, scheduler, global, or auto-extraction group) and emit an approval plan as JSON",
+		Short: "Validate a settings patch (BT, FTP/HTTP, RSS, location, scheduler, global, auto-extraction, or NZB group) and emit an approval plan as JSON",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			var request downloadstation.SettingsChange

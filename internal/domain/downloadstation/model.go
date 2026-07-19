@@ -207,6 +207,22 @@ type AutoExtractionSettingsChange struct {
 	UnzipToPath     *string `json:"unzip_to_path,omitempty" jsonschema:"Fixed extraction destination when not extracting to the local folder"`
 }
 
+// NzbSettingsChange patches the Usenet (NZB) news-server settings. It is applied
+// as a partial set (only the present fields are sent), so the news-server
+// password — which the read never returns — is never touched. Password
+// management is intentionally out of scope; change it in DSM.
+type NzbSettingsChange struct {
+	Server               *string `json:"server,omitempty" jsonschema:"News server host"`
+	Port                 *int    `json:"port,omitempty" jsonschema:"News server port"`
+	Username             *string `json:"username,omitempty" jsonschema:"News server username"`
+	EnableAuth           *bool   `json:"enable_auth,omitempty" jsonschema:"Enable news-server authentication"`
+	EnableEncryption     *bool   `json:"enable_encryption,omitempty" jsonschema:"Enable SSL to the news server"`
+	EnableParchive       *bool   `json:"enable_parchive,omitempty" jsonschema:"Enable PAR2 repair"`
+	EnableRemoveParfiles *bool   `json:"enable_remove_parfiles,omitempty" jsonschema:"Remove PAR2 files after repair"`
+	ConnPerDownload      *int    `json:"conn_per_download,omitempty" jsonschema:"Connections per download"`
+	MaxDownloadRate      *int    `json:"max_download_rate,omitempty" jsonschema:"NZB maximum download rate in KB/s; 0 = unlimited"`
+}
+
 // SettingsChange is a patch across Download Station settings groups. Exactly one
 // group patch is present per change. More groups are added as they are
 // implemented as guarded writes.
@@ -218,6 +234,7 @@ type SettingsChange struct {
 	Scheduler      *SchedulerSettingsChange      `json:"scheduler,omitempty" jsonschema:"Bandwidth-schedule settings patch"`
 	Global         *GlobalSettingsChange         `json:"global,omitempty" jsonschema:"General settings patch"`
 	AutoExtraction *AutoExtractionSettingsChange `json:"auto_extraction,omitempty" jsonschema:"Archive auto-extraction settings patch (non-secret fields only)"`
+	Nzb            *NzbSettingsChange            `json:"nzb,omitempty" jsonschema:"Usenet (NZB) news-server settings patch (non-secret fields only)"`
 }
 
 // SettingsMutationResult records the DSM backend that accepted a settings write.
@@ -319,5 +336,5 @@ type Capabilities struct {
 	StatisticRead bool            `json:"statistic_read" jsonschema:"Whether transfer statistics can be read"`
 	SettingsRead  bool            `json:"settings_read" jsonschema:"Whether the full detailed settings can be read"`
 	TaskWrite     bool            `json:"task_write" jsonschema:"Whether guarded task create/pause/resume/delete is available"`
-	SettingsWrite bool            `json:"settings_write" jsonschema:"Whether guarded settings changes (BT, FTP/HTTP, RSS, location, scheduler, global, auto-extraction groups) are available"`
+	SettingsWrite bool            `json:"settings_write" jsonschema:"Whether guarded settings changes (BT, FTP/HTTP, RSS, location, scheduler, global, auto-extraction, NZB groups) are available"`
 }

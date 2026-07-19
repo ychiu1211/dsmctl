@@ -528,9 +528,12 @@ func activeSettingsGroup(change downloadstation.SettingsChange) (string, error) 
 	if change.AutoExtraction != nil {
 		groups = append(groups, "auto_extraction")
 	}
+	if change.Nzb != nil {
+		groups = append(groups, "nzb")
+	}
 	switch len(groups) {
 	case 0:
-		return "", fmt.Errorf("settings change requires exactly one group patch (bt, ftp_http, rss, location, scheduler, global, auto_extraction)")
+		return "", fmt.Errorf("settings change requires exactly one group patch (bt, ftp_http, rss, location, scheduler, global, auto_extraction, nzb)")
 	case 1:
 		return groups[0], nil
 	default:
@@ -631,6 +634,13 @@ func settingsGroupEffects(group string, change downloadstation.SettingsChange, o
 		}
 		noop, summary := autoExtractionEffects(current, *change.AutoExtraction)
 		return noop, "medium", []string{}, summary, nil
+	case "nzb":
+		var current downloadstation.NzbSettings
+		if err := json.Unmarshal(observed, &current); err != nil {
+			return false, "", nil, nil, fmt.Errorf("decode observed NZB settings: %w", err)
+		}
+		noop, summary := nzbEffects(current, *change.Nzb)
+		return noop, "medium", []string{}, summary, nil
 	default:
 		return false, "", nil, nil, fmt.Errorf("unsupported settings group %q", group)
 	}
@@ -691,6 +701,12 @@ func verifySettingsGroupPostcondition(ctx context.Context, client downloadStatio
 			return err
 		}
 		return verifyAutoExtractionPostcondition(a, *change.AutoExtraction)
+	case "nzb":
+		var n downloadstation.NzbSettings
+		if err := json.Unmarshal(raw, &n); err != nil {
+			return err
+		}
+		return verifyNzbPostcondition(n, *change.Nzb)
 	default:
 		return fmt.Errorf("unsupported settings group %q", group)
 	}
@@ -789,6 +805,79 @@ func verifyAutoExtractionPostcondition(current downloadstation.AutoExtractionSet
 	}
 	if patch.UnzipToPath != nil && current.UnzipToPath != *patch.UnzipToPath {
 		return fmt.Errorf("unzip_to_path is %q, want %q", current.UnzipToPath, *patch.UnzipToPath)
+	}
+	return nil
+}
+
+func nzbEffects(current downloadstation.NzbSettings, patch downloadstation.NzbSettingsChange) (bool, []string) {
+	summary := []string{}
+	changed := false
+	if patch.Server != nil && *patch.Server != current.Server {
+		summary = append(summary, fmt.Sprintf("set the news server to %q", *patch.Server))
+		changed = true
+	}
+	if patch.Port != nil && *patch.Port != current.Port {
+		summary = append(summary, fmt.Sprintf("set the news-server port to %d", *patch.Port))
+		changed = true
+	}
+	if patch.Username != nil && *patch.Username != current.Username {
+		summary = append(summary, fmt.Sprintf("set the news-server username to %q", *patch.Username))
+		changed = true
+	}
+	if patch.EnableAuth != nil && *patch.EnableAuth != current.EnableAuth {
+		summary = append(summary, fmt.Sprintf("set authentication to %t", *patch.EnableAuth))
+		changed = true
+	}
+	if patch.EnableEncryption != nil && *patch.EnableEncryption != current.EnableEncryption {
+		summary = append(summary, fmt.Sprintf("set SSL to %t", *patch.EnableEncryption))
+		changed = true
+	}
+	if patch.EnableParchive != nil && *patch.EnableParchive != current.EnableParchive {
+		summary = append(summary, fmt.Sprintf("set PAR2 repair to %t", *patch.EnableParchive))
+		changed = true
+	}
+	if patch.EnableRemoveParfiles != nil && *patch.EnableRemoveParfiles != current.EnableRemoveParfiles {
+		summary = append(summary, fmt.Sprintf("set remove-PAR2-files to %t", *patch.EnableRemoveParfiles))
+		changed = true
+	}
+	if patch.ConnPerDownload != nil && *patch.ConnPerDownload != current.ConnPerDownload {
+		summary = append(summary, fmt.Sprintf("set connections per download to %d", *patch.ConnPerDownload))
+		changed = true
+	}
+	if patch.MaxDownloadRate != nil && *patch.MaxDownloadRate != current.MaxDownloadRate {
+		summary = append(summary, fmt.Sprintf("set the NZB max download rate to %d KB/s", *patch.MaxDownloadRate))
+		changed = true
+	}
+	return !changed, summary
+}
+
+func verifyNzbPostcondition(current downloadstation.NzbSettings, patch downloadstation.NzbSettingsChange) error {
+	if patch.Server != nil && current.Server != *patch.Server {
+		return fmt.Errorf("server is %q, want %q", current.Server, *patch.Server)
+	}
+	if patch.Port != nil && current.Port != *patch.Port {
+		return fmt.Errorf("port is %d, want %d", current.Port, *patch.Port)
+	}
+	if patch.Username != nil && current.Username != *patch.Username {
+		return fmt.Errorf("username is %q, want %q", current.Username, *patch.Username)
+	}
+	if patch.EnableAuth != nil && current.EnableAuth != *patch.EnableAuth {
+		return fmt.Errorf("enable_auth mismatch")
+	}
+	if patch.EnableEncryption != nil && current.EnableEncryption != *patch.EnableEncryption {
+		return fmt.Errorf("enable_encryption mismatch")
+	}
+	if patch.EnableParchive != nil && current.EnableParchive != *patch.EnableParchive {
+		return fmt.Errorf("enable_parchive mismatch")
+	}
+	if patch.EnableRemoveParfiles != nil && current.EnableRemoveParfiles != *patch.EnableRemoveParfiles {
+		return fmt.Errorf("enable_remove_parfiles mismatch")
+	}
+	if patch.ConnPerDownload != nil && current.ConnPerDownload != *patch.ConnPerDownload {
+		return fmt.Errorf("conn_per_download is %d, want %d", current.ConnPerDownload, *patch.ConnPerDownload)
+	}
+	if patch.MaxDownloadRate != nil && current.MaxDownloadRate != *patch.MaxDownloadRate {
+		return fmt.Errorf("max_download_rate is %d, want %d", current.MaxDownloadRate, *patch.MaxDownloadRate)
 	}
 	return nil
 }
@@ -975,6 +1064,23 @@ func validateSettingsChangeShape(change downloadstation.SettingsChange) error {
 		}
 		if a.UnzipToPath != nil && strings.TrimSpace(*a.UnzipToPath) == "" && (a.UnzipToLocal == nil || !*a.UnzipToLocal) {
 			return fmt.Errorf("unzip_to_path must not be empty unless unzip_to_local is true")
+		}
+		return nil
+	case "nzb":
+		n := change.Nzb
+		if n.Server == nil && n.Port == nil && n.Username == nil && n.EnableAuth == nil &&
+			n.EnableEncryption == nil && n.EnableParchive == nil && n.EnableRemoveParfiles == nil &&
+			n.ConnPerDownload == nil && n.MaxDownloadRate == nil {
+			return fmt.Errorf("nzb settings patch has no fields")
+		}
+		if n.Port != nil && (*n.Port < 1 || *n.Port > 65535) {
+			return fmt.Errorf("port must be between 1 and 65535")
+		}
+		if n.ConnPerDownload != nil && *n.ConnPerDownload < 1 {
+			return fmt.Errorf("conn_per_download must be at least 1")
+		}
+		if n.MaxDownloadRate != nil && *n.MaxDownloadRate < 0 {
+			return fmt.Errorf("max_download_rate must not be negative")
 		}
 		return nil
 	default:

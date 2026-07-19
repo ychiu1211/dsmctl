@@ -348,7 +348,7 @@ type applyDownloadStationTaskPlanOutput struct {
 
 type planDownloadStationSettingsChangeInput struct {
 	NAS     string                         `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
-	Request downloadstation.SettingsChange `json:"request" jsonschema:"Patch-only settings intent (exactly one group: BT, FTP/HTTP, RSS, location, scheduler, global, or auto_extraction)"`
+	Request downloadstation.SettingsChange `json:"request" jsonschema:"Patch-only settings intent (exactly one group: BT, FTP/HTTP, RSS, location, scheduler, global, auto_extraction, or nzb)"`
 }
 
 type planDownloadStationSettingsChangeOutput struct {
@@ -1505,7 +1505,7 @@ func New(service *application.Service, version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "plan_download_station_settings_change",
 		Title:       "Plan a Download Station settings change",
-		Description: "Validate a patch-only Download Station settings change affecting exactly one group and return an approval plan bound to the complete observed group state. Supported groups: BT (ports, DHT, port forwarding, preview, encryption, rate limits, max peers, seeding), FTP/HTTP (max download rate, per-task connection limit), RSS (feed refresh interval), location (default destination, torrent/NZB watch folder), scheduler (alternative-rate schedule, max tasks), global (download volume, eMule and auto-extract toggles), and auto_extraction (per-user extraction preferences; a partial set that never touches archive passwords). Note that the location default destination is a per-user binding DSM cannot clear once set. This tool never mutates DSM.",
+		Description: "Validate a patch-only Download Station settings change affecting exactly one group and return an approval plan bound to the complete observed group state. Supported groups: BT (ports, DHT, port forwarding, preview, encryption, rate limits, max peers, seeding), FTP/HTTP (max download rate, per-task connection limit), RSS (feed refresh interval), location (default destination, torrent/NZB watch folder), scheduler (alternative-rate schedule, max tasks), global (download volume, eMule and auto-extract toggles), auto_extraction (per-user extraction preferences), and nzb (Usenet news-server settings). Auto_extraction and nzb are partial sets that never touch their passwords. Note that the location default destination is a per-user binding DSM cannot clear once set. This tool never mutates DSM.",
 		Annotations: readOnlyAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planDownloadStationSettingsChangeInput) (*mcp.CallToolResult, planDownloadStationSettingsChangeOutput, error) {
 		plan, err := service.PlanDownloadStationSettingsChange(ctx, input.NAS, input.Request)

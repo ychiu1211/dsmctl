@@ -83,8 +83,12 @@ exactly one patch-only group patch. The writable groups are:
 - **Global** — download volume and the eMule / auto-extract service toggles.
 - **Auto-extraction** — the per-user archive-extraction preferences (enable,
   create subfolder, delete archive, overwrite, local vs fixed destination).
-  Applied as a **partial set** so the archive passwords (never returned by the
-  read) are never touched; changing a password is out of scope — use the DSM UI.
+- **NZB** — the Usenet news-server settings (server, port, username, auth, SSL,
+  PAR2 repair, connections per download, max download rate).
+
+  Auto-extraction and NZB are applied as **partial sets** — only the patched
+  non-secret fields are sent, so the passwords the read never returns are never
+  touched. Changing a password is out of scope; use the DSM UI.
 
 ```console
 echo '{"bt":{"max_upload_rate":15,"enable_preview":false}}' | dsmctl download settings plan --nas office -o bt.plan.json
@@ -109,8 +113,8 @@ which the reader normalizes to empty so a subsequent set does not echo the
 sentinel back and fail path validation.
 
 Field shapes and set semantics are live-verified on Download Station 4.1.2. Still
-out of scope: **secret** settings (NZB and archive-extraction passwords — the
-auto-extraction write covers only its non-secret preference fields), the eMule
-group (enabling it starts the eMule service), task `edit` (rename/re-target),
-BT/eMule search, RSS feed management, and eMule server management — see
+out of scope: the **passwords** in the NZB and auto-extraction groups (the writes
+cover only non-secret fields), the eMule group (enabling it starts the eMule
+service), task `edit` (rename/re-target), BT/eMule search, RSS feed management,
+and eMule server management — see
 [WI-043](../spec/work-items/WI-043-download-station.md).
