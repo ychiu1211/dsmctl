@@ -22,6 +22,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/config"
 	"github.com/ychiu1211/dsmctl/internal/gateway"
 	"github.com/ychiu1211/dsmctl/internal/gateway/admin"
+	gatewayoauth "github.com/ychiu1211/dsmctl/internal/gateway/oauth"
 	gatewaystate "github.com/ychiu1211/dsmctl/internal/gateway/state"
 	"github.com/ychiu1211/dsmctl/internal/mcpserver"
 	"github.com/ychiu1211/dsmctl/internal/runtime"
@@ -53,11 +54,16 @@ func run(arguments []string, logger *slog.Logger) error {
 	maxConcurrent := flags.Int("max-concurrent", 8, "maximum concurrent MCP requests")
 	maxBodyBytes := flags.Int64("max-body-bytes", 1<<20, "maximum MCP request body size")
 	shutdownTimeout := flags.Duration("shutdown-timeout", 10*time.Second, "HTTP drain and DSM session close timeout")
+	showVersion := flags.Bool("version", false, "print version and exit")
 	if err := flags.Parse(arguments); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 {
 		return fmt.Errorf("unexpected arguments: %s", strings.Join(flags.Args(), " "))
+	}
+	if *showVersion {
+		fmt.Fprintf(os.Stdout, "dsmctl-gateway %s\n", buildinfo.Version)
+		return nil
 	}
 	if *maxConcurrent < 1 {
 		return errors.New("max-concurrent must be at least 1")
@@ -87,6 +93,7 @@ func run(arguments []string, logger *slog.Logger) error {
 		manager      *runtime.Manager
 		service      *application.Service
 		adminHandler http.Handler
+		oauthHandler gateway.OAuthProvider
 		ready        func(context.Context) error
 		closeState   func() error
 		mode         string
@@ -122,13 +129,20 @@ func run(arguments []string, logger *slog.Logger) error {
 			application.WithSecretReferenceResolver(repository),
 			application.WithRemoteApplyAuthorizer(repository),
 		)
-		adminApplication, err := admin.New(admin.Options{Repository: repository, Manager: manager, PublicURL: *adminPublicURL, Logger: logger})
+		adminApplication, err := admin.New(admin.Options{Repository: repository, Manager: manager, Discoverer: service, PublicURL: *adminPublicURL, Logger: logger})
 		if err != nil {
 			_ = service.Close(context.Background())
 			_ = repository.Close()
 			return err
 		}
 		adminHandler = adminApplication
+		oauthApplication, err := gatewayoauth.New(gatewayoauth.Options{Repository: repository, PublicURL: *adminPublicURL, Logger: logger})
+		if err != nil {
+			_ = service.Close(context.Background())
+			_ = repository.Close()
+			return err
+		}
+		oauthHandler = oauthApplication
 		ready = managedReadiness(repository, *masterKeyPath, masterDigest)
 		mode = "managed"
 	} else {
@@ -149,6 +163,7 @@ func run(arguments []string, logger *slog.Logger) error {
 	gatewayOptions := gateway.Options{
 		MCPServer:      mcpServer,
 		AdminHandler:   adminHandler,
+		OAuthProvider:  oauthHandler,
 		BearerToken:    token,
 		AllowedHosts:   splitCSV(*allowedHosts),
 		AllowedOrigins: splitCSV(*allowedOrigins),

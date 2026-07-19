@@ -20,7 +20,12 @@ import (
 
 func main() {
 	configPath := flag.String("config", config.DefaultPath(), "configuration file path")
+	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
+	if *showVersion {
+		fmt.Fprintf(os.Stdout, "dsmctl-mcp %s\n", buildinfo.Version)
+		return
+	}
 
 	cfg, err := config.NewStore(*configPath).Load()
 	if err != nil {

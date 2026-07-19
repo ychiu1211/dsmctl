@@ -1,5 +1,9 @@
 # Supported Synology matrix
 
+The dsmctl/SPK release version is currently `7.3.2-1`: DSM compatibility train
+7.3.2, dsmctl build 1. That managed-NAS compatibility label is separate from
+the host DSM installation and hardware matrix below.
+
 Only Synology systems reporting `x86_64` are eligible. ARM, `i686`, DSM 6,
 DSM 7.0/7.1, models without Container Manager, and alternate architectures are
 deliberately rejected.

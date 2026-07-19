@@ -202,6 +202,45 @@ func (r *Repository) LoginAdministrator(ctx context.Context, username, password 
 	return token, publicAdministratorSession(session), nil
 }
 
+// VerifyAdministratorCredentials authenticates the local resource owner for
+// a one-time OAuth consent without creating an Admin UI browser session.
+func (r *Repository) VerifyAdministratorCredentials(ctx context.Context, username, password string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	normalized, usernameErr := normalizeAdministratorUsername(username)
+	passwordErr := validateLoginPassword(password)
+	var storedUsername, verifier string
+	if err := r.db.View(func(tx *bolt.Tx) error {
+		meta := tx.Bucket(bucketMeta)
+		storedUsername = string(meta.Get(keyAdminUsername))
+		verifier = string(meta.Get(keyAdminPassword))
+		return nil
+	}); err != nil {
+		return "", err
+	}
+	verificationTarget := verifier
+	if usernameErr != nil || passwordErr != nil || normalized != storedUsername || verificationTarget == "" {
+		verificationTarget = r.dummyPasswordVerifier()
+	}
+	valid := r.verifyPassword(ctx, password, verificationTarget)
+	password = ""
+	if usernameErr != nil || passwordErr != nil || normalized != storedUsername || verifier == "" || !valid {
+		return "", ErrUnauthorized
+	}
+	err := r.db.View(func(tx *bolt.Tx) error {
+		meta := tx.Bucket(bucketMeta)
+		if string(meta.Get(keyAdminUsername)) != storedUsername || subtle.ConstantTimeCompare(meta.Get(keyAdminPassword), []byte(verifier)) != 1 {
+			return ErrUnauthorized
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return storedUsername, nil
+}
+
 func (r *Repository) AuthenticateAdministratorSession(ctx context.Context, token string) (AdministratorSession, error) {
 	if err := ctx.Err(); err != nil {
 		return AdministratorSession{}, err
@@ -449,7 +488,7 @@ func (r *Repository) legacyAdministrationState() (bool, bool, error) {
 			return nil
 		}
 		legacyAdmin = len(meta.Get(keyAdminDigest)) > 0 || len(meta.Get(keyBootstrapDigest)) > 0 || len(meta.Get(keyBootstrapUsed)) > 0 || len(meta.Get(keyAdminMode)) > 0
-		for _, name := range [][]byte{bucketProfiles, bucketSecrets, bucketMCPTokens, bucketTokenDigests, bucketApprovals, bucketApprovalRequests} {
+		for _, name := range [][]byte{bucketProfiles, bucketSecrets, bucketMCPTokens, bucketTokenDigests, bucketApprovals, bucketApprovalRequests, bucketOAuthClients, bucketOAuthRefresh} {
 			if bucket := tx.Bucket(name); bucket != nil && bucket.Stats().KeyN > 0 {
 				managedData = true
 			}

@@ -16,6 +16,13 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Resolve and verify shared source version
+        shell: bash
+        run: |
+          source_version="$(go run ./cmd/dsmctl --version | awk '{print $NF}')"
+          test "$source_version" = "$(go run ./cmd/dsmctl-mcp --version | awk '{print $NF}')"
+          test "$source_version" = "$(go run ./cmd/dsmctl-gateway --version | awk '{print $NF}')"
+          echo "DSMCTL_SOURCE_VERSION=$source_version" >> "$GITHUB_ENV"
       - run: go test ./...
       - run: go vet ./...
       - run: go build ./cmd/dsmctl ./cmd/dsmctl-mcp ./cmd/dsmctl-gateway
@@ -24,7 +31,10 @@ jobs:
           CGO_ENABLED: "0"
           GOOS: linux
           GOARCH: amd64
-      - run: docker build --platform linux/amd64 --provenance=false --build-arg VERSION=ci -f deploy/container/Dockerfile -t dsmctl-gateway:ci .
+      - run: |
+          docker build --platform linux/amd64 --provenance=false --build-arg "VERSION=$DSMCTL_SOURCE_VERSION" -f deploy/container/Dockerfile -t dsmctl-gateway:ci .
+          test "$(docker image inspect dsmctl-gateway:ci --format '{{index .Config.Labels "org.opencontainers.image.version"}}')" = "$DSMCTL_SOURCE_VERSION"
+          test "$(docker run --rm dsmctl-gateway:ci --version)" = "dsmctl-gateway $DSMCTL_SOURCE_VERSION"
       - name: Smoke-test hardened gateway image
         shell: bash
         run: |

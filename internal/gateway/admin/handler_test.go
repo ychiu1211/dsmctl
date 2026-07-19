@@ -19,12 +19,50 @@ import (
 
 	"github.com/flynn/noise"
 
+	"github.com/ychiu1211/dsmctl/internal/application"
 	"github.com/ychiu1211/dsmctl/internal/config"
+	"github.com/ychiu1211/dsmctl/internal/domain/discovery"
 	"github.com/ychiu1211/dsmctl/internal/gateway/state"
 	"github.com/ychiu1211/dsmctl/internal/remotepolicy"
 	"github.com/ychiu1211/dsmctl/internal/runtime"
 	"github.com/ychiu1211/dsmctl/internal/webassets"
 )
+
+type discovererFunc func(context.Context, discovery.Query) (application.DiscoverResult, error)
+
+func (fn discovererFunc) DiscoverDevices(ctx context.Context, query discovery.Query) (application.DiscoverResult, error) {
+	return fn(ctx, query)
+}
+
+func TestAuthenticatedLANDiscovery(t *testing.T) {
+	handler, _, manager, token := newTestHandler(t)
+	defer manager.Close(context.Background())
+
+	var received discovery.Query
+	handler.discoverer = discovererFunc(func(_ context.Context, query discovery.Query) (application.DiscoverResult, error) {
+		received = query
+		return application.DiscoverResult{Devices: []discovery.Device{{Hostname: "office-nas", Model: "DS923+", IPAddress: "10.17.32.82", IPv4Addresses: []string{"10.17.32.82"}, State: discovery.StateReady}}}, nil
+	})
+
+	unauthorized := performJSON(handler, http.MethodPost, "/admin/api/discovery", `{"timeout_seconds":3}`, "")
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized discovery status = %d", unauthorized.Code)
+	}
+	response := performJSON(handler, http.MethodPost, "/admin/api/discovery", `{"timeout_seconds":3}`, token)
+	if response.Code != http.StatusOK {
+		t.Fatalf("discovery status = %d body=%s", response.Code, response.Body.String())
+	}
+	if received.Timeout != 3*time.Second {
+		t.Fatalf("discovery timeout = %s", received.Timeout)
+	}
+	if body := response.Body.String(); !strings.Contains(body, `"hostname":"office-nas"`) || !strings.Contains(body, `"ip_address":"10.17.32.82"`) {
+		t.Fatalf("discovery response = %s", body)
+	}
+	invalid := performJSON(handler, http.MethodPost, "/admin/api/discovery", `{"timeout_seconds":61}`, token)
+	if invalid.Code != http.StatusBadRequest {
+		t.Fatalf("invalid discovery timeout status = %d", invalid.Code)
+	}
+}
 
 func TestFirstRunSetupAndAuthenticatedProfileCRUD(t *testing.T) {
 	handler, repository, manager := newUninitializedTestHandler(t, nil)
@@ -439,7 +477,7 @@ func TestAdminUIHasNoEmbeddedCredential(t *testing.T) {
 	if recorder.Header().Get("Content-Security-Policy") == "" {
 		t.Fatal("UI response has no content security policy")
 	}
-	for _, forbidden := range []string{"sessionStorage", "admin_token", "platform assertion", "bootstrap token", "--blue:", "--navy:", "window.prompt", "prompt(", `value="nas.admin"`, `onclick="setDefault`} {
+	for _, forbidden := range []string{"sessionStorage", "admin_token", "platform assertion", "bootstrap token", "--blue:", "--navy:", "window.prompt", "prompt(", `value="nas.admin"`, `onclick="setDefault`, `id="profileNextStep"`, `id="tokenNAS"`, `show(JSON.stringify(await api`, `async function copyText(value){`, `<div class="table-wrap"><table><thead><tr><th data-i18n="name">Name</th><th data-i18n="address"`, `id="profileDialog"`, `function openProfileEdit(`, `data-i18n="connectClient"`, `data-i18n="createConnection"`, `data-i18n="connectionCreated"`} {
 		if strings.Contains(recorder.Body.String(), forbidden) {
 			t.Fatalf("UI contains superseded administrator mechanism %q", forbidden)
 		}
@@ -453,9 +491,26 @@ func TestAdminUIHasNoEmbeddedCredential(t *testing.T) {
 		`--color-action:var(--brand-500)`, `--color-nav:var(--brand-950)`,
 		`<meta name="theme-color" content="#0d263f">`, `<link rel="icon" href="/admin/favicon.svg" type="image/svg+xml" sizes="any">`,
 		`data-locale-select`, `localStorage.getItem('dsmctl.locale')`, `dataset.i18nDiagnostics`,
-		`pointer-events:none`, `Mindestens 8 Zeichen`,
+		`.view>.panel+.panel{margin-top:18px}`, `.button-row+.notice{margin-top:16px}`,
+		`.row-menu-body`, `.wizard-steps`, `.choice-grid`, `.diagnostic-list`, `.panel-stack{display:grid;gap:18px}`,
+		`.profile-list-head,.profile-list-row`, `.profile-list-row{grid-template-columns:1fr`, `<div id="profiles" role="list">`,
+		`.profile-subline`, `id="nasSourceStep"`, `id="nasConnectionStep" hidden`, `id="nasSignInStep" hidden`, `id="nasStepThree"`,
+		`id="discoverLANButton"`, `id="discoveredNAS"`, `id="nasSourceAddress"`, `onclick="discoverLAN()"`, `onclick="useManualNAS()"`, `api('/discovery'`,
+		`id="nasConnectionSubmit"`, `id="wizardConnectionURL"`, `id="wizardConnectionTLS"`, `function tlsModeLabel(mode)`, `function persistWizardConnection(input)`,
+		`summary.setAttribute('aria-haspopup','menu')`, `menu.setAttribute('role','menu')`, `document.querySelectorAll('.row-menu[open]')`,
+		`id="messageText"`, `id="messageClose"`, `data-i18n-aria="dismissMessage"`, `setTimeout(hideMessage,4000)`,
+		`class="field field-span-2"><label class="required" for="currentPassword"`, `Mindestens 8 Zeichen`,
 		`English`, `繁體中文`, `简体中文`, `日本語`, `Deutsch`, `MCP endpoint`, `/mcp`,
-		`value="lan.discover"`, `id="credentialDialog"`, `id="profileDialog"`, `id="approvalRequests"`, `id="auditRows"`, `confirm_new_password`,
+		`data-i18n="configureMCP">Configure MCP access`, `configureMCP:'設定 MCP 存取'`,
+		`data-i18n="createManualToken">Create manual token`, `data-i18n="manualTokenWizardDetail"`,
+		`data-i18n="credentialName">Credential name`, `credentialName:'憑證名稱'`,
+		`data-i18n="generateTokenConfiguration">Generate token and configuration`, `generateTokenConfiguration:'產生 Token 與設定'`,
+		`data-i18n="manualTokenCreated">Manual token created`, `manualTokenCreated:'手動 Token 已建立'`,
+		`id="nasWizard"`, `id="accessWizard"`, `id="diagnosticDialog"`, `id="manualApprovalDialog"`, `id="auditFilterDialog"`, `id="passwordDialog"`,
+		`id="view-admin"`, `<div class="panel-stack"><div class="panel">`,
+		`value="365" selected`, `value="nas.read" checked`, `value="nas.plan" checked`, `value="nas.apply" checked`, `value="lan.discover" checked`,
+		`error.payload=value`, `location.pathname.replace(/\/admin\/?$/,'/mcp')`, `transport:'streamable-http'`, `show(message)`,
+		`id="credentialDialog"`, `id="approvalRequests"`, `id="auditRows"`, `confirm_new_password`,
 	} {
 		if !strings.Contains(recorder.Body.String(), required) {
 			t.Fatalf("UI is missing redesigned application shell marker %q", required)

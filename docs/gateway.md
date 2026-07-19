@@ -67,9 +67,11 @@ unexpectedly initialized, reset the empty deployment state before enrolling a
 NAS. Resetting a used state deletes its NAS sessions and MCP credentials.
 
 The administration page identifies the product as **dsmctl MCP Server** and
-shows `/mcp` as the client endpoint. Its overview reports NAS, token, and
-approval status, while separate NAS, MCP access, approval, Audit, and
-administrator views keep credentials and authority distinct. English,
+shows the absolute, deployment-prefix-aware `/mcp` client endpoint. Its
+overview reports NAS, client-connection, and approval status. The NAS, MCP
+access, approval, Audit, and administrator views are list- and state-first:
+creation, reauthentication, manual fallback, filtering, and password forms
+open only when requested. English,
 Traditional Chinese, Simplified Chinese, Japanese, and German are built in.
 The Traditional Chinese step-by-step operator guide is available in
 [`gateway-admin-guide.md`](gateway-admin-guide.md).
@@ -79,10 +81,18 @@ stored in browser-local storage; it is not authentication state. On narrow
 screens navigation and tables scroll independently. The embedded page uses no
 CDN, remote font, translation service, or other external rendering asset.
 
-Add each NAS from the page using its permanent profile name, DSM URL, and one
-of two TLS policies: `pinned_fingerprint` (the page default) with an explicitly
-confirmed SHA-256 leaf-certificate fingerprint, which works for any HTTPS DSM
-including self-signed certificates, or `system_ca` for CA-issued certificates.
+The shared three-step NAS wizard first searches the gateway host's local
+broadcast domain or accepts a manually entered IP, DNS name, or DSM URL. A
+discovered device pre-fills its hostname and representative IPv4 address, but
+the administrator still confirms the URL because findhost does not advertise
+a reliable custom DSM port. Editing and incomplete setup reuse the connection
+step; signing in again reuses the authentication step and can navigate back to
+the same connection fields.
+
+Each profile has one of two TLS policies: `system_ca` (the page default) for
+CA-issued certificates, or `pinned_fingerprint` with an explicitly confirmed
+SHA-256 leaf-certificate fingerprint, which works for any HTTPS DSM including
+self-signed certificates.
 A pin authenticates exactly one leaf certificate, so any certificate change —
 including automatic Let's Encrypt renewals — fails the connection closed until
 the fingerprint is updated; CA-issued certificates should therefore use
@@ -91,8 +101,12 @@ creation. Password/OTP enrollment collects the account together with masked
 credentials and commits the verified account and encrypted credentials in one
 revision-checked transaction. Web Login likewise records the account that DSM
 actually signed in. Profiles can later edit URL, TLS policy/fingerprint, and
-timeout, but not their name. Production managed mode has no skip-verification
-option. Sign in
+timeout, but not their name. A profile without credentials exposes a primary
+**Complete setup** action; after credentials are stored, reauthentication
+becomes a deliberate row-menu action. A stored credential is not presented as
+a live health result. **Connection diagnostics** reports DNS, TCP, TLS/HTTP,
+and DSM authentication as named stages. Production managed mode has no
+skip-verification option. Sign in
 through the NAS's own DSM page (the gateway stores the resulting SID,
 SynoToken, and Noise resume keys), or use the bounded password/OTP enrollment
 for an automation account. Web sessions resume headlessly and survive gateway
@@ -107,12 +121,23 @@ the exact browser origin to `DSMCTL_ALLOWED_ORIGINS` before starting Compose.
 If a reverse proxy changes the public origin used by the browser, pass
 `--admin-public-url=https://gateway.example` as well.
 
-The MCP URL is `http://127.0.0.1:18765/mcp`. Send an MCP token created on the
-administration page as
-`Authorization: Bearer <token>`. The plaintext is shown only at creation or
-rotation; the database stores its SHA-256 digest. Missing, malformed, expired,
-and revoked tokens are rejected before MCP initialization, and request limits
-are tracked independently by token identity. `/healthz` is local process
+The MCP URL is `http://127.0.0.1:18765/mcp` for the default local deployment.
+The administration page displays and copies the absolute URL, including a
+reverse-proxy path prefix when present. The recommended connection path is to
+paste only that URL into an OAuth-capable MCP client. The client discovers the
+Gateway authorization endpoints, opens a browser page, and the owner approves
+the connection with the existing Gateway administrator username and password.
+This login is local to the Gateway; it does not expose or replace any stored
+DSM credential. OAuth access tokens expire after one hour and are renewed with
+a rotating refresh token whose maximum lifetime is 365 days.
+
+For headless automation and clients that cannot perform browser OAuth, create
+a manual token on the MCP Access page and send it as
+`Authorization: Bearer <token>`. Manual plaintext is shown only at creation or
+rotation; the database stores its SHA-256 digest. OAuth access and refresh
+secrets are likewise stored only as digests. Missing, malformed, expired, and
+revoked credentials are rejected before MCP initialization, and request limits
+are tracked independently by credential identity. `/healthz` is local process
 liveness and never contacts DSM. `/readyz` verifies the state schema,
 established admin, and mounted master key; it does not poll the NAS fleet.
 
@@ -130,10 +155,17 @@ plan without gaining general read access. `lan.discover` admits only
 devices outside the configured NAS allowlist, while gateway administration is
 never an MCP scope. Every request re-evaluates token status, scope, and target.
 
-Token creation may set no expiry (the default) or an explicit expiry. The page
-shows token ID, creation time, expiry, and last-used time and can expire, rotate,
-or revoke a token. Scopes and NAS allowlists are immutable after creation;
-changing authority means issuing a new token or rotating it. Deleting a NAS
+The manual-token API may set no expiry or an explicit expiry. Both URL login
+and the power-user manual-token UI grant all currently configured NAS profiles
+and all four scopes by default; every NAS remains an explicit allowlist entry.
+This broad default does not bypass agent-side confirmation before apply, and
+high-risk plans still require Gateway approval. The manual UI defaults to a
+365-day lifetime and also offers 30 days, 90 days, or no expiry as an advanced
+choice. The credential list distinguishes never used, used, expired, and
+revoked credentials. OAuth credentials can be expired or revoked; their
+rotating refresh path is invalidated at the same time. Manual credentials can
+also be rotated. Scopes and NAS allowlists are immutable after creation;
+changing authority means issuing a new client credential. Deleting a NAS
 transactionally removes that name from every token allowlist, so recreating the
 same profile name never restores old access.
 
@@ -155,9 +187,10 @@ The manual fallback selects an existing profile and active token, validates the
 approval was created by mistake, revoke or rotate the requesting token; apply
 admission rechecks token status before consuming the approval.
 
-The administration page displays newest events first in a filterable table
-using time, actor, and action query fields. JSONL export contains every retained
-event in chronological order, not only the current page. Records use a closed
+The administration page displays newest events first in a table. Time, actor,
+and action filters open on demand, and the active filter is summarized above
+the list. JSONL export contains every retained event in chronological order,
+regardless of the visible filters. Records use a closed
 scalar schema and never include request
 bodies, authorization headers, passwords, OTPs, trusted-device values,
 SynoTokens, SIDs, cookies, master keys, or encrypted vault payloads. Retention
@@ -215,6 +248,11 @@ migrate it with a version that still understands the old credential.
 Schema 5 adds pending approval requests and transactionally rewrites every
 stored `nas.admin` scope to `lan.discover`. After migration `nas.admin` is
 invalid input; there is no alias or dual-acceptance window.
+
+Schema 6 adds public OAuth client registrations and digest-only rotating
+refresh-token records. Authorization codes remain short-lived and in memory;
+access tokens continue to use the existing digest-only MCP-token record and
+authorization policy.
 
 The admin API can create opaque `vault:<id>` apply-time references. Only the
 application's apply-time resolver can decrypt those values; MCP results and

@@ -72,6 +72,9 @@ answer; broadcast queries do not cross routers.
 ## MCP
 
 The local MCP server exposes discovery as the read-only tool
-`discover_lan_devices` (optional `timeout_seconds`, default 3, max 60). It is
-**not** exposed on the remote gateway surface: a remote caller must not be able
-to trigger a broadcast scan of the gateway host's local network.
+`discover_lan_devices` (optional `timeout_seconds`, default 3, max 60). The
+managed gateway exposes the same application operation to its authenticated
+local administrator while the Add NAS wizard is open. Remote MCP bearer tokens
+may also invoke the tool only when they hold the separate `lan.discover` scope;
+the NAS allowlist does not grant discovery implicitly because a scan can reveal
+devices outside that allowlist.

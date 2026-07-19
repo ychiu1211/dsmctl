@@ -17,7 +17,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ychiu1211/dsmctl/internal/application"
 	"github.com/ychiu1211/dsmctl/internal/credentials"
+	"github.com/ychiu1211/dsmctl/internal/domain/discovery"
 	"github.com/ychiu1211/dsmctl/internal/gateway/state"
 	"github.com/ychiu1211/dsmctl/internal/remotepolicy"
 	"github.com/ychiu1211/dsmctl/internal/runtime"
@@ -38,6 +40,7 @@ const (
 type Options struct {
 	Repository  *state.Repository
 	Manager     *runtime.Manager
+	Discoverer  DeviceDiscoverer
 	PublicURL   string
 	Now         func() time.Time
 	SetupWindow time.Duration
@@ -46,9 +49,14 @@ type Options struct {
 	Logger *slog.Logger
 }
 
+type DeviceDiscoverer interface {
+	DiscoverDevices(context.Context, discovery.Query) (application.DiscoverResult, error)
+}
+
 type Handler struct {
 	repository    *state.Repository
 	manager       *runtime.Manager
+	discoverer    DeviceDiscoverer
 	publicURL     string
 	logger        *slog.Logger
 	now           func() time.Time
@@ -112,8 +120,12 @@ func New(options Options) (*Handler, error) {
 		logger = slog.New(slog.NewJSONHandler(io.Discard, nil))
 	}
 	startedAt := now().UTC()
+	discoverer := options.Discoverer
+	if discoverer == nil {
+		discoverer = application.NewService(nil, options.Manager)
+	}
 	return &Handler{
-		repository: options.Repository, manager: options.Manager, publicURL: publicURL, logger: logger,
+		repository: options.Repository, manager: options.Manager, discoverer: discoverer, publicURL: publicURL, logger: logger,
 		now: now, setupDeadline: startedAt.Add(setupWindow),
 		setupAttempts: newAttemptLimiter(now, 10, time.Minute),
 		loginAttempts: newAttemptLimiter(now, 5, time.Minute),
@@ -230,6 +242,10 @@ func (h *Handler) serveAuthenticated(w http.ResponseWriter, req *http.Request) {
 		h.orphanSecrets(w, req)
 		return
 	}
+	if req.URL.Path == "/admin/api/discovery" {
+		h.discoverLAN(w, req)
+		return
+	}
 	if req.URL.Path == "/admin/api/profiles" {
 		h.profiles(w, req)
 		return
@@ -239,6 +255,31 @@ func (h *Handler) serveAuthenticated(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	http.NotFound(w, req)
+}
+
+func (h *Handler) discoverLAN(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		methodNotAllowed(w, http.MethodPost)
+		return
+	}
+	var input struct {
+		TimeoutSeconds int `json:"timeout_seconds,omitempty"`
+	}
+	if err := decodeJSON(req, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if input.TimeoutSeconds < 0 || input.TimeoutSeconds > 60 {
+		writeError(w, http.StatusBadRequest, "timeout_seconds must be between 0 and 60")
+		return
+	}
+	result, err := h.discoverer.DiscoverDevices(req.Context(), discovery.Query{Timeout: time.Duration(input.TimeoutSeconds) * time.Second})
+	if err != nil {
+		h.logger.Error("admin LAN discovery failed", "error", err)
+		writeError(w, http.StatusBadGateway, "LAN discovery failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (h *Handler) authenticate(req *http.Request) (string, string, error) {

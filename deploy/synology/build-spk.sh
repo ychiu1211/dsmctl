@@ -10,7 +10,10 @@ usage() {
 package_version="$1"
 image_reference="$2"
 output_dir="$3"
-[[ "$package_version" =~ ^[0-9]+([._-][0-9]+)+$ ]] || { echo "Package version must contain only numeric components and ._- delimiters" >&2; exit 2; }
+[[ "$package_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[1-9][0-9]*$ ]] || {
+  echo "Package version must be DSM_MAJOR.DSM_MINOR.DSM_PATCH-DSMCTL_BUILD (for example 7.3.2-1)" >&2
+  exit 2
+}
 
 for command in docker tar gzip base64 sed sha256sum; do
   command -v "$command" >/dev/null || { echo "missing required command: $command" >&2; exit 1; }
@@ -30,7 +33,9 @@ mkdir -p "$stage" "$package_stage" "$output_dir"
 os="$(docker image inspect "$image_reference" --format '{{.Os}}')"
 architecture="$(docker image inspect "$image_reference" --format '{{.Architecture}}')"
 image_id="$(docker image inspect "$image_reference" --format '{{.Id}}')"
+image_version="$(docker image inspect "$image_reference" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
 [[ "$os/$architecture" == "linux/amd64" ]] || { echo "image must be linux/amd64, got $os/$architecture" >&2; exit 1; }
+[[ "$image_version" == "$package_version" ]] || { echo "image version must be $package_version, got $image_version" >&2; exit 1; }
 
 cp -R "$template/conf" "$template/scripts" "$template/WIZARD_UIFILES" "$stage/"
 sed "s/__VERSION__/$package_version/g" "$template/INFO.template" > "$stage/INFO"

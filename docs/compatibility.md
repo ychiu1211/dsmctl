@@ -2,6 +2,24 @@
 
 DSM release numbers and WebAPI versions are different compatibility axes. `dsmctl` therefore selects an implementation per operation from a runtime target instead of constructing one client for an entire DSM generation.
 
+## Release compatibility train
+
+dsmctl's release version uses
+`DSM_MAJOR.DSM_MINOR.DSM_PATCH-DSMCTL_BUILD`. The current `7.3.2-1` release
+communicates DSM 7.3.2 as its latest certified feature train and build 1 as the
+first dsmctl release in that train. The build number increases monotonically
+for fixes and features that do not change the certified DSM train; moving the
+train from 7.3.2 to a newer DSM release resets the build to 1 and still sorts
+after every 7.3.2 build.
+
+This product version is a communication and release-ordering convention. It
+does not replace the runtime target below, imply that every DSM feature is
+implemented, or cause requests intended for 7.3.2 to be sent blindly to older
+systems. Older supported releases use the operations their advertised APIs and
+verified release evidence permit. Exact DSM build/update certification is
+recorded separately because `7.3.2-86009 Update 1`, for example, is more
+specific than the `7.3.2` compatibility train.
+
 ## Target model
 
 The compatibility target is assembled from:

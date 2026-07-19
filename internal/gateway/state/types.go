@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	SchemaVersion        = 5
+	SchemaVersion        = 6
 	MaxProfiles          = 32
 	MaxMCPTokenNameBytes = 64
 	DefaultApprovalTTL   = 10 * time.Minute
@@ -20,6 +20,9 @@ const (
 	AdminModeLocal       = "local"
 	MaxAdminSessions     = 16
 	AdminSessionTTL      = 12 * time.Hour
+	MaxOAuthClients      = 128
+	OAuthAccessTokenTTL  = time.Hour
+	OAuthRefreshTokenTTL = 365 * 24 * time.Hour
 
 	TLSSystemCA          = "system_ca"
 	TLSPinnedFingerprint = "pinned_fingerprint"
@@ -32,6 +35,7 @@ var (
 	ErrAlreadyInitialized    = errors.New("gateway local administrator is already initialized")
 	ErrUnauthorized          = errors.New("gateway administrator authentication failed")
 	ErrTokenUnauthorized     = errors.New("MCP bearer token authentication failed")
+	ErrOAuthUnauthorized     = errors.New("OAuth credential authentication failed")
 	ErrApprovalRequired      = errors.New("an exact unexpired administrator approval is required")
 )
 

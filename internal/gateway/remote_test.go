@@ -6,16 +6,22 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/modelcontextprotocol/go-sdk/oauthex"
 
 	"github.com/ychiu1211/dsmctl/internal/application"
 	"github.com/ychiu1211/dsmctl/internal/config"
 	"github.com/ychiu1211/dsmctl/internal/credentials"
+	gatewayoauth "github.com/ychiu1211/dsmctl/internal/gateway/oauth"
+	"github.com/ychiu1211/dsmctl/internal/gateway/state"
 	"github.com/ychiu1211/dsmctl/internal/mcpserver"
 	"github.com/ychiu1211/dsmctl/internal/remotepolicy"
 	"github.com/ychiu1211/dsmctl/internal/runtime"
@@ -24,6 +30,102 @@ import (
 type memoryAuthenticator struct {
 	mu         sync.Mutex
 	principals map[string]remotepolicy.Principal
+}
+
+func TestManagedMCPCompletesOfficialOAuthURLLogin(t *testing.T) {
+	repository, err := state.OpenWithOptions(filepath.Join(t.TempDir(), "gateway.db"), make([]byte, 32), state.OpenOptions{
+		PasswordHashParameters: &state.PasswordHashParameters{MemoryKiB: 64, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repository.Close() })
+	ctx := context.Background()
+	if _, _, err := repository.CreateAdministrator(ctx, "owner", "correct horse battery staple"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.CreateProfile(ctx, state.ProfileInput{Name: "office", URL: "https://10.0.0.20:5001", TLSMode: state.TLSSystemCA}); err != nil {
+		t.Fatal(err)
+	}
+	oauthProvider, err := gatewayoauth.New(gatewayoauth.Options{Repository: repository})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gatewayServer, err := New(Options{
+		MCPServer:        mcp.NewServer(&mcp.Implementation{Name: "oauth-test", Version: "test"}, nil),
+		MCPAuthenticator: repository, MCPAuditor: repository, OAuthProvider: oauthProvider,
+		AllowedHosts: []string{"127.0.0.1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpServer := httptest.NewServer(gatewayServer.Handler())
+	defer httpServer.Close()
+
+	oauthHTTPClient := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	redirectURI := "http://127.0.0.1:32123/callback"
+	authorizationHandler, err := auth.NewAuthorizationCodeHandler(&auth.AuthorizationCodeHandlerConfig{
+		DynamicClientRegistrationConfig: &auth.DynamicClientRegistrationConfig{Metadata: &oauthex.ClientRegistrationMetadata{
+			ClientName: "Official Go SDK test", RedirectURIs: []string{redirectURI},
+			GrantTypes: []string{"authorization_code", "refresh_token"}, ResponseTypes: []string{"code"}, TokenEndpointAuthMethod: "none",
+		}},
+		RedirectURL: redirectURI,
+		Client:      oauthHTTPClient,
+		AuthorizationCodeFetcher: func(ctx context.Context, args *auth.AuthorizationArgs) (*auth.AuthorizationResult, error) {
+			authorizationURL, err := url.Parse(args.URL)
+			if err != nil {
+				return nil, err
+			}
+			pageRequest, _ := http.NewRequestWithContext(ctx, http.MethodGet, authorizationURL.String(), nil)
+			pageResponse, err := oauthHTTPClient.Do(pageRequest)
+			if err != nil {
+				return nil, err
+			}
+			_ = pageResponse.Body.Close()
+			if pageResponse.StatusCode != http.StatusOK {
+				return nil, errors.New("authorization page did not open")
+			}
+			form := authorizationURL.Query()
+			form.Set("decision", "allow")
+			form.Set("username", "owner")
+			form.Set("password", "correct horse battery staple")
+			postRequest, _ := http.NewRequestWithContext(ctx, http.MethodPost, authorizationURL.Scheme+"://"+authorizationURL.Host+authorizationURL.Path, strings.NewReader(form.Encode()))
+			postRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			postRequest.Header.Set("Origin", httpServer.URL)
+			postResponse, err := oauthHTTPClient.Do(postRequest)
+			if err != nil {
+				return nil, err
+			}
+			_ = postResponse.Body.Close()
+			if postResponse.StatusCode != http.StatusFound {
+				return nil, errors.New("administrator authorization failed")
+			}
+			callback, err := url.Parse(postResponse.Header.Get("Location"))
+			if err != nil {
+				return nil, err
+			}
+			return &auth.AuthorizationResult{Code: callback.Query().Get("code"), State: callback.Query().Get("state")}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "oauth-client", Version: "test"}, nil)
+	clientCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	session, err := client.Connect(clientCtx, &mcp.StreamableClientTransport{
+		Endpoint: httpServer.URL + "/mcp", OAuthHandler: authorizationHandler,
+		DisableStandaloneSSE: true, MaxRetries: -1,
+	}, nil)
+	if err != nil {
+		t.Fatalf("OAuth MCP connect: %v", err)
+	}
+	defer session.Close()
+	tokens, err := repository.MCPTokens(ctx)
+	if err != nil || len(tokens) != 1 || tokens[0].AuthMode != "oauth" || tokens[0].LastUsedAt == nil {
+		t.Fatalf("OAuth credential was not used by MCP initialize: tokens=%#v err=%v", tokens, err)
+	}
 }
 
 func (a *memoryAuthenticator) AuthenticateMCPToken(_ context.Context, token string) (remotepolicy.Principal, error) {
@@ -39,6 +141,21 @@ func (a *memoryAuthenticator) AuthenticateMCPToken(_ context.Context, token stri
 type memoryAuditor struct {
 	mu     sync.Mutex
 	events []remotepolicy.AuditEvent
+}
+
+type memoryOAuthProvider struct{}
+
+func (*memoryOAuthProvider) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(`{"resource":"https://gateway.example/mcp"}`))
+}
+
+func (*memoryOAuthProvider) ResourceMetadataURL(*http.Request) string {
+	return "https://gateway.example/.well-known/oauth-protected-resource"
+}
+
+func (*memoryOAuthProvider) ScopeChallenge() string {
+	return "nas.read nas.plan nas.apply lan.discover"
 }
 
 func (a *memoryAuditor) AppendAudit(_ context.Context, event remotepolicy.AuditEvent) error {
@@ -60,7 +177,7 @@ func TestManagedMCPAuthenticatesBeforeInitializeFiltersToolsAndNAS(t *testing.T)
 	planner := remotepolicy.Principal{TokenID: "planner-id", Name: "planner", Scopes: map[string]struct{}{remotepolicy.ScopePlan: {}}, NAS: map[string]struct{}{"allowed": {}}}
 	authenticator := &memoryAuthenticator{principals: map[string]remotepolicy.Principal{"reader-token": reader, "planner-token": planner}}
 	auditor := &memoryAuditor{}
-	server, err := New(Options{MCPServer: mcpserver.NewRemote(service, "test", auditor), MCPAuthenticator: authenticator, MCPAuditor: auditor, AllowedHosts: []string{"127.0.0.1"}})
+	server, err := New(Options{MCPServer: mcpserver.NewRemote(service, "test", auditor), MCPAuthenticator: authenticator, MCPAuditor: auditor, OAuthProvider: &memoryOAuthProvider{}, AllowedHosts: []string{"127.0.0.1"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,6 +193,10 @@ func TestManagedMCPAuthenticatesBeforeInitializeFiltersToolsAndNAS(t *testing.T)
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("missing bearer status = %d", response.StatusCode)
+	}
+	challenge := response.Header.Get("WWW-Authenticate")
+	if !strings.Contains(challenge, `resource_metadata="https://gateway.example/.well-known/oauth-protected-resource"`) || !strings.Contains(challenge, `scope="nas.read nas.plan nas.apply lan.discover"`) {
+		t.Fatalf("missing OAuth challenge metadata: %q", challenge)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

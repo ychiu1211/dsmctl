@@ -38,6 +38,26 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/dsmctl-gateway ./cmd/dsmct
 
 On Windows, use `bin/dsmctl.exe` and `bin/dsmctl-mcp.exe`.
 
+## Release version
+
+The current release is `7.3.2-1`. dsmctl versions use
+`DSM_MAJOR.DSM_MINOR.DSM_PATCH-DSMCTL_BUILD`: `7.3.2` names the latest DSM
+feature train certified by the release, while `1` is the monotonically
+increasing dsmctl build within that train. CLI, stdio MCP, gateway container,
+and Synology SPK artifacts built from one revision carry the same full version.
+
+The compatibility train is a concise release-support label, not a global DSM
+API switch. A NAS on that train or an older supported release still receives
+operation-scoped backend selection from its advertised APIs; unavailable or
+unverified operations fail closed. Exact verified DSM builds remain listed in
+the relevant work items and distribution support matrix.
+
+```console
+dsmctl --version
+dsmctl-mcp --version
+dsmctl-gateway --version
+```
+
 ## Quick start
 
 Add a NAS profile:

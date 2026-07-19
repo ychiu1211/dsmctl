@@ -37,6 +37,8 @@ var (
 	bucketApprovalRequests = []byte("approval_requests")
 	bucketAudit            = []byte("audit")
 	bucketAdminSessions    = []byte("admin_sessions")
+	bucketOAuthClients     = []byte("oauth_clients")
+	bucketOAuthRefresh     = []byte("oauth_refresh_tokens")
 
 	keySchemaVersion  = []byte("schema_version")
 	keyDefaultProfile = []byte("default_profile")
@@ -218,7 +220,7 @@ func (r *Repository) initialize(existed bool, options OpenOptions) error {
 		if err != nil {
 			return err
 		}
-		for _, name := range [][]byte{bucketProfiles, bucketSecrets, bucketMigrations, bucketMCPTokens, bucketTokenDigests, bucketApprovals, bucketApprovalRequests, bucketAudit, bucketAdminSessions} {
+		for _, name := range [][]byte{bucketProfiles, bucketSecrets, bucketMigrations, bucketMCPTokens, bucketTokenDigests, bucketApprovals, bucketApprovalRequests, bucketAudit, bucketAdminSessions, bucketOAuthClients, bucketOAuthRefresh} {
 			if _, err := tx.CreateBucketIfNotExists(name); err != nil {
 				return err
 			}

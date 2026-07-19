@@ -44,6 +44,7 @@ type Options struct {
 	MCPAuthenticator MCPAuthenticator
 	MCPAuditor       remotepolicy.Auditor
 	AdminHandler     http.Handler
+	OAuthProvider    OAuthProvider
 	BearerToken      string
 	AllowedHosts     []string
 	AllowedOrigins   []string
@@ -63,6 +64,14 @@ type Options struct {
 
 type MCPAuthenticator interface {
 	AuthenticateMCPToken(context.Context, string) (remotepolicy.Principal, error)
+}
+
+// OAuthProvider serves managed-gateway authorization endpoints and supplies
+// the request-specific protected-resource challenge for prefix deployments.
+type OAuthProvider interface {
+	http.Handler
+	ResourceMetadataURL(*http.Request) string
+	ScopeChallenge() string
 }
 
 // Server is a configured gateway HTTP server.
@@ -123,7 +132,7 @@ func New(options Options) (*Server, error) {
 	semaphore := make(chan struct{}, maxConcurrent)
 	protectedMCP := limitConcurrent(semaphore, requireMCPRequest(maxBodyBytes, mcpHandler))
 	if options.MCPAuthenticator != nil {
-		protectedMCP = authenticateMCP(options.MCPAuthenticator, options.MCPAuditor, newIdentityLimiter(), protectedMCP)
+		protectedMCP = authenticateMCP(options.MCPAuthenticator, options.MCPAuditor, options.OAuthProvider, newIdentityLimiter(), protectedMCP)
 	} else {
 		tokenDigest := sha256.Sum256([]byte(options.BearerToken))
 		protectedMCP = requireBearer(tokenDigest, protectedMCP)
@@ -137,9 +146,13 @@ func New(options Options) (*Server, error) {
 		mux.Handle("/admin", options.AdminHandler)
 		mux.Handle("/admin/", options.AdminHandler)
 	}
+	if options.OAuthProvider != nil {
+		mux.Handle("/.well-known/", options.OAuthProvider)
+		mux.Handle("/oauth/", options.OAuthProvider)
+	}
 
 	handler := correlateAndLog(logger, options.TrustedProxies,
-		protectHostAndOrigin(allowedHosts, allowedOrigins, options.AdminHandler != nil, mux))
+		protectHostAndOrigin(allowedHosts, allowedOrigins, options.AdminHandler != nil || options.OAuthProvider != nil, mux))
 	shutdownTimeout := durationOr(options.ShutdownTimeout, defaultShutdownTimeout)
 	server := &http.Server{
 		Handler:           handler,
@@ -264,6 +277,15 @@ func unauthorized(w http.ResponseWriter) {
 	writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 }
 
+func unauthorizedWithOAuth(w http.ResponseWriter, req *http.Request, provider OAuthProvider) {
+	if provider == nil {
+		unauthorized(w)
+		return
+	}
+	w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Bearer realm="dsmctl-gateway", resource_metadata=%q, scope=%q`, provider.ResourceMetadataURL(req), provider.ScopeChallenge()))
+	writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+}
+
 type identityLimiter struct {
 	mu      sync.Mutex
 	windows map[string]identityWindow
@@ -301,12 +323,12 @@ func (l *identityLimiter) Allow(id string, now time.Time) bool {
 	return true
 }
 
-func authenticateMCP(authenticator MCPAuthenticator, auditor remotepolicy.Auditor, limiter *identityLimiter, next http.Handler) http.Handler {
+func authenticateMCP(authenticator MCPAuthenticator, auditor remotepolicy.Auditor, oauthProvider OAuthProvider, limiter *identityLimiter, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		parts := strings.Fields(req.Header.Get("Authorization"))
 		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
 			auditMCPHTTP(req.Context(), auditor, "", "denied", "invalid_token")
-			unauthorized(w)
+			unauthorizedWithOAuth(w, req, oauthProvider)
 			return
 		}
 		raw := parts[1]
@@ -314,7 +336,7 @@ func authenticateMCP(authenticator MCPAuthenticator, auditor remotepolicy.Audito
 		raw = ""
 		if err != nil {
 			auditMCPHTTP(req.Context(), auditor, "", "denied", "invalid_token")
-			unauthorized(w)
+			unauthorizedWithOAuth(w, req, oauthProvider)
 			return
 		}
 		if !limiter.Allow(principal.TokenID, time.Now()) {
@@ -380,7 +402,7 @@ func limitConcurrent(semaphore chan struct{}, next http.Handler) http.Handler {
 	})
 }
 
-func protectHostAndOrigin(allowedHosts, allowedOrigins map[string]struct{}, delegateDynamicAdminOrigin bool, next http.Handler) http.Handler {
+func protectHostAndOrigin(allowedHosts, allowedOrigins map[string]struct{}, delegateDynamicBrowserOrigin bool, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		host, err := normalizeHost(req.Host)
 		if err != nil {
@@ -398,8 +420,9 @@ func protectHostAndOrigin(allowedHosts, allowedOrigins map[string]struct{}, dele
 				return
 			}
 			_, explicitlyAllowed := allowedOrigins[origin]
-			dynamicAdminOrigin := delegateDynamicAdminOrigin && len(allowedOrigins) == 0 && (req.URL.Path == "/admin" || strings.HasPrefix(req.URL.Path, "/admin/"))
-			if !explicitlyAllowed && !dynamicAdminOrigin {
+			dynamicBrowserOrigin := delegateDynamicBrowserOrigin && len(allowedOrigins) == 0 &&
+				(req.URL.Path == "/admin" || strings.HasPrefix(req.URL.Path, "/admin/") || req.URL.Path == "/oauth/authorize")
+			if !explicitlyAllowed && !dynamicBrowserOrigin {
 				http.Error(w, "forbidden Origin", http.StatusForbidden)
 				return
 			}

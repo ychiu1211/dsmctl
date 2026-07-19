@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       package_version:
-        description: Numeric Synology version, for example 0.1.0-1
+        description: Full compatibility-train version, for example 7.3.2-1
         required: true
   push:
     tags:
-      - gateway-v*
+      - dsmctl-v*
 
 permissions:
   contents: read
@@ -31,10 +31,11 @@ jobs:
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             package_version="${{ inputs.package_version }}"
           else
-            feature="${GITHUB_REF_NAME#gateway-v}"
-            package_version="${feature}-${GITHUB_RUN_NUMBER}"
+            package_version="${GITHUB_REF_NAME#dsmctl-v}"
           fi
-          [[ "$package_version" =~ ^[0-9]+([._-][0-9]+)+$ ]]
+          [[ "$package_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[1-9][0-9]*$ ]]
+          source_version="$(go run ./cmd/dsmctl --version | awk '{print $NF}')"
+          test "$package_version" = "$source_version"
           echo "PACKAGE_VERSION=$package_version" >> "$GITHUB_ENV"
           echo "REVISION=$GITHUB_SHA" >> "$GITHUB_ENV"
           echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$GITHUB_SHA")" >> "$GITHUB_ENV"

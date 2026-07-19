@@ -35,10 +35,16 @@ flowchart LR
   WI035 --> WI037["WI-037 Gateway design tokens"]
   WI037 --> WI038["WI-038 MCP Server flow refinements"]
   WI038 --> WI017["WI-017 amd64 Linux/Synology distribution"]
+  WI038 --> WI045["WI-045 Power-user MCP connection design"]
+  WI038 --> WI046["WI-046 Admin UI spacing and feedback"]
+  WI045 --> WI047["WI-047 Guided Admin UI workflows"]
+  WI046 --> WI047
+  WI045 --> WI048["WI-048 MCP OAuth URL login"]
   WI037 --> WI039["WI-039 Web-login page design tokens"]
   WI039 --> WI040["WI-040 dsmctl favicon"]
   WI006 --> WI041["WI-041 External Access module"]
   WI041 -. "reach a NAS by QC id" .-> WI042["WI-042 QuickConnect transport"]
+  WI010 -. "release version policy" .-> WI044["WI-044 DSM compatibility versioning"]
   WI019["WI-019 Package Center"] --> WI022["WI-022 Package-scoped operations + Drive Admin"]
   WI022 --> WI043["WI-043 Download Station"]
   WI023["WI-023 LAN device discovery"]
@@ -91,6 +97,11 @@ flowchart LR
 | [WI-041](work-items/WI-041-external-access.md) | P2 | `in_progress` | C | WI-006 | External Access module: read-only Synology Account/QuickConnect/DDNS/port-forward + guarded QuickConnect relay write shipped and live-verified (reverted). DDNS-record CRUD and QuickConnect enable/alias writes still deferred. QuickConnect-as-transport carved out to WI-042. |
 | [WI-042](work-items/WI-042-quickconnect-transport.md) | P3 | `proposed` | H | — | Reach a NAS by its QuickConnect ID: coordinator resolution (get_site_list/get_server_info) to a Direct endpoint, then the existing login/client path; relay/hole-punch is a stretch. Connection-layer, not a Control Panel module. |
 | [WI-043](work-items/WI-043-download-station.md) | P2 | `in_progress` | C | WI-019, WI-022 | Read-only Download Station module (service config, task list, statistics), package-gated on DownloadStation (legacy SYNO.DownloadStation.* API); shipped + live-verified on 4.1.2. Task/config writes deferred. |
+| [WI-044](work-items/WI-044-dsm-compatibility-versioning.md) | P1 | `done` | E | - | Version all front ends and release artifacts from the certified DSM compatibility train plus a dsmctl build revision. |
+| [WI-045](work-items/WI-045-power-user-mcp-connection-design.md) | P1 | `done` | G | WI-038 | Define the private power-user connection, default-authority, client identity, and interoperability gap model. |
+| [WI-046](work-items/WI-046-gateway-admin-ui-spacing-feedback.md) | P2 | `done` | G | WI-038 | Correct Admin UI vertical rhythm, password grouping, and dismissible feedback behavior. |
+| [WI-047](work-items/WI-047-admin-ui-workflow-redesign.md) | P1 | `done` | G | WI-045, WI-046 | Redesign authenticated pages around resource lists, state-aware actions, and guided workflows. |
+| [WI-048](work-items/WI-048-mcp-oauth-url-login.md) | P0 | `done` | G | WI-045 | Add standards-based MCP OAuth URL login while retaining manual client tokens. |
 
 Parallel groups indicate likely file overlap. Items in different groups may run
 at the same time after checking their `touches` lists. Only one agent should

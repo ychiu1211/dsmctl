@@ -35,6 +35,9 @@ contracts unless a work item explicitly changes them:
 - [gateway-deployment.md](gateway-deployment.md): approved architecture and
   delivery plan for the portable amd64 gateway, generic Linux container, and
   Synology x86_64 package.
+- [mcp-power-user-connection-design.md](mcp-power-user-connection-design.md):
+  accepted private power-user defaults, client identity semantics, target
+  connection flow, and the prioritized implementation gap register.
 - [agent-workflow.md](agent-workflow.md): how agents claim, update, and hand off
   work without colliding.
 - [work-items](work-items): executable specs with scope and acceptance criteria.

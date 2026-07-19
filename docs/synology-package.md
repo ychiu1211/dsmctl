@@ -5,6 +5,10 @@ generic Linux. It supports DSM 7.2.1-69057 or newer on x86_64 only and requires
 Container Manager 1432+ plus Web Station. See
 `deploy/synology/SUPPORTED.md` for the tested-release matrix.
 
+The SPK package version follows the shared dsmctl compatibility train. The
+current `7.3.2-1` means DSM compatibility train 7.3.2, dsmctl build 1; it does
+not change the separate DSM 7.2.1 host-installation minimum above.
+
 ## Runtime boundary
 
 Synology's official `docker-project` resource worker preloads
@@ -80,10 +84,14 @@ in-toto provenance metadata), then on Linux run:
 
 ```sh
 SOURCE_DATE_EPOCH="$(git show -s --format=%ct)" \
-  deploy/synology/build-spk.sh 0.1.0-1 dsmctl-gateway:release dist
-deploy/synology/validate-spk.sh dist/dsmctl-gateway-0.1.0-1-x86_64.spk
+  deploy/synology/build-spk.sh 7.3.2-1 dsmctl-gateway:release dist
+deploy/synology/validate-spk.sh dist/dsmctl-gateway-7.3.2-1-x86_64.spk
 sha256sum -c dist/SHA256SUMS
 ```
+
+The release workflow is triggered by the matching `dsmctl-v7.3.2-1` tag (or an
+explicit `7.3.2-1` dispatch input) and refuses a version that differs from the
+source version or the container image label.
 
 Package installation and model certification must be done on real Synology
 hardware; structure validation or ordinary Docker Engine is not a substitute.

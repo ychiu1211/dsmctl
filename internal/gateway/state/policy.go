@@ -30,15 +30,17 @@ var validScopes = map[string]struct{}{
 var errApprovalMatch = errors.New("approval match")
 
 type MCPToken struct {
-	ID           string     `json:"id"`
-	Name         string     `json:"name"`
-	Scopes       []string   `json:"scopes"`
-	NASAllowlist []string   `json:"nas_allowlist"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
-	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
-	RevokedAt    *time.Time `json:"revoked_at,omitempty"`
-	LastUsedAt   *time.Time `json:"last_used_at,omitempty"`
+	ID            string     `json:"id"`
+	Name          string     `json:"name"`
+	AuthMode      string     `json:"auth_mode,omitempty"`
+	OAuthClientID string     `json:"oauth_client_id,omitempty"`
+	Scopes        []string   `json:"scopes"`
+	NASAllowlist  []string   `json:"nas_allowlist"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
+	RevokedAt     *time.Time `json:"revoked_at,omitempty"`
+	LastUsedAt    *time.Time `json:"last_used_at,omitempty"`
 }
 
 type MCPTokenInput struct {
@@ -108,34 +110,16 @@ func (r *Repository) CreateMCPToken(ctx context.Context, input MCPTokenInput) (I
 	if err := ctx.Err(); err != nil {
 		return IssuedMCPToken{}, err
 	}
-	input, err := normalizeMCPTokenInput(input)
+	input, err := normalizeMCPTokenInput(input, r.now().UTC())
 	if err != nil {
 		return IssuedMCPToken{}, err
 	}
-	raw, err := randomToken(32)
+	raw, record, err := newMCPTokenRecord(input, r.now().UTC())
 	if err != nil {
 		return IssuedMCPToken{}, err
 	}
-	raw = mcpTokenPrefix + raw
-	digest := sha256.Sum256([]byte(raw))
-	id, err := randomID(16)
-	if err != nil {
-		return IssuedMCPToken{}, err
-	}
-	now := time.Now().UTC()
-	record := mcpTokenRecord{MCPToken: MCPToken{ID: id, Name: input.Name, Scopes: input.Scopes, NASAllowlist: input.NASAllowlist, CreatedAt: now, UpdatedAt: now, ExpiresAt: input.ExpiresAt}, Digest: digest[:]}
 	err = r.db.Update(func(tx *bolt.Tx) error {
-		if err := validateTokenNAS(tx, record.NASAllowlist); err != nil {
-			return err
-		}
-		encoded, err := json.Marshal(record)
-		if err != nil {
-			return err
-		}
-		if err := tx.Bucket(bucketMCPTokens).Put([]byte(id), encoded); err != nil {
-			return err
-		}
-		return tx.Bucket(bucketTokenDigests).Put(digest[:], []byte(id))
+		return putMCPTokenRecord(tx, record)
 	})
 	if err != nil {
 		return IssuedMCPToken{}, err
@@ -193,8 +177,11 @@ func (r *Repository) RotateMCPToken(ctx context.Context, id string) (IssuedMCPTo
 		if err := tx.Bucket(bucketTokenDigests).Delete(record.Digest); err != nil {
 			return err
 		}
+		if err := deleteOAuthRefreshTokensForMCPToken(tx, record.ID); err != nil {
+			return err
+		}
 		record.Digest = append([]byte(nil), digest[:]...)
-		record.UpdatedAt = time.Now().UTC()
+		record.UpdatedAt = r.now().UTC()
 		token = record.MCPToken
 		encoded, err := json.Marshal(record)
 		if err != nil {
@@ -238,7 +225,7 @@ func (r *Repository) changeMCPToken(ctx context.Context, id string, change func(
 		if err != nil {
 			return err
 		}
-		now := time.Now().UTC()
+		now := r.now().UTC()
 		if err := change(&record, now); err != nil {
 			return err
 		}
@@ -252,11 +239,45 @@ func (r *Repository) changeMCPToken(ctx context.Context, id string, change func(
 			return err
 		}
 		if record.RevokedAt != nil {
-			return deletePendingApprovalsForToken(tx, record.ID)
+			if err := deletePendingApprovalsForToken(tx, record.ID); err != nil {
+				return err
+			}
 		}
-		return nil
+		return deleteOAuthRefreshTokensForMCPToken(tx, record.ID)
 	})
 	return token, err
+}
+
+func newMCPTokenRecord(input MCPTokenInput, now time.Time) (string, mcpTokenRecord, error) {
+	raw, err := randomToken(32)
+	if err != nil {
+		return "", mcpTokenRecord{}, err
+	}
+	raw = mcpTokenPrefix + raw
+	digest := sha256.Sum256([]byte(raw))
+	id, err := randomID(16)
+	if err != nil {
+		return "", mcpTokenRecord{}, err
+	}
+	record := mcpTokenRecord{MCPToken: MCPToken{
+		ID: id, Name: input.Name, Scopes: input.Scopes, NASAllowlist: input.NASAllowlist,
+		CreatedAt: now, UpdatedAt: now, ExpiresAt: input.ExpiresAt,
+	}, Digest: append([]byte(nil), digest[:]...)}
+	return raw, record, nil
+}
+
+func putMCPTokenRecord(tx *bolt.Tx, record mcpTokenRecord) error {
+	if err := validateTokenNAS(tx, record.NASAllowlist); err != nil {
+		return err
+	}
+	encoded, err := json.Marshal(record)
+	if err != nil {
+		return err
+	}
+	if err := tx.Bucket(bucketMCPTokens).Put([]byte(record.ID), encoded); err != nil {
+		return err
+	}
+	return tx.Bucket(bucketTokenDigests).Put(record.Digest, []byte(record.ID))
 }
 
 func (r *Repository) AuthenticateMCPToken(ctx context.Context, raw string) (remotepolicy.Principal, error) {
@@ -278,7 +299,7 @@ func (r *Repository) AuthenticateMCPToken(ctx context.Context, raw string) (remo
 		if err != nil {
 			return ErrTokenUnauthorized
 		}
-		now := time.Now().UTC()
+		now := r.now().UTC()
 		if err := validateActiveToken(record, now); err != nil {
 			return err
 		}
@@ -712,7 +733,7 @@ func (r *Repository) AuditExport(ctx context.Context) ([]AuditEvent, error) {
 	return result, err
 }
 
-func normalizeMCPTokenInput(input MCPTokenInput) (MCPTokenInput, error) {
+func normalizeMCPTokenInput(input MCPTokenInput, now time.Time) (MCPTokenInput, error) {
 	input.Name = strings.TrimSpace(input.Name)
 	if input.Name == "" || len(input.Name) > MaxMCPTokenNameBytes {
 		return MCPTokenInput{}, fmt.Errorf("token name must be 1 to %d bytes", MaxMCPTokenNameBytes)
@@ -732,7 +753,7 @@ func normalizeMCPTokenInput(input MCPTokenInput) (MCPTokenInput, error) {
 	}
 	if input.ExpiresAt != nil {
 		value := input.ExpiresAt.UTC()
-		if !value.After(time.Now()) {
+		if !value.After(now) {
 			return MCPTokenInput{}, errors.New("expires_at must be in the future")
 		}
 		input.ExpiresAt = &value
