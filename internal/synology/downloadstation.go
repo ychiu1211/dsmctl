@@ -154,6 +154,30 @@ func (c *Client) DownloadStationSettingsGroup(ctx context.Context, group string)
 			return nil, downloadStationReadError("FTP/HTTP settings", evidence, err)
 		}
 		return json.Marshal(fh)
+	case "rss":
+		r, _, err := downloadstationops.ExecuteRssGet(ctx, c.target, lockedExecutor{client: c})
+		if err != nil {
+			return nil, downloadStationReadError("RSS settings", evidence, err)
+		}
+		return json.Marshal(r)
+	case "location":
+		l, _, err := downloadstationops.ExecuteLocationGet(ctx, c.target, lockedExecutor{client: c})
+		if err != nil {
+			return nil, downloadStationReadError("location settings", evidence, err)
+		}
+		return json.Marshal(l)
+	case "scheduler":
+		s, _, err := downloadstationops.ExecuteSchedulerGet(ctx, c.target, lockedExecutor{client: c})
+		if err != nil {
+			return nil, downloadStationReadError("scheduler settings", evidence, err)
+		}
+		return json.Marshal(s)
+	case "global":
+		g, _, err := downloadstationops.ExecuteGlobalGet(ctx, c.target, lockedExecutor{client: c})
+		if err != nil {
+			return nil, downloadStationReadError("global settings", evidence, err)
+		}
+		return json.Marshal(g)
 	default:
 		return nil, fmt.Errorf("unsupported settings group %q", group)
 	}
@@ -191,9 +215,111 @@ func (c *Client) ApplyDownloadStationSettingsChange(ctx context.Context, change 
 			return DownloadStationSettingsMutationResult{}, fmt.Errorf("apply Download Station FTP/HTTP settings: %w", err)
 		}
 		return result, nil
+	case change.Rss != nil:
+		current, _, err := downloadstationops.ExecuteRssGet(ctx, c.target, lockedExecutor{client: c})
+		if err != nil {
+			return DownloadStationSettingsMutationResult{}, downloadStationReadError("RSS settings", evidence, err)
+		}
+		result, _, err := downloadstationops.ExecuteRssSet(ctx, c.target, lockedExecutor{client: c}, mergeRssSettings(current, *change.Rss))
+		if err != nil {
+			return DownloadStationSettingsMutationResult{}, fmt.Errorf("apply Download Station RSS settings: %w", err)
+		}
+		return result, nil
+	case change.Location != nil:
+		current, _, err := downloadstationops.ExecuteLocationGet(ctx, c.target, lockedExecutor{client: c})
+		if err != nil {
+			return DownloadStationSettingsMutationResult{}, downloadStationReadError("location settings", evidence, err)
+		}
+		result, _, err := downloadstationops.ExecuteLocationSet(ctx, c.target, lockedExecutor{client: c}, mergeLocationSettings(current, *change.Location))
+		if err != nil {
+			return DownloadStationSettingsMutationResult{}, fmt.Errorf("apply Download Station location settings: %w", err)
+		}
+		return result, nil
+	case change.Scheduler != nil:
+		current, _, err := downloadstationops.ExecuteSchedulerGet(ctx, c.target, lockedExecutor{client: c})
+		if err != nil {
+			return DownloadStationSettingsMutationResult{}, downloadStationReadError("scheduler settings", evidence, err)
+		}
+		result, _, err := downloadstationops.ExecuteSchedulerSet(ctx, c.target, lockedExecutor{client: c}, mergeSchedulerSettings(current, *change.Scheduler))
+		if err != nil {
+			return DownloadStationSettingsMutationResult{}, fmt.Errorf("apply Download Station scheduler settings: %w", err)
+		}
+		return result, nil
+	case change.Global != nil:
+		current, _, err := downloadstationops.ExecuteGlobalGet(ctx, c.target, lockedExecutor{client: c})
+		if err != nil {
+			return DownloadStationSettingsMutationResult{}, downloadStationReadError("global settings", evidence, err)
+		}
+		result, _, err := downloadstationops.ExecuteGlobalSet(ctx, c.target, lockedExecutor{client: c}, mergeGlobalSettings(current, *change.Global))
+		if err != nil {
+			return DownloadStationSettingsMutationResult{}, fmt.Errorf("apply Download Station global settings: %w", err)
+		}
+		return result, nil
 	default:
 		return DownloadStationSettingsMutationResult{}, fmt.Errorf("settings change has no supported group patch")
 	}
+}
+
+func mergeRssSettings(current downloadstation.RssSettings, patch downloadstation.RssSettingsChange) downloadstation.RssSettings {
+	desired := current
+	if patch.UpdateIntervalMinutes != nil {
+		desired.UpdateIntervalMinutes = *patch.UpdateIntervalMinutes
+	}
+	return desired
+}
+
+func mergeLocationSettings(current downloadstation.LocationSettings, patch downloadstation.LocationSettingsChange) downloadstation.LocationSettings {
+	desired := current
+	if patch.DefaultDestination != nil {
+		desired.DefaultDestination = *patch.DefaultDestination
+	}
+	if patch.EnableTorrentNzbWatch != nil {
+		desired.EnableTorrentNzbWatch = *patch.EnableTorrentNzbWatch
+	}
+	if patch.EnableDeleteTorrentNzbWatch != nil {
+		desired.EnableDeleteTorrentNzbWatch = *patch.EnableDeleteTorrentNzbWatch
+	}
+	if patch.TorrentNzbWatchFolder != nil {
+		desired.TorrentNzbWatchFolder = *patch.TorrentNzbWatchFolder
+	}
+	return desired
+}
+
+func mergeSchedulerSettings(current downloadstation.SchedulerSettings, patch downloadstation.SchedulerSettingsChange) downloadstation.SchedulerSettings {
+	desired := current
+	if patch.EnableSchedule != nil {
+		desired.EnableSchedule = *patch.EnableSchedule
+	}
+	if patch.DownloadRate != nil {
+		desired.DownloadRate = *patch.DownloadRate
+	}
+	if patch.UploadRate != nil {
+		desired.UploadRate = *patch.UploadRate
+	}
+	if patch.MaxTasks != nil {
+		desired.MaxTasks = *patch.MaxTasks
+	}
+	if patch.Order != nil {
+		desired.Order = *patch.Order
+	}
+	if patch.ScheduleBitmap != nil {
+		desired.ScheduleBitmap = *patch.ScheduleBitmap
+	}
+	return desired
+}
+
+func mergeGlobalSettings(current downloadstation.GlobalSettings, patch downloadstation.GlobalSettingsChange) downloadstation.GlobalSettings {
+	desired := current
+	if patch.DownloadVolume != nil {
+		desired.DownloadVolume = *patch.DownloadVolume
+	}
+	if patch.EmuleEnabled != nil {
+		desired.EmuleEnabled = *patch.EmuleEnabled
+	}
+	if patch.UnzipServiceEnabled != nil {
+		desired.UnzipServiceEnabled = *patch.UnzipServiceEnabled
+	}
+	return desired
 }
 
 func mergeFtpHttpSettings(current downloadstation.FtpHttpSettings, patch downloadstation.FtpHttpSettingsChange) downloadstation.FtpHttpSettings {

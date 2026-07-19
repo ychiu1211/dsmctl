@@ -227,7 +227,7 @@ func newDownloadSettingsPlanCommand(opts *options) *cobra.Command {
 	var inputPath, outputPath string
 	command := &cobra.Command{
 		Use:   "plan",
-		Short: "Validate a settings patch (BitTorrent group) and emit an approval plan as JSON",
+		Short: "Validate a settings patch (BT, FTP/HTTP, RSS, location, scheduler, or global group) and emit an approval plan as JSON",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			var request downloadstation.SettingsChange
@@ -293,7 +293,7 @@ func writeDownloadCapabilities(cmd *cobra.Command, result application.DownloadSt
 	fmt.Fprintf(writer, "Statistic read:\t%s\n", yesNo(c.StatisticRead))
 	fmt.Fprintf(writer, "Settings read:\t%s\n", yesNo(c.SettingsRead))
 	fmt.Fprintf(writer, "Task write (guarded):\t%s\n", yesNo(c.TaskWrite))
-	fmt.Fprintf(writer, "Settings write (guarded, BT):\t%s\n", yesNo(c.SettingsWrite))
+	fmt.Fprintf(writer, "Settings write (guarded):\t%s\n", yesNo(c.SettingsWrite))
 	fmt.Fprintln(writer, "\nOPERATIONS")
 	fmt.Fprintln(writer, "OPERATION\tSUPPORTED\tBACKEND\tAPI\tVERSION")
 	for _, operation := range result.Report.Operations {

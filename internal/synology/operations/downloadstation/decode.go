@@ -454,11 +454,23 @@ func decodeLocationSettings(data json.RawMessage) (downloadstation.LocationSetti
 		return downloadstation.LocationSettings{}, errors.New("decode Download Station location settings: required field \"enable_torrent_nzb_watch\" is missing")
 	}
 	return downloadstation.LocationSettings{
-		DefaultDestination:          strings.TrimSpace(deref(resp.DefaultDestination)),
+		DefaultDestination:          normalizeNullSentinel(deref(resp.DefaultDestination)),
 		EnableTorrentNzbWatch:       *resp.EnableTorrentNzbWatch,
 		EnableDeleteTorrentNzbWatch: resp.EnableDeleteTorrentNzbWatch,
-		TorrentNzbWatchFolder:       strings.TrimSpace(deref(resp.TorrentNzbWatchFolder)),
+		TorrentNzbWatchFolder:       normalizeNullSentinel(deref(resp.TorrentNzbWatchFolder)),
 	}, nil
+}
+
+// normalizeNullSentinel maps DSM's "(null)" placeholder for an unset path to an
+// empty string. Download Station returns "(null)" for an unconfigured watch
+// folder or destination; echoing that literal back on a set fails path
+// validation (code 522), so the model must never carry the sentinel.
+func normalizeNullSentinel(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "(null)" {
+		return ""
+	}
+	return trimmed
 }
 
 func decodeRssSettings(data json.RawMessage) (downloadstation.RssSettings, error) {

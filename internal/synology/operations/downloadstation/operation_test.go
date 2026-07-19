@@ -364,6 +364,43 @@ func TestDecodersRejectMalformedShapes(t *testing.T) {
 	}
 }
 
+func TestEncodeSchedulerSettingsQuotesBitmapAndOmitsMaxTasksLimit(t *testing.T) {
+	// DSM's entry.cgi parses each form value as JSON, so the all-digit bitmap
+	// must be a quoted JSON string or it parses as a number and fails the
+	// Param.String check (code 120). max_tasks_limit is a get-only field and is
+	// not a set param, so it must not be sent.
+	v := encodeSchedulerSettings(downloadstation.SchedulerSettings{
+		MaxTasks:       8,
+		MaxTasksLimit:  80,
+		Order:          "request",
+		ScheduleBitmap: "1010",
+	})
+	if got := v.Get("schedule"); got != `"1010"` {
+		t.Fatalf("schedule = %q, want %q", got, `"1010"`)
+	}
+	if v.Has("max_tasks_limit") {
+		t.Fatalf("max_tasks_limit must not be sent on set, got %q", v.Get("max_tasks_limit"))
+	}
+	if got := v.Get("max_tasks"); got != "8" {
+		t.Fatalf("max_tasks = %q, want %q", got, "8")
+	}
+}
+
+func TestDecodeLocationSettingsNormalizesNullSentinel(t *testing.T) {
+	// DSM returns "(null)" for an unset watch folder; echoing that literal back
+	// on a set fails path validation (code 522), so the model must carry "".
+	got, err := decodeLocationSettings(json.RawMessage(`{"default_destination":"(null)","enable_torrent_nzb_watch":false,"enable_delete_torrent_nzb_watch":false,"torrent_nzb_watch_folder":"(null)"}`))
+	if err != nil {
+		t.Fatalf("decodeLocationSettings: %v", err)
+	}
+	if got.TorrentNzbWatchFolder != "" {
+		t.Fatalf("TorrentNzbWatchFolder = %q, want empty", got.TorrentNzbWatchFolder)
+	}
+	if got.DefaultDestination != "" {
+		t.Fatalf("DefaultDestination = %q, want empty", got.DefaultDestination)
+	}
+}
+
 func TestAPINamesCoverLegacyAndSettings(t *testing.T) {
 	got := APINames()
 	want := []string{

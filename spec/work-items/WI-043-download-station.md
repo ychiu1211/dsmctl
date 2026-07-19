@@ -57,10 +57,12 @@ are present on DSM 7.3; the legacy surface is simpler and version-stable).
 - RSS (`RSS.Site` / `RSS.Feed`), BT search (`BTSearch`), eMule search, eMule
   server management, and the per-task BT/file/tracker/peer/NZB detail
   sub-resources.
-- **Settings writes** for the remaining groups (eMule, Nzb, AutoExtraction,
-  Location, Rss, Scheduler, Global) — the BitTorrent and FTP/HTTP group `set`s
-  are implemented via a group-dispatched plan/apply; the rest follow the same
-  full-object read-merge-set pattern.
+- **Settings writes** for the groups that carry secrets or start services (Nzb,
+  AutoExtraction, eMule) — the BitTorrent, FTP/HTTP, RSS, Location, Scheduler,
+  and Global group `set`s are implemented via a group-dispatched plan/apply; the
+  remaining groups follow the same full-object read-merge-set pattern but need
+  credential-ref handling (Nzb/AutoExtraction passwords) or start a service
+  (eMule).
 - The task-management side of `SYNO.DownloadStation2.*` (`Task`, `Task.List`,
   `Task.BT.*`); the read module uses only the `Settings.*` slice of that
   generation plus the legacy Task list.
@@ -105,13 +107,21 @@ are present on DSM 7.3; the legacy surface is simpler and version-stable).
 - [x] Guarded settings write via a group-dispatched hash-bound plan/apply:
       full-object read-merge-set (the DSM set is a full replace), bound to the
       complete observed group, per-field postcondition; enabling BT port
-      forwarding is high risk. BitTorrent and FTP/HTTP groups implemented and
-      live-verified on 4.1.2 (BT max-upload+preview, FTP/HTTP max-conn — both
-      reverted); `set` method + full-object form encoding confirmed against the
-      C++ handler registry and a reverted live probe. Remaining groups plug into
-      the same dispatch.
-- [ ] `edit` (rename/re-target) and settings writes for the other groups (eMule,
-      FTP/HTTP, NZB, auto-extraction, location, RSS, scheduler, global).
+      forwarding is high risk. **BitTorrent, FTP/HTTP, RSS, Location, Scheduler,
+      and Global** groups implemented and live-verified on 4.1.2, each reverted:
+      BT max-upload+preview, FTP/HTTP max-conn, RSS interval (1440→720→1440),
+      Global auto-unzip toggle, Scheduler max-tasks (10→8→10), Location watch
+      folder enable→disable. Two DSM set quirks were confirmed against the
+      generated spec + C++ handlers and pinned by unit tests: the scheduler
+      `schedule` bitmap must be a quoted JSON string (an all-digit value parses
+      as a number → code 120), and `default_destination` is a per-user share
+      binding DSM cannot clear (empty is dropped; explicit empty is rejected 501)
+      so it is set-only/irreversible, while an unset watch folder reads back as
+      `(null)` and is normalized to empty so a set does not fail path validation
+      (code 522).
+- [ ] `edit` (rename/re-target) and settings writes for the groups that carry
+      secrets or start services (NZB and auto-extraction passwords via
+      credential-ref; eMule, which starts the eMule service).
 
 ## Verification
 

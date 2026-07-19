@@ -399,6 +399,133 @@ func ExecuteFtpHttpSet(ctx context.Context, target compatibility.Target, executo
 	return result, selection, err
 }
 
+// settingsGetOp / settingsSetOp build the get/set operations shared by the
+// simple single-API DownloadStation2.Settings.* groups.
+func settingsGetOp[T any](name, api string, version int, decode func(json.RawMessage) (T, error)) compatibility.Operation[Input, T] {
+	return compatibility.Operation[Input, T]{
+		Name: name,
+		Variants: []compatibility.Variant[Input, T]{{
+			Name: name, API: api, Version: version, Priority: 10,
+			Match: compatibility.All(compatibility.APIVersion(api, version), baselinePackage),
+			Execute: func(ctx context.Context, executor compatibility.Executor, _ Input) (T, error) {
+				data, err := executor.Execute(ctx, compatibility.Request{API: api, Version: version, Method: "get"})
+				if err != nil {
+					var zero T
+					return zero, fmt.Errorf("call %s.get: %w", api, err)
+				}
+				return decode(data)
+			},
+		}},
+	}
+}
+
+func settingsSetOp[T any](name, api string, version int, group string, encode func(T) url.Values) compatibility.Operation[T, downloadstation.SettingsMutationResult] {
+	return compatibility.Operation[T, downloadstation.SettingsMutationResult]{
+		Name: name,
+		Variants: []compatibility.Variant[T, downloadstation.SettingsMutationResult]{{
+			Name: name, API: api, Version: version, Priority: 10,
+			Match: compatibility.All(compatibility.APIVersion(api, version), baselinePackage),
+			Execute: func(ctx context.Context, executor compatibility.Executor, desired T) (downloadstation.SettingsMutationResult, error) {
+				if _, err := executor.Execute(ctx, compatibility.Request{API: api, Version: version, Method: "set", Parameters: encode(desired)}); err != nil {
+					return downloadstation.SettingsMutationResult{}, fmt.Errorf("call %s.set: %w", api, err)
+				}
+				return downloadstation.SettingsMutationResult{API: api, Version: version, Method: "set", Group: group}, nil
+			},
+		}},
+	}
+}
+
+func runSettingsGet[T any](ctx context.Context, op compatibility.Operation[Input, T], target compatibility.Target, executor compatibility.Executor) (T, compatibility.Selection, error) {
+	return op.Run(ctx, target, executor, Input{})
+}
+
+func runSettingsSet[T any](ctx context.Context, op compatibility.Operation[T, downloadstation.SettingsMutationResult], target compatibility.Target, executor compatibility.Executor, desired T) (downloadstation.SettingsMutationResult, compatibility.Selection, error) {
+	result, selection, err := op.Run(ctx, target, executor, desired)
+	if err == nil {
+		result.Backend = selection.Backend
+	}
+	return result, selection, err
+}
+
+var rssGetOp = settingsGetOp("download.settings.rss.get", SettingsRssAPIName, 1, decodeRssSettings)
+var rssSetOp = settingsSetOp("download.settings.rss.set", SettingsRssAPIName, 1, "rss", encodeRssSettings)
+var locationGetOp = settingsGetOp("download.settings.location.get", SettingsLocationAPIName, 1, decodeLocationSettings)
+var locationSetOp = settingsSetOp("download.settings.location.set", SettingsLocationAPIName, 1, "location", encodeLocationSettings)
+var schedulerGetOp = settingsGetOp("download.settings.scheduler.get", SettingsSchedulerAPIName, 1, decodeSchedulerSettings)
+var schedulerSetOp = settingsSetOp("download.settings.scheduler.set", SettingsSchedulerAPIName, 1, "scheduler", encodeSchedulerSettings)
+var globalGetOp = settingsGetOp("download.settings.global.get", SettingsGlobalAPIName, 2, decodeGlobalSettings)
+var globalSetOp = settingsSetOp("download.settings.global.set", SettingsGlobalAPIName, 2, "global", encodeGlobalSettings)
+
+func encodeRssSettings(r downloadstation.RssSettings) url.Values {
+	v := url.Values{}
+	v.Set("update_interval", strconv.Itoa(r.UpdateIntervalMinutes))
+	return v
+}
+
+func encodeLocationSettings(l downloadstation.LocationSettings) url.Values {
+	v := url.Values{}
+	v.Set("default_destination", l.DefaultDestination)
+	v.Set("enable_torrent_nzb_watch", boolParam(l.EnableTorrentNzbWatch))
+	v.Set("enable_delete_torrent_nzb_watch", boolParam(l.EnableDeleteTorrentNzbWatch))
+	v.Set("torrent_nzb_watch_folder", l.TorrentNzbWatchFolder)
+	return v
+}
+
+// jsonStringParam quotes a value so DSM's entry.cgi JSON param parser reads it
+// as a string. Without the quotes an all-digit value like the 168-char schedule
+// bitmap parses as a JSON number and fails a Param.String type check (code 120).
+func jsonStringParam(value string) string {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return value
+	}
+	return string(encoded)
+}
+
+func encodeSchedulerSettings(s downloadstation.SchedulerSettings) url.Values {
+	v := url.Values{}
+	v.Set("enable_schedule", boolParam(s.EnableSchedule))
+	v.Set("download_rate", strconv.Itoa(s.DownloadRate))
+	v.Set("upload_rate", strconv.Itoa(s.UploadRate))
+	v.Set("max_tasks", strconv.Itoa(s.MaxTasks))
+	v.Set("order", s.Order)
+	v.Set("schedule", jsonStringParam(s.ScheduleBitmap))
+	return v
+}
+
+func encodeGlobalSettings(g downloadstation.GlobalSettings) url.Values {
+	v := url.Values{}
+	v.Set("download_volume", g.DownloadVolume)
+	v.Set("enable_emule", boolParam(g.EmuleEnabled))
+	v.Set("enable_unzip_service", boolParam(g.UnzipServiceEnabled))
+	return v
+}
+
+func ExecuteRssGet(ctx context.Context, t compatibility.Target, e compatibility.Executor) (downloadstation.RssSettings, compatibility.Selection, error) {
+	return runSettingsGet(ctx, rssGetOp, t, e)
+}
+func ExecuteRssSet(ctx context.Context, t compatibility.Target, e compatibility.Executor, d downloadstation.RssSettings) (downloadstation.SettingsMutationResult, compatibility.Selection, error) {
+	return runSettingsSet(ctx, rssSetOp, t, e, d)
+}
+func ExecuteLocationGet(ctx context.Context, t compatibility.Target, e compatibility.Executor) (downloadstation.LocationSettings, compatibility.Selection, error) {
+	return runSettingsGet(ctx, locationGetOp, t, e)
+}
+func ExecuteLocationSet(ctx context.Context, t compatibility.Target, e compatibility.Executor, d downloadstation.LocationSettings) (downloadstation.SettingsMutationResult, compatibility.Selection, error) {
+	return runSettingsSet(ctx, locationSetOp, t, e, d)
+}
+func ExecuteSchedulerGet(ctx context.Context, t compatibility.Target, e compatibility.Executor) (downloadstation.SchedulerSettings, compatibility.Selection, error) {
+	return runSettingsGet(ctx, schedulerGetOp, t, e)
+}
+func ExecuteSchedulerSet(ctx context.Context, t compatibility.Target, e compatibility.Executor, d downloadstation.SchedulerSettings) (downloadstation.SettingsMutationResult, compatibility.Selection, error) {
+	return runSettingsSet(ctx, schedulerSetOp, t, e, d)
+}
+func ExecuteGlobalGet(ctx context.Context, t compatibility.Target, e compatibility.Executor) (downloadstation.GlobalSettings, compatibility.Selection, error) {
+	return runSettingsGet(ctx, globalGetOp, t, e)
+}
+func ExecuteGlobalSet(ctx context.Context, t compatibility.Target, e compatibility.Executor, d downloadstation.GlobalSettings) (downloadstation.SettingsMutationResult, compatibility.Selection, error) {
+	return runSettingsSet(ctx, globalSetOp, t, e, d)
+}
+
 func SelectSettingsWrite(target compatibility.Target) (compatibility.Selection, error) {
 	_, selection, err := btSetOp.Select(target)
 	return selection, err

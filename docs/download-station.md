@@ -71,26 +71,41 @@ external content and `delete` removes the task, so those are **high** risk;
 ## Guarded settings write
 
 Settings are changed through the same plan/apply contract. A change carries
-exactly one patch-only group patch; the writable groups are added one at a time
-(so far **BitTorrent** — ports, DHT, port forwarding, preview, encryption, rate
-limits, max peers, seeding — and **FTP/HTTP** — rate limit and connection
-limit):
+exactly one patch-only group patch. The writable groups are:
+
+- **BitTorrent** — ports, DHT, port forwarding, preview, encryption, rate
+  limits, max peers, seeding.
+- **FTP/HTTP** — max download rate and per-task connection limit.
+- **RSS** — feed refresh interval.
+- **Location** — default download destination and the torrent/NZB watch folder.
+- **Scheduler** — the alternative-rate weekly schedule, scheduled rates, and max
+  simultaneous tasks.
+- **Global** — download volume and the eMule / auto-extract service toggles.
 
 ```console
 echo '{"bt":{"max_upload_rate":15,"enable_preview":false}}' | dsmctl download settings plan --nas office -o bt.plan.json
 dsmctl download settings apply --nas office -f bt.plan.json --approve <hash>
 ```
 
-Because the DSM `set` is a full-object replace, apply reads the complete BT
+Because the DSM `set` is a full-object replace, apply reads the complete target
 group, merges the patch, and submits the whole object so an unspecified field is
 never reset; the plan binds to the complete observed group and apply verifies
-each changed field. Enabling port forwarding opens the BitTorrent port on the
-router (external exposure) and is high risk; other BT changes are medium. MCP
+each changed field. Enabling BitTorrent port forwarding opens the BT port on the
+router (external exposure) and is high risk; other changes are medium. MCP
 exposes `plan_download_station_settings_change` and
 `apply_download_station_settings_plan` (excluded from the read-only gateway).
 
-Field shapes are live-verified on Download Station 4.1.2. Still out of scope:
-task `edit` (rename/re-target), settings writes for the remaining groups (eMule,
-NZB, auto-extraction, location, RSS, scheduler, global), BT/eMule search, RSS
-management, and eMule server management — see
+Two DSM behaviors the guard accounts for. The scheduler `schedule` is a
+168-character weekly bitmap that must be sent as a quoted JSON string (an
+all-digit value otherwise parses as a number and DSM rejects it). The location
+default destination is a **per-user share binding**: DSM applies it but provides
+no API to clear it back to unset, so a set can only re-point it to another share
+— treat it as irreversible. DSM also returns `(null)` for an unset watch folder,
+which the reader normalizes to empty so a subsequent set does not echo the
+sentinel back and fail path validation.
+
+Field shapes and set semantics are live-verified on Download Station 4.1.2. Still
+out of scope: task `edit` (rename/re-target), settings writes for the groups that
+carry secrets or start services (NZB, auto-extraction, eMule), BT/eMule search,
+RSS feed management, and eMule server management — see
 [WI-043](../spec/work-items/WI-043-download-station.md).

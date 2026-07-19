@@ -391,7 +391,7 @@ func downloadStationTaskPlanHash(plan DownloadStationTaskPlan) (string, error) {
 
 var _ downloadStationTaskClient = (*synology.Client)(nil)
 
-// --- Guarded settings write (BitTorrent group) ---
+// --- Guarded settings write (one group per plan: BT, FTP/HTTP, RSS, location, scheduler, global) ---
 
 type DownloadStationSettingsPlan struct {
 	APIVersion          string                         `json:"api_version" jsonschema:"Plan schema version"`
@@ -513,9 +513,21 @@ func activeSettingsGroup(change downloadstation.SettingsChange) (string, error) 
 	if change.FtpHttp != nil {
 		groups = append(groups, "ftp_http")
 	}
+	if change.Rss != nil {
+		groups = append(groups, "rss")
+	}
+	if change.Location != nil {
+		groups = append(groups, "location")
+	}
+	if change.Scheduler != nil {
+		groups = append(groups, "scheduler")
+	}
+	if change.Global != nil {
+		groups = append(groups, "global")
+	}
 	switch len(groups) {
 	case 0:
-		return "", fmt.Errorf("settings change requires exactly one group patch (bt, ftp_http)")
+		return "", fmt.Errorf("settings change requires exactly one group patch (bt, ftp_http, rss, location, scheduler, global)")
 	case 1:
 		return groups[0], nil
 	default:
@@ -577,6 +589,38 @@ func settingsGroupEffects(group string, change downloadstation.SettingsChange, o
 		}
 		risk, warnings, summary := ftpHttpSettingsEffects(current, *change.FtpHttp)
 		return ftpHttpChangeIsNoOp(current, *change.FtpHttp), risk, warnings, summary, nil
+	case "rss":
+		var current downloadstation.RssSettings
+		if err := json.Unmarshal(observed, &current); err != nil {
+			return false, "", nil, nil, fmt.Errorf("decode observed RSS settings: %w", err)
+		}
+		noop := change.Rss.UpdateIntervalMinutes == nil || *change.Rss.UpdateIntervalMinutes == current.UpdateIntervalMinutes
+		summary := []string{}
+		if !noop {
+			summary = append(summary, fmt.Sprintf("set the RSS refresh interval to %d minutes", *change.Rss.UpdateIntervalMinutes))
+		}
+		return noop, "medium", []string{}, summary, nil
+	case "location":
+		var current downloadstation.LocationSettings
+		if err := json.Unmarshal(observed, &current); err != nil {
+			return false, "", nil, nil, fmt.Errorf("decode observed location settings: %w", err)
+		}
+		noop, summary := locationEffects(current, *change.Location)
+		return noop, "medium", []string{}, summary, nil
+	case "scheduler":
+		var current downloadstation.SchedulerSettings
+		if err := json.Unmarshal(observed, &current); err != nil {
+			return false, "", nil, nil, fmt.Errorf("decode observed scheduler settings: %w", err)
+		}
+		noop, summary := schedulerEffects(current, *change.Scheduler)
+		return noop, "medium", []string{}, summary, nil
+	case "global":
+		var current downloadstation.GlobalSettings
+		if err := json.Unmarshal(observed, &current); err != nil {
+			return false, "", nil, nil, fmt.Errorf("decode observed global settings: %w", err)
+		}
+		noop, risk, warnings, summary := globalEffects(current, *change.Global)
+		return noop, risk, warnings, summary, nil
 	default:
 		return false, "", nil, nil, fmt.Errorf("unsupported settings group %q", group)
 	}
@@ -604,9 +648,168 @@ func verifySettingsGroupPostcondition(ctx context.Context, client downloadStatio
 			return err
 		}
 		return verifyFtpHttpPostcondition(fh, *change.FtpHttp)
+	case "rss":
+		var r downloadstation.RssSettings
+		if err := json.Unmarshal(raw, &r); err != nil {
+			return err
+		}
+		if change.Rss.UpdateIntervalMinutes != nil && r.UpdateIntervalMinutes != *change.Rss.UpdateIntervalMinutes {
+			return fmt.Errorf("update_interval is %d, want %d", r.UpdateIntervalMinutes, *change.Rss.UpdateIntervalMinutes)
+		}
+		return nil
+	case "location":
+		var l downloadstation.LocationSettings
+		if err := json.Unmarshal(raw, &l); err != nil {
+			return err
+		}
+		return verifyLocationPostcondition(l, *change.Location)
+	case "scheduler":
+		var s downloadstation.SchedulerSettings
+		if err := json.Unmarshal(raw, &s); err != nil {
+			return err
+		}
+		return verifySchedulerPostcondition(s, *change.Scheduler)
+	case "global":
+		var g downloadstation.GlobalSettings
+		if err := json.Unmarshal(raw, &g); err != nil {
+			return err
+		}
+		return verifyGlobalPostcondition(g, *change.Global)
 	default:
 		return fmt.Errorf("unsupported settings group %q", group)
 	}
+}
+
+func locationEffects(current downloadstation.LocationSettings, patch downloadstation.LocationSettingsChange) (bool, []string) {
+	summary := []string{}
+	changed := false
+	if patch.DefaultDestination != nil && *patch.DefaultDestination != current.DefaultDestination {
+		summary = append(summary, fmt.Sprintf("set the default destination to %q", *patch.DefaultDestination))
+		changed = true
+	}
+	if patch.EnableTorrentNzbWatch != nil && *patch.EnableTorrentNzbWatch != current.EnableTorrentNzbWatch {
+		summary = append(summary, fmt.Sprintf("set torrent/NZB watch to %t", *patch.EnableTorrentNzbWatch))
+		changed = true
+	}
+	if patch.EnableDeleteTorrentNzbWatch != nil && *patch.EnableDeleteTorrentNzbWatch != current.EnableDeleteTorrentNzbWatch {
+		summary = append(summary, fmt.Sprintf("set delete-after-import to %t", *patch.EnableDeleteTorrentNzbWatch))
+		changed = true
+	}
+	if patch.TorrentNzbWatchFolder != nil && *patch.TorrentNzbWatchFolder != current.TorrentNzbWatchFolder {
+		summary = append(summary, fmt.Sprintf("set the watch folder to %q", *patch.TorrentNzbWatchFolder))
+		changed = true
+	}
+	return !changed, summary
+}
+
+func verifyLocationPostcondition(current downloadstation.LocationSettings, patch downloadstation.LocationSettingsChange) error {
+	if patch.DefaultDestination != nil && current.DefaultDestination != *patch.DefaultDestination {
+		return fmt.Errorf("default_destination is %q, want %q", current.DefaultDestination, *patch.DefaultDestination)
+	}
+	if patch.EnableTorrentNzbWatch != nil && current.EnableTorrentNzbWatch != *patch.EnableTorrentNzbWatch {
+		return fmt.Errorf("enable_torrent_nzb_watch mismatch")
+	}
+	if patch.EnableDeleteTorrentNzbWatch != nil && current.EnableDeleteTorrentNzbWatch != *patch.EnableDeleteTorrentNzbWatch {
+		return fmt.Errorf("enable_delete_torrent_nzb_watch mismatch")
+	}
+	if patch.TorrentNzbWatchFolder != nil && current.TorrentNzbWatchFolder != *patch.TorrentNzbWatchFolder {
+		return fmt.Errorf("torrent_nzb_watch_folder mismatch")
+	}
+	return nil
+}
+
+func schedulerEffects(current downloadstation.SchedulerSettings, patch downloadstation.SchedulerSettingsChange) (bool, []string) {
+	summary := []string{}
+	changed := false
+	if patch.EnableSchedule != nil && *patch.EnableSchedule != current.EnableSchedule {
+		summary = append(summary, fmt.Sprintf("set the schedule to %t", *patch.EnableSchedule))
+		changed = true
+	}
+	if patch.DownloadRate != nil && *patch.DownloadRate != current.DownloadRate {
+		summary = append(summary, fmt.Sprintf("set the scheduled download rate to %d KB/s", *patch.DownloadRate))
+		changed = true
+	}
+	if patch.UploadRate != nil && *patch.UploadRate != current.UploadRate {
+		summary = append(summary, fmt.Sprintf("set the scheduled upload rate to %d KB/s", *patch.UploadRate))
+		changed = true
+	}
+	if patch.MaxTasks != nil && *patch.MaxTasks != current.MaxTasks {
+		summary = append(summary, fmt.Sprintf("set max simultaneous tasks to %d", *patch.MaxTasks))
+		changed = true
+	}
+	if patch.Order != nil && *patch.Order != current.Order {
+		summary = append(summary, fmt.Sprintf("set the task order to %q", *patch.Order))
+		changed = true
+	}
+	if patch.ScheduleBitmap != nil && *patch.ScheduleBitmap != current.ScheduleBitmap {
+		summary = append(summary, "replace the weekly schedule bitmap")
+		changed = true
+	}
+	return !changed, summary
+}
+
+func verifySchedulerPostcondition(current downloadstation.SchedulerSettings, patch downloadstation.SchedulerSettingsChange) error {
+	if patch.EnableSchedule != nil && current.EnableSchedule != *patch.EnableSchedule {
+		return fmt.Errorf("enable_schedule mismatch")
+	}
+	if patch.DownloadRate != nil && current.DownloadRate != *patch.DownloadRate {
+		return fmt.Errorf("download_rate is %d, want %d", current.DownloadRate, *patch.DownloadRate)
+	}
+	if patch.UploadRate != nil && current.UploadRate != *patch.UploadRate {
+		return fmt.Errorf("upload_rate is %d, want %d", current.UploadRate, *patch.UploadRate)
+	}
+	if patch.MaxTasks != nil && current.MaxTasks != *patch.MaxTasks {
+		return fmt.Errorf("max_tasks is %d, want %d", current.MaxTasks, *patch.MaxTasks)
+	}
+	if patch.Order != nil && current.Order != *patch.Order {
+		return fmt.Errorf("order is %q, want %q", current.Order, *patch.Order)
+	}
+	if patch.ScheduleBitmap != nil && current.ScheduleBitmap != *patch.ScheduleBitmap {
+		return fmt.Errorf("schedule bitmap mismatch")
+	}
+	return nil
+}
+
+func globalEffects(current downloadstation.GlobalSettings, patch downloadstation.GlobalSettingsChange) (bool, string, []string, []string) {
+	summary := []string{}
+	warnings := []string{}
+	high := false
+	changed := false
+	if patch.DownloadVolume != nil && *patch.DownloadVolume != current.DownloadVolume {
+		summary = append(summary, fmt.Sprintf("move the default download volume from %q to %q", current.DownloadVolume, *patch.DownloadVolume))
+		warnings = append(warnings, "changing the default download volume affects where new tasks are stored")
+		high = true
+		changed = true
+	}
+	if patch.EmuleEnabled != nil && *patch.EmuleEnabled != current.EmuleEnabled {
+		summary = append(summary, fmt.Sprintf("set eMule enabled to %t", *patch.EmuleEnabled))
+		if *patch.EmuleEnabled {
+			warnings = append(warnings, "enabling eMule starts the eMule service")
+		}
+		changed = true
+	}
+	if patch.UnzipServiceEnabled != nil && *patch.UnzipServiceEnabled != current.UnzipServiceEnabled {
+		summary = append(summary, fmt.Sprintf("set the auto-unzip service to %t", *patch.UnzipServiceEnabled))
+		changed = true
+	}
+	risk := "medium"
+	if high {
+		risk = "high"
+	}
+	return !changed, risk, warnings, summary
+}
+
+func verifyGlobalPostcondition(current downloadstation.GlobalSettings, patch downloadstation.GlobalSettingsChange) error {
+	if patch.DownloadVolume != nil && current.DownloadVolume != *patch.DownloadVolume {
+		return fmt.Errorf("download_volume is %q, want %q", current.DownloadVolume, *patch.DownloadVolume)
+	}
+	if patch.EmuleEnabled != nil && current.EmuleEnabled != *patch.EmuleEnabled {
+		return fmt.Errorf("emule_enabled mismatch")
+	}
+	if patch.UnzipServiceEnabled != nil && current.UnzipServiceEnabled != *patch.UnzipServiceEnabled {
+		return fmt.Errorf("unzip_service_enabled mismatch")
+	}
+	return nil
 }
 
 func ftpHttpChangeIsNoOp(current downloadstation.FtpHttpSettings, patch downloadstation.FtpHttpSettingsChange) bool {
@@ -652,6 +855,43 @@ func validateSettingsChangeShape(change downloadstation.SettingsChange) error {
 		return validateBTPatch(change.BT)
 	case "ftp_http":
 		return validateFtpHttpPatch(change.FtpHttp)
+	case "rss":
+		if change.Rss.UpdateIntervalMinutes == nil {
+			return fmt.Errorf("rss settings patch has no fields")
+		}
+		if *change.Rss.UpdateIntervalMinutes < 1 {
+			return fmt.Errorf("update_interval_minutes must be at least 1")
+		}
+		return nil
+	case "location":
+		l := change.Location
+		if l.DefaultDestination == nil && l.EnableTorrentNzbWatch == nil && l.EnableDeleteTorrentNzbWatch == nil && l.TorrentNzbWatchFolder == nil {
+			return fmt.Errorf("location settings patch has no fields")
+		}
+		return nil
+	case "scheduler":
+		s := change.Scheduler
+		if s.EnableSchedule == nil && s.DownloadRate == nil && s.UploadRate == nil && s.MaxTasks == nil && s.Order == nil && s.ScheduleBitmap == nil {
+			return fmt.Errorf("scheduler settings patch has no fields")
+		}
+		for name, rate := range map[string]*int{"download_rate": s.DownloadRate, "upload_rate": s.UploadRate} {
+			if rate != nil && *rate < 0 {
+				return fmt.Errorf("%s must not be negative", name)
+			}
+		}
+		if s.MaxTasks != nil && *s.MaxTasks < 1 {
+			return fmt.Errorf("max_tasks must be at least 1")
+		}
+		if s.ScheduleBitmap != nil && len(*s.ScheduleBitmap) != 168 {
+			return fmt.Errorf("schedule_bitmap must be exactly 168 characters (7 days x 24 hours)")
+		}
+		return nil
+	case "global":
+		g := change.Global
+		if g.DownloadVolume == nil && g.EmuleEnabled == nil && g.UnzipServiceEnabled == nil {
+			return fmt.Errorf("global settings patch has no fields")
+		}
+		return nil
 	default:
 		return fmt.Errorf("unsupported settings group %q", group)
 	}

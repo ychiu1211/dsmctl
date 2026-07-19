@@ -188,7 +188,7 @@ type planDownloadStationTaskChangeOutput struct {
 
 type applyDownloadStationTaskPlanInput struct {
 	Plan         application.DownloadStationTaskPlan `json:"plan" jsonschema:"Approved task plan from plan_download_station_task_change"`
-	ApprovalHash string                             `json:"approval_hash" jsonschema:"Exact SHA-256 approval hash from the plan"`
+	ApprovalHash string                              `json:"approval_hash" jsonschema:"Exact SHA-256 approval hash from the plan"`
 }
 
 type applyDownloadStationTaskPlanOutput struct {
@@ -197,7 +197,7 @@ type applyDownloadStationTaskPlanOutput struct {
 
 type planDownloadStationSettingsChangeInput struct {
 	NAS     string                         `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
-	Request downloadstation.SettingsChange `json:"request" jsonschema:"Patch-only settings intent (BitTorrent group)"`
+	Request downloadstation.SettingsChange `json:"request" jsonschema:"Patch-only settings intent (exactly one group: BT, FTP/HTTP, RSS, location, scheduler, or global)"`
 }
 
 type planDownloadStationSettingsChangeOutput struct {
@@ -206,7 +206,7 @@ type planDownloadStationSettingsChangeOutput struct {
 
 type applyDownloadStationSettingsPlanInput struct {
 	Plan         application.DownloadStationSettingsPlan `json:"plan" jsonschema:"Approved settings plan from plan_download_station_settings_change"`
-	ApprovalHash string                                 `json:"approval_hash" jsonschema:"Exact SHA-256 approval hash from the plan"`
+	ApprovalHash string                                  `json:"approval_hash" jsonschema:"Exact SHA-256 approval hash from the plan"`
 }
 
 type applyDownloadStationSettingsPlanOutput struct {
@@ -1101,7 +1101,7 @@ func New(service *application.Service, version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "plan_download_station_settings_change",
 		Title:       "Plan a Download Station settings change",
-		Description: "Validate a patch-only Download Station settings change (BitTorrent group: ports, DHT, port forwarding, preview, encryption, rate limits, max peers, seeding) and return an approval plan bound to the complete observed group state. This tool never mutates DSM.",
+		Description: "Validate a patch-only Download Station settings change affecting exactly one group and return an approval plan bound to the complete observed group state. Supported groups: BT (ports, DHT, port forwarding, preview, encryption, rate limits, max peers, seeding), FTP/HTTP (max download rate, per-task connection limit), RSS (feed refresh interval), location (default destination, torrent/NZB watch folder), scheduler (alternative-rate schedule, max tasks), and global (download volume, eMule and auto-extract toggles). Note that the default destination is a per-user binding DSM cannot clear once set. This tool never mutates DSM.",
 		Annotations: readOnlyAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planDownloadStationSettingsChangeInput) (*mcp.CallToolResult, planDownloadStationSettingsChangeOutput, error) {
 		plan, err := service.PlanDownloadStationSettingsChange(ctx, input.NAS, input.Request)

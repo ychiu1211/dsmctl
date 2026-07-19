@@ -163,12 +163,47 @@ type FtpHttpSettingsChange struct {
 	MaxConn         *int  `json:"max_conn,omitempty" jsonschema:"Maximum FTP connections per task"`
 }
 
+// RssSettingsChange is a patch-only RSS settings intent.
+type RssSettingsChange struct {
+	UpdateIntervalMinutes *int `json:"update_interval_minutes,omitempty" jsonschema:"RSS feed refresh interval in minutes"`
+}
+
+// LocationSettingsChange is a patch-only destination/watch-folder settings intent.
+type LocationSettingsChange struct {
+	DefaultDestination          *string `json:"default_destination,omitempty" jsonschema:"Default download destination shared folder"`
+	EnableTorrentNzbWatch       *bool   `json:"enable_torrent_nzb_watch,omitempty" jsonschema:"Enable the torrent/NZB watch folder"`
+	EnableDeleteTorrentNzbWatch *bool   `json:"enable_delete_torrent_nzb_watch,omitempty" jsonschema:"Delete watched torrent/NZB files after import"`
+	TorrentNzbWatchFolder       *string `json:"torrent_nzb_watch_folder,omitempty" jsonschema:"Watch folder path"`
+}
+
+// SchedulerSettingsChange is a patch-only bandwidth-schedule intent. ScheduleBitmap
+// is DSM's raw 168-character weekly on/off bitmap (7 days x 24 hours).
+type SchedulerSettingsChange struct {
+	EnableSchedule *bool   `json:"enable_schedule,omitempty" jsonschema:"Enable the download schedule"`
+	DownloadRate   *int    `json:"download_rate,omitempty" jsonschema:"Scheduled download rate in KB/s; 0 = unlimited"`
+	UploadRate     *int    `json:"upload_rate,omitempty" jsonschema:"Scheduled upload rate in KB/s; 0 = unlimited"`
+	MaxTasks       *int    `json:"max_tasks,omitempty" jsonschema:"Maximum simultaneous tasks"`
+	Order          *string `json:"order,omitempty" jsonschema:"Task ordering policy, such as request"`
+	ScheduleBitmap *string `json:"schedule_bitmap,omitempty" jsonschema:"Raw 168-character weekly on/off bitmap"`
+}
+
+// GlobalSettingsChange is a patch-only general settings intent.
+type GlobalSettingsChange struct {
+	DownloadVolume      *string `json:"download_volume,omitempty" jsonschema:"Default download volume mount point"`
+	EmuleEnabled        *bool   `json:"emule_enabled,omitempty" jsonschema:"Enable or disable eMule"`
+	UnzipServiceEnabled *bool   `json:"unzip_service_enabled,omitempty" jsonschema:"Enable or disable the auto-unzip service"`
+}
+
 // SettingsChange is a patch across Download Station settings groups. Exactly one
 // group patch is present per change. More groups are added as they are
 // implemented as guarded writes.
 type SettingsChange struct {
-	BT      *BTSettingsChange      `json:"bt,omitempty" jsonschema:"BitTorrent settings patch"`
-	FtpHttp *FtpHttpSettingsChange `json:"ftp_http,omitempty" jsonschema:"FTP/HTTP settings patch"`
+	BT        *BTSettingsChange        `json:"bt,omitempty" jsonschema:"BitTorrent settings patch"`
+	FtpHttp   *FtpHttpSettingsChange   `json:"ftp_http,omitempty" jsonschema:"FTP/HTTP settings patch"`
+	Rss       *RssSettingsChange       `json:"rss,omitempty" jsonschema:"RSS settings patch"`
+	Location  *LocationSettingsChange  `json:"location,omitempty" jsonschema:"Destination/watch-folder settings patch"`
+	Scheduler *SchedulerSettingsChange `json:"scheduler,omitempty" jsonschema:"Bandwidth-schedule settings patch"`
+	Global    *GlobalSettingsChange    `json:"global,omitempty" jsonschema:"General settings patch"`
 }
 
 // SettingsMutationResult records the DSM backend that accepted a settings write.
@@ -270,5 +305,5 @@ type Capabilities struct {
 	StatisticRead bool            `json:"statistic_read" jsonschema:"Whether transfer statistics can be read"`
 	SettingsRead  bool            `json:"settings_read" jsonschema:"Whether the full detailed settings can be read"`
 	TaskWrite     bool            `json:"task_write" jsonschema:"Whether guarded task create/pause/resume/delete is available"`
-	SettingsWrite bool            `json:"settings_write" jsonschema:"Whether guarded settings changes (BT group) are available"`
+	SettingsWrite bool            `json:"settings_write" jsonschema:"Whether guarded settings changes (BT, FTP/HTTP, RSS, location, scheduler, global groups) are available"`
 }
