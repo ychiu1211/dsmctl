@@ -1,9 +1,9 @@
 ---
 id: WI-039
 title: Redesign the CLI web-login helper page with shared design tokens
-status: in_progress
+status: done
 priority: P2
-owner: "weblogin-design"
+owner: ""
 depends_on: [WI-037]
 parallel_group: G
 touches:
@@ -71,17 +71,17 @@ text that displays raw server response strings.
 
 ## Acceptance criteria
 
-- [ ] The rendered page contains the shared brand/slate scales and semantic
+- [x] The rendered page contains the shared brand/slate scales and semantic
       aliases, pinned by a test whose expected values match the gateway's.
-- [ ] The four states have distinct visuals; the terminal state (success or
+- [x] The four states have distinct visuals; the terminal state (success or
       failure) is chosen by the callback HTTP status, and its copy is
       localized, not server text.
-- [ ] All five locales render through `navigator.language` detection with the
+- [x] All five locales render through `navigator.language` detection with the
       matching `<html lang>` value.
-- [ ] `dsmctl auth login` still completes end to end against a live DSM.
-- [ ] `go test ./... -count=1` and `go vet ./...` pass with the new
+- [x] `dsmctl auth login` still completes end to end against a live DSM.
+- [x] `go test ./... -count=1` and `go vet ./...` pass with the new
       page-contract tests in `internal/weblogin`.
-- [ ] A screenshot of the redesigned page is versioned under
+- [x] A screenshot of the redesigned page is versioned under
       `docs/assets/weblogin/`.
 
 ## Verification
@@ -102,6 +102,32 @@ gateway and MCP-server files, so the two can proceed concurrently. WI-017
 certifies the gateway image and is unaffected. A
 future shared-token package would touch `internal/gateway/admin/ui.go` and
 must be its own prerequisite work item.
+
+## Completion notes
+
+- The helper page now carries the gateway token scales verbatim (source of
+  truth `internal/gateway/admin/ui.go`); `TestPageCarriesSharedDesignTokens`
+  pins the shared literals on this side and the gateway pins the same values,
+  so drift fails a build.
+- Heading names the target NAS host ("Sign in to <host>", localized with a
+  `{host}` placeholder in all five locales because word order differs), with
+  the full origin kept below it so scheme and port stay checkable — added
+  during live verification at the operator's request.
+- Four states (waiting / exchanging / success / error) switch on the
+  `/callback` HTTP status; the old server-text injection is removed and its
+  absence is test-guarded. Locale comes from `navigator.language` through the
+  gateway's normalization rules; `<html lang>` follows.
+- Verified: full Playwright walkthrough of all four states and the zh-TW
+  locale; live `dsmctl auth login` sign-in completed by the operator against
+  DSM 7.3.2; `go test ./... -count=1`, `go vet ./...`, gofmt clean.
+- Screenshot versioned at `docs/assets/weblogin/01-sign-in.png` (1280x720,
+  zh-TW waiting state).
+- Final whole-change review: READY, no Critical/Important findings. Minors
+  triaged: package-wide gofmt realignment kept (pure whitespace);
+  `role="status"` announcement is AT-dependent (terminal output remains the
+  authoritative channel); host/origin splices rely on the loopback self-input
+  trust model rather than character sanitization — escaping the splice points
+  is a recommended follow-up hardening.
 
 ## Handoff
 
