@@ -39,7 +39,10 @@ func main() {
 		runtime.WithDeviceStore(secrets),
 		runtime.WithSessionStore(secrets),
 	)
-	service := application.NewService(cfg, manager, application.WithCredentialStore(secrets))
+	service := application.NewService(cfg, manager,
+		application.WithCredentialStore(secrets),
+		application.WithDiscoveryStore(application.DiscoveryStorePath(*configPath)),
+	)
 	server := mcpserver.New(service, buildinfo.Version)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)

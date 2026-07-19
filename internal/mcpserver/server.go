@@ -32,11 +32,13 @@ import (
 )
 
 type discoverLANDevicesInput struct {
-	TimeoutSeconds int `json:"timeout_seconds,omitempty" jsonschema:"How long to listen for device responses, in seconds; defaults to 3 and is capped at 60"`
+	TimeoutSeconds int  `json:"timeout_seconds,omitempty" jsonschema:"How long to listen for device responses, in seconds; defaults to 8 and is capped at 60"`
+	Cached         bool `json:"cached,omitempty" jsonschema:"Return the saved cross-run set from previous scans without scanning again; timeout_seconds is ignored"`
 }
 
 type discoverLANDevicesOutput struct {
-	Devices []discovery.Device `json:"devices" jsonschema:"Synology devices that answered the findhost broadcast, deduplicated by device"`
+	Devices    []discovery.Device `json:"devices" jsonschema:"Synology devices that answered the findhost broadcast, deduplicated by device"`
+	SavedTotal int                `json:"saved_total,omitempty" jsonschema:"Devices in the saved cross-run set after this scan was merged in; larger than the returned count when a scan under-counted under UDP-9999 contention"`
 }
 
 type listNASInput struct{}
@@ -827,14 +829,25 @@ func New(service *application.Service, version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "discover_lan_devices",
 		Title:       "Discover Synology devices on the LAN",
-		Description: "Broadcast a Synology findhost discovery query on the local network and return the Synology devices that answer: hostname, model, OS version, serial, IPv4 address(es), MAC, and self-reported state. Needs no configured NAS, credential, or DSM session, and mutates nothing — it only sends discovery query packets. It sees only devices in the local broadcast domain of the host running dsmctl.",
+		Description: "Broadcast a Synology findhost discovery query on the local network and return the Synology devices that answer: hostname, model, OS version, serial, IPv4 address(es), MAC, and self-reported state. Re-broadcasts throughout the listen window and accumulates answers, so a longer timeout returns a more complete set when another findhost listener (e.g. Synology Assistant) is contending for UDP 9999. Each scan is merged into a saved cross-run set; pass cached=true to return that saved set without scanning. Needs no configured NAS, credential, or DSM session, and contacts no NAS — it only sends discovery query packets. It sees only devices in the local broadcast domain of the host running dsmctl.",
 		Annotations: readOnlyAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input discoverLANDevicesInput) (*mcp.CallToolResult, discoverLANDevicesOutput, error) {
+		if input.Cached {
+			saved, err := service.CachedDiscoveries(ctx)
+			if err != nil {
+				return nil, discoverLANDevicesOutput{}, err
+			}
+			devices := make([]discovery.Device, len(saved.Devices))
+			for i, record := range saved.Devices {
+				devices[i] = record.Device
+			}
+			return nil, discoverLANDevicesOutput{Devices: devices, SavedTotal: len(saved.Devices)}, nil
+		}
 		result, err := service.DiscoverDevices(ctx, discovery.Query{Timeout: time.Duration(input.TimeoutSeconds) * time.Second})
 		if err != nil {
 			return nil, discoverLANDevicesOutput{}, err
 		}
-		return nil, discoverLANDevicesOutput{Devices: result.Devices}, nil
+		return nil, discoverLANDevicesOutput{Devices: result.Devices, SavedTotal: result.SavedTotal}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/ychiu1211/dsmctl/internal/config"
 	"github.com/ychiu1211/dsmctl/internal/credentials"
@@ -21,6 +22,7 @@ type Service struct {
 	secretReferences credentials.ReferenceResolver
 	credentialStore  CredentialStore
 	remoteApply      RemoteApplyAuthorizer
+	discoveryStore   *discoveryStore
 }
 
 type SystemInfoResult struct {
@@ -149,6 +151,17 @@ func WithConfigSource(source config.Source) ServiceOption {
 	return func(service *Service) {
 		if source != nil {
 			service.configSource = source
+		}
+	}
+}
+
+// WithDiscoveryStore enables persisting LAN discovery results to the given file
+// path, so scans accumulate into a saved cross-run set that both the CLI and the
+// local MCP server share. Without it, discovery still works but saves nothing.
+func WithDiscoveryStore(path string) ServiceOption {
+	return func(service *Service) {
+		if strings.TrimSpace(path) != "" {
+			service.discoveryStore = newDiscoveryStore(path)
 		}
 	}
 }

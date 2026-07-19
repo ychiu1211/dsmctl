@@ -7,13 +7,25 @@ profile, credential, or DSM session**: it broadcasts a discovery query and
 lists every Synology device that answers.
 
 ```console
-dsmctl discover
-dsmctl discover --timeout 5s
-dsmctl discover --json
+dsmctl discover                 # scan for the default window, then list devices
+dsmctl discover --timeout 15s   # or -t 15s; scan longer for a busy network
+dsmctl discover --json          # emit the full discovery.Device model
+dsmctl discover --cached        # print the saved results without scanning
+dsmctl discover --clear         # discard the saved results
 ```
 
 Discovery is read-only. It transmits only query packets and changes nothing on
 any device.
+
+The scan **re-broadcasts throughout the listen window and accumulates** the
+answers, so it keeps filling in devices for the full `--timeout` (default 8s).
+Press **Ctrl-C** to stop early and keep whatever has been found so far — devices
+appear on standard error as they answer, so you can watch the list fill up and
+stop once you see what you need.
+
+Each run's results are **saved** and merged into a running set (see
+[Saved results](#saved-results)), so a scan that happens to under-count does not
+lose the devices an earlier scan found.
 
 ## Output
 
@@ -49,14 +61,63 @@ response type.
   protocol-version fields `findhostd` requires — to the limited broadcast
   address and to every up interface's directed broadcast, so multi-homed hosts
   reach every attached subnet.
-- Devices answer on port 9999. dsmctl parses each response, decoding the
-  protocol's mixed endianness (IP-address fields are network byte order; other
-  integers are little endian) and deduplicating answers by device.
+- The query is re-sent in a few quick initial bursts and then once a second for
+  the rest of the window. Every device answers every broadcast, so repeated
+  rounds recover devices a single round missed and catch devices that power on
+  partway through the sweep.
+- Devices answer by **broadcasting** their reply to port 9999. dsmctl parses
+  each response, decoding the protocol's mixed endianness (IP-address fields are
+  network byte order; other integers are little endian) and deduplicating
+  answers by device.
 - Discovery is unencrypted: dsmctl sends no public key, so `findhostd` replies
   in plaintext. Encrypted responses from other clients are ignored.
 
 Only devices in the **same broadcast domain** as the host running dsmctl can
 answer; broadcast queries do not cross routers.
+
+## Saved results
+
+Every scan writes its devices to `discovered.json`, a sibling of the
+configuration file (so it follows the same per-user config directory). Devices
+are merged into a **running union** across runs: each device keeps its
+`first_seen` time and has its `last_seen` time refreshed whenever it answers
+again. A scan that finds nothing leaves the saved set untouched.
+
+- `dsmctl discover --cached` prints the saved set — with a `LAST SEEN` column —
+  without scanning.
+- `dsmctl discover --clear` discards the saved set.
+
+The saved set is the reliable record when an individual scan under-counts (see
+below): even if one run answers with only a handful of devices, the union from
+previous runs is preserved and available with `--cached`.
+
+Persistence lives in the shared application layer (`Service.DiscoverDevices`,
+`CachedDiscoveries`, `ClearDiscoveries`), so the CLI and the local MCP server are
+just two entry points onto the **same** saved file: a scan from either updates
+the union, and either can read it back. An MCP scan therefore builds the same
+record a CLI scan does.
+
+## Sharing UDP 9999 with Synology Assistant
+
+`findhostd` broadcasts its replies to port 9999, so dsmctl must bind 9999 to
+receive them. **Synology Assistant, when running, holds UDP 9999 continuously.**
+On Windows, a broadcast datagram arriving at a port that two processes share is
+delivered to only **one** of them, so a dsmctl scan and Synology Assistant end up
+splitting the replies. A scan that loses the split answers with far fewer devices
+than are really present.
+
+In practice the first scan after the port has been idle for a few seconds
+usually wins and sees everything; scans run in rapid succession are the ones that
+can under-count. dsmctl mitigates this three ways:
+
+- it re-broadcasts and accumulates across the whole window, recovering devices
+  round by round;
+- it saves the running union, so an under-counting scan does not lose ground; and
+- when a scan answers with noticeably fewer devices than the saved set, it prints
+  a note pointing at `dsmctl discover --cached` and suggesting you wait a few
+  seconds and rerun.
+
+Closing Synology Assistant removes the contention entirely.
 
 ## Scope and limitations
 
@@ -66,14 +127,26 @@ answer; broadcast queries do not cross routers.
   the per-NAS capability report.
 - It never sends network-setting, quick-config, or install packets — it only
   reads.
-- If a sweep started immediately after another returns no devices, the
-  well-known port was still being released; re-run it.
 
 ## MCP
 
 The local MCP server exposes discovery as the read-only tool
-`discover_lan_devices` (optional `timeout_seconds`, default 3, max 60). The
-managed gateway exposes the same application operation to its authenticated
+`discover_lan_devices`. It shares the CLI's discovery code end to end — the same
+re-broadcasting sweep and the same saved set:
+
+- `timeout_seconds` (optional, default 8, max 60) — like the CLI's `--timeout`, a
+  larger window returns a more complete set under contention.
+- `cached` (optional bool) — like `--cached`, return the saved cross-run set
+  without scanning.
+- A scan merges into the same `discovered.json` the CLI uses, and every response
+  reports `saved_total`, the size of the saved union after the scan — larger than
+  the returned count when the scan under-counted.
+
+Clearing the saved set (the CLI's `--clear`) is a local maintenance action and is
+not exposed over MCP; because the file is shared, `dsmctl discover --clear`
+clears it for both.
+
+The managed gateway exposes the same application operation to its authenticated
 local administrator while the Add NAS wizard is open. Remote MCP bearer tokens
 may also invoke the tool only when they hold the separate `lan.discover` scope;
 the NAS allowlist does not grant discovery implicitly because a scan can reveal

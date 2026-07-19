@@ -42,5 +42,8 @@ func loadService(configPath string) (*application.Service, error) {
 		runtime.WithDeviceStore(secrets),
 		runtime.WithSessionStore(secrets),
 	)
-	return application.NewService(cfg, manager, application.WithCredentialStore(secrets)), nil
+	return application.NewService(cfg, manager,
+		application.WithCredentialStore(secrets),
+		application.WithDiscoveryStore(application.DiscoveryStorePath(configPath)),
+	), nil
 }

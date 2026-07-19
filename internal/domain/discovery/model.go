@@ -19,9 +19,14 @@ import (
 )
 
 // DefaultTimeout is the default listen window for one discovery sweep. Devices
-// answer within a few hundred milliseconds on a healthy LAN; a few seconds
-// absorbs UDP loss and slower responders without making the command feel stuck.
-const DefaultTimeout = 3 * time.Second
+// answer within a few hundred milliseconds on a healthy LAN, but dsmctl keeps
+// re-broadcasting across the whole window and folds every answer into a running
+// set, so a longer default markedly improves completeness when another findhost
+// listener — most commonly Synology Assistant, which holds UDP 9999 — is
+// contending for the shared port and winning a share of each response burst. The
+// sweep is interruptible, so a caller that already sees what it needs can stop
+// early without waiting out the window.
+const DefaultTimeout = 8 * time.Second
 
 // Device states, as self-reported by the device's findhost quick-config status
 // (and, when that is absent, inferred from the response packet type). These are
@@ -76,7 +81,7 @@ const (
 // Query parameterizes one discovery sweep.
 type Query struct {
 	// Timeout is the total listen window for the sweep. Zero uses DefaultTimeout.
-	Timeout time.Duration `json:"timeout,omitempty" jsonschema:"Total listen window for the discovery sweep; defaults to 3s"`
+	Timeout time.Duration `json:"timeout,omitempty" jsonschema:"Total listen window for the discovery sweep; defaults to 8s"`
 }
 
 // Normalize fills defaults and clamps unreasonable values.

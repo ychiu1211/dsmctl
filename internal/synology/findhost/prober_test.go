@@ -88,10 +88,46 @@ func TestFoldResponseInfoAvailableUpgradedByResponse(t *testing.T) {
 
 func TestFoldResponseIntoIgnoresNonDevice(t *testing.T) {
 	collected := map[string]*discovery.Device{}
-	foldResponseInto(collected, BuildQuery())             // our own query reflected back
-	foldResponseInto(collected, []byte("garbage-packet")) // unrelated datagram
+	if _, isNew := foldResponseInto(collected, BuildQuery()); isNew { // our own query reflected back
+		t.Error("reflected query reported as a new device")
+	}
+	if _, isNew := foldResponseInto(collected, []byte("garbage-packet")); isNew { // unrelated datagram
+		t.Error("garbage datagram reported as a new device")
+	}
 	if len(collected) != 0 {
 		t.Fatalf("collected %d devices, want 0", len(collected))
+	}
+}
+
+func TestFoldResponseIntoReportsNewnessForStreaming(t *testing.T) {
+	// The prober streams a device to OnDevice only the first time it is folded in.
+	// The first response for a device is new; a second response for the same
+	// physical device (another interface) merges silently.
+	first := responsePacket(
+		tlvString(idName, "MyNAS"),
+		tlvString(idMAC, "00:11:32:aa:bb:01"),
+		tlvIPv4(idIP, 192, 168, 1, 51),
+		tlvString(idNewSerial, "2150ABC123456"),
+		tlvU32(idPacketType, ptypeBroadcastResponse),
+	)
+	second := responsePacket(
+		tlvString(idName, "MyNAS"),
+		tlvString(idMAC, "00:11:32:aa:bb:02"),
+		tlvIPv4(idIP, 192, 168, 1, 50),
+		tlvString(idNewSerial, "2150ABC123456"),
+		tlvU32(idPacketType, ptypeBroadcastResponse),
+	)
+
+	collected := map[string]*discovery.Device{}
+	device, isNew := foldResponseInto(collected, first)
+	if !isNew {
+		t.Fatal("first response for a device: isNew = false, want true")
+	}
+	if device.Hostname != "MyNAS" {
+		t.Errorf("streamed device Hostname = %q, want MyNAS", device.Hostname)
+	}
+	if _, isNew := foldResponseInto(collected, second); isNew {
+		t.Error("second interface of a known device: isNew = true, want false")
 	}
 }
 
