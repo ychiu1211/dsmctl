@@ -91,6 +91,7 @@ const packageInstallAPIVersion = "dsmctl.io/v1alpha1"
 type PackageInstallPlan struct {
 	APIVersion      string               `json:"api_version" jsonschema:"Plan schema version"`
 	NAS             string               `json:"nas" jsonschema:"NAS profile selected during planning"`
+	ProfileRevision uint64               `json:"profile_revision,omitempty" jsonschema:"Persistent gateway profile revision selected during planning"`
 	PackageID       string               `json:"package_id" jsonschema:"Target package identifier to install"`
 	Name            string               `json:"name" jsonschema:"Human-readable target package name"`
 	Version         string               `json:"version" jsonschema:"Offered target version to install"`
@@ -136,7 +137,15 @@ func (s *Service) PlanPackageInstall(ctx context.Context, requestedNAS, packageI
 	if err != nil {
 		return PackageInstallPlan{}, err
 	}
-	return planPackageInstallWithClient(ctx, name, client, packageID, volumePath, runAfterInstall, quickInstall)
+	plan, err := planPackageInstallWithClient(ctx, name, client, packageID, volumePath, runAfterInstall, quickInstall)
+	if err != nil {
+		return PackageInstallPlan{}, err
+	}
+	plan.ProfileRevision, err = s.profileRevision(ctx, name)
+	if err == nil {
+		plan.Hash, err = packageInstallPlanHash(plan)
+	}
+	return plan, err
 }
 
 func planPackageInstallWithClient(ctx context.Context, nas string, client packageClient, packageID, volumePath string, runAfterInstall, quickInstall bool) (PackageInstallPlan, error) {
@@ -260,6 +269,12 @@ func (s *Service) ApplyPackageInstallPlan(ctx context.Context, plan PackageInsta
 	}
 	if expectedHash != plan.Hash {
 		return PackageInstallApplyResult{}, fmt.Errorf("install plan contents were modified after planning")
+	}
+	if err := s.authorizeRemoteApply(ctx, plan.NAS, plan.ProfileRevision, plan.Hash, plan.Risk); err != nil {
+		return PackageInstallApplyResult{}, err
+	}
+	if err := s.verifyProfileRevision(ctx, plan.NAS, plan.ProfileRevision); err != nil {
+		return PackageInstallApplyResult{}, err
 	}
 	name, client, err := s.packageClient(ctx, plan.NAS)
 	if err != nil {

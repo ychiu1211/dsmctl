@@ -897,6 +897,39 @@ type applyPackagePlanOutput struct {
 	Result application.PackageApplyResult `json:"result" jsonschema:"Package Center mutation result after stale-state and postcondition checks"`
 }
 
+type getPackageAvailableInput struct {
+	NAS         string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	UpdatesOnly bool   `json:"updates_only,omitempty" jsonschema:"Return only installed packages whose offered version is newer than the installed one"`
+}
+
+type getPackageAvailableOutput struct {
+	NAS      string                          `json:"nas" jsonschema:"NAS profile used for the request"`
+	Packages []packagecenter.AvailablePackage `json:"packages" jsonschema:"Packages offered by the online package server, cross-referenced with the installed inventory"`
+}
+
+type planPackageInstallInput struct {
+	NAS       string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	PackageID string `json:"package_id" jsonschema:"Stable DSM package identifier to install, as listed by get_package_available"`
+	// VolumePath selects where the package installs, e.g. /volume1.
+	VolumePath string `json:"volume_path" jsonschema:"Target install volume path, for example /volume1"`
+	// Pointers so an omitted field keeps the safe default (true), matching the CLI.
+	RunAfterInstall *bool `json:"run_after_install,omitempty" jsonschema:"Start the package after install; defaults to true"`
+	QuickInstall    *bool `json:"quick_install,omitempty" jsonschema:"Quick install with defaults (no configuration wizard); defaults to true"`
+}
+
+type planPackageInstallOutput struct {
+	Plan application.PackageInstallPlan `json:"plan" jsonschema:"Resolved install intent (dependencies first) bound to an approval hash"`
+}
+
+type applyPackageInstallPlanInput struct {
+	Plan         application.PackageInstallPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_package_install"`
+	ApprovalHash string                         `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved install plan"`
+}
+
+type applyPackageInstallPlanOutput struct {
+	Result application.PackageInstallApplyResult `json:"result" jsonschema:"Per-package install outcomes confirmed by the inventory, in install order"`
+}
+
 type getDriveAdminInput struct {
 	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
 }
@@ -2265,7 +2298,7 @@ func New(service *application.Service, version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_package_capabilities",
 		Title:       "Get Package Center capabilities",
-		Description: "Report which Package Center operations dsmctl supports on the selected NAS and the DSM backend for each. Install and update are deferred and always report false.",
+		Description: "Report which Package Center operations dsmctl supports on the selected NAS and the DSM backend for each. Update-apply is deferred and always reports false.",
 		Annotations: readOnlyAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getPackageInput) (*mcp.CallToolResult, getPackageCapabilitiesOutput, error) {
 		result, err := service.GetPackageCapabilities(ctx, input.NAS)
@@ -2304,7 +2337,7 @@ func New(service *application.Service, version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "plan_package_change",
 		Title:       "Plan a Package Center change",
-		Description: "Validate a patch-only global-settings change or a package lifecycle action (start, stop, uninstall) and return an approval plan bound to the observed settings or package state. Uninstall is refused when DSM reports the package is not removable; install and update are deferred and rejected. This tool never mutates DSM.",
+		Description: "Validate a patch-only global-settings change or a package lifecycle action (start, stop, uninstall) and return an approval plan bound to the observed settings or package state. Uninstall is refused when DSM reports the package is not removable; update is deferred and rejected, and online installs go through plan_package_install instead. This tool never mutates DSM.",
 		Annotations: readOnlyAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planPackageChangeInput) (*mcp.CallToolResult, planPackageChangeOutput, error) {
 		plan, err := service.PlanPackageChange(ctx, input.NAS, input.Request)
@@ -2325,6 +2358,62 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, applyPackagePlanOutput{}, err
 		}
 		return nil, applyPackagePlanOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_package_available",
+		Title:       "List packages offered by the online package server",
+		Description: "Read Synology's online package catalog for the selected NAS: identifier, name, offered version, beta flag, size, dependencies, and whether each package is already installed or has an update available. Set updates_only to list only pending updates. This tool never installs anything.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getPackageAvailableInput) (*mcp.CallToolResult, getPackageAvailableOutput, error) {
+		result, err := service.GetPackageCatalog(ctx, input.NAS)
+		if err != nil {
+			return nil, getPackageAvailableOutput{}, err
+		}
+		packages := result.Catalog.Packages
+		if input.UpdatesOnly {
+			filtered := make([]packagecenter.AvailablePackage, 0, len(packages))
+			for _, pkg := range packages {
+				if pkg.UpdateAvailable {
+					filtered = append(filtered, pkg)
+				}
+			}
+			packages = filtered
+		}
+		return nil, getPackageAvailableOutput{NAS: result.NAS, Packages: packages}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_package_install",
+		Title:       "Plan a guarded online package install",
+		Description: "Resolve one package against the online catalog and the installed inventory and return a hash-bound install plan: missing dependencies are listed as ordered steps before the target, an already-installed or not-offered package is rejected, and the plan is always high risk because installing downloads and runs third-party software. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planPackageInstallInput) (*mcp.CallToolResult, planPackageInstallOutput, error) {
+		runAfterInstall, quickInstall := true, true
+		if input.RunAfterInstall != nil {
+			runAfterInstall = *input.RunAfterInstall
+		}
+		if input.QuickInstall != nil {
+			quickInstall = *input.QuickInstall
+		}
+		plan, err := service.PlanPackageInstall(ctx, input.NAS, input.PackageID, input.VolumePath, runAfterInstall, quickInstall)
+		if err != nil {
+			return nil, planPackageInstallOutput{}, err
+		}
+		return nil, planPackageInstallOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_package_install_plan",
+		Title:       "Apply an approved package install plan",
+		Description: "Install the packages in an unmodified install plan (dependencies first, target last) only with its exact approval hash. DSM downloads each package from the online server and runs it; completion is confirmed against the installed-package inventory, and large packages can take minutes per step.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyPackageInstallPlanInput) (*mcp.CallToolResult, applyPackageInstallPlanOutput, error) {
+		result, err := service.ApplyPackageInstallPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applyPackageInstallPlanOutput{}, err
+		}
+		return nil, applyPackageInstallPlanOutput{Result: result}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

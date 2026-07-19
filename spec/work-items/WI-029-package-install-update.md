@@ -56,13 +56,21 @@ Implemented (update check):
   SynologyDrive show up-to-date while SecureSignIn/SynologyApplicationService/
   UniversalViewer correctly surface available updates.
 
+Implemented (MCP parity, 2026-07-20):
+
+- `get_package_available` (catalog read with `updates_only` filter),
+  `plan_package_install`, and `apply_package_install_plan`; the read-only
+  gateway strips the plan/apply pair. The install plan now carries the gateway
+  `profile_revision` in its approval hash, and install-apply passes the same
+  remote authorization and single-use high-risk approval checks as every other
+  apply (install plans are always high risk).
+
 Deferred (this WI stays in_progress until done):
 
 - Update / upgrade **apply** (`SYNO.Core.Package.Installation` `install`/`upgrade`
   of the newer version over an installed package). A package upgrade is not
-  cleanly reversible (no supported downgrade), so it is implemented guarded but
-  not auto-executed against the lab without an explicit per-package request.
-- MCP tools for catalog/install and read-only-gateway exclusion of install-apply.
+  cleanly reversible (no supported downgrade), so it stays deferred until it
+  ships as its own guarded, explicitly authorized operation.
 
 ## Design constraints
 
@@ -95,7 +103,9 @@ Deferred (this WI stays in_progress until done):
       installed/update-available; live-verified via `package available --updates`.
 - [ ] Update/upgrade **apply** implemented (guarded; not auto-run — upgrades are
       not cleanly reversible).
-- [ ] MCP parity for catalog/install with read-only gateway exclusion.
+- [x] MCP parity for catalog/install with read-only gateway exclusion (plus
+      profile-revision-bound hashes and remote high-risk authorization on
+      install-apply).
 
 ## Verification
 

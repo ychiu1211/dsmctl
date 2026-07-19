@@ -12,6 +12,7 @@ import (
 type fakePackageClient struct {
 	settings  synology.PackageSettings
 	packages  []packagecenter.Package
+	catalog   synology.PackageCatalog
 	caps      synology.PackageCapabilities
 	mutations int
 }
@@ -25,7 +26,7 @@ func (client *fakePackageClient) PackageSettings(context.Context) (synology.Pack
 }
 
 func (client *fakePackageClient) PackageCatalog(context.Context) (synology.PackageCatalog, error) {
-	return synology.PackageCatalog{}, nil
+	return client.catalog, nil
 }
 
 func (client *fakePackageClient) PackageInstall(_ context.Context, input synology.PackageInstallInput) (synology.PackageInstallResult, error) {
@@ -83,6 +84,55 @@ func testPackageClient() *fakePackageClient {
 }
 
 func boolPtr(value bool) *bool { return &value }
+
+func TestPackageInstallPlanResolvesDependenciesAndHash(t *testing.T) {
+	client := testPackageClient()
+	client.catalog = synology.PackageCatalog{Packages: []packagecenter.AvailablePackage{
+		{ID: "SurveillanceStation", Name: "Surveillance Station", Version: "9.2.3", Size: 1024, DownloadLink: "https://example/ss.spk", Checksum: "aa", Dependencies: []string{"SurveillanceVideoExtension"}},
+		{ID: "SurveillanceVideoExtension", Name: "Surveillance Video Extension", Version: "1.1.0", Size: 512, DownloadLink: "https://example/sve.spk", Checksum: "bb"},
+	}}
+	plan, err := planPackageInstallWithClient(context.Background(), "lab", client, "SurveillanceStation", "/volume1", true, true)
+	if err != nil {
+		t.Fatalf("planPackageInstallWithClient() error = %v", err)
+	}
+	if plan.Risk != "high" || plan.Hash == "" || len(plan.Steps) != 2 {
+		t.Fatalf("plan = %#v", plan)
+	}
+	// Dependencies install before the target.
+	if !plan.Steps[0].Dependency || plan.Steps[0].PackageID != "SurveillanceVideoExtension" || plan.Steps[1].PackageID != "SurveillanceStation" {
+		t.Fatalf("steps = %#v", plan.Steps)
+	}
+
+	// Any post-planning modification must change the recomputed hash.
+	tampered := plan
+	tampered.VolumePath = "/volume2"
+	if recomputed, err := packageInstallPlanHash(tampered); err != nil || recomputed == plan.Hash {
+		t.Fatalf("tampered hash = %q err = %v", recomputed, err)
+	}
+	// The gateway profile revision is part of the approval hash.
+	revised := plan
+	revised.ProfileRevision = 7
+	if recomputed, err := packageInstallPlanHash(revised); err != nil || recomputed == plan.Hash {
+		t.Fatalf("revision hash = %q err = %v", recomputed, err)
+	}
+
+	// An installed target is rejected outright.
+	client.packages = append(client.packages, packagecenter.Package{ID: "SurveillanceStation", Status: packagecenter.StatusRunning})
+	if _, err := planPackageInstallWithClient(context.Background(), "lab", client, "SurveillanceStation", "/volume1", true, true); err == nil || !strings.Contains(err.Error(), "already installed") {
+		t.Fatalf("already-installed error = %v", err)
+	}
+
+	// A required dependency that is neither installed nor offered is a hard
+	// precheck error naming both packages.
+	missingDep := testPackageClient()
+	missingDep.catalog = synology.PackageCatalog{Packages: []packagecenter.AvailablePackage{
+		{ID: "SurveillanceStation", Version: "9.2.3", DownloadLink: "https://example/ss.spk", Dependencies: []string{"SurveillanceVideoExtension"}},
+	}}
+	if _, err := planPackageInstallWithClient(context.Background(), "lab", missingDep, "SurveillanceStation", "/volume1", true, true); err == nil ||
+		!strings.Contains(err.Error(), "SurveillanceVideoExtension") || !strings.Contains(err.Error(), "not offered") {
+		t.Fatalf("missing dependency error = %v", err)
+	}
+}
 
 func TestPackageSettingsPlanApplyAndStale(t *testing.T) {
 	client := testPackageClient()

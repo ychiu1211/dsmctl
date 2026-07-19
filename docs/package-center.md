@@ -106,22 +106,53 @@ rather than reporting a false success.
 MCP exposes the same contract through `plan_package_change` and
 `apply_package_plan`.
 
+## Online catalog and guarded install
+
+The online catalog read merges the package server's stable and beta arrays and
+cross-references the installed inventory:
+
+```console
+dsmctl package available --nas office
+dsmctl package available --nas office --updates
+```
+
+Each entry reports the offered version, size, beta flag, dependencies, whether
+it is already installed, and whether an installed package has a newer offered
+version. MCP: `get_package_available` (`updates_only` filters to pending
+updates).
+
+Install is a hash-bound plan/apply. Planning resolves the target against the
+catalog and inventory, rejects an already-installed or not-offered package,
+and resolves the full dependency closure: missing dependencies become ordered
+install steps before the target (the "install X first" precheck DSM's UI
+shows). Installing downloads and runs third-party software, so the plan is
+always **high risk**:
+
+```console
+dsmctl package install SurveillanceStation --volume /volume1 --nas office
+dsmctl package install SurveillanceStation --volume /volume1 --nas office --approve <hash-from-plan>
+```
+
+Apply starts DSM's server-side download+install task per step (dependencies
+first) and confirms completion against the installed-package inventory; large
+packages take minutes per step. MCP: `plan_package_install` and
+`apply_package_install_plan` (`run_after_install` and `quick_install` default
+to true). The read-only gateway strips the plan/apply pair, and the remote
+gateway's high-risk approval flow applies.
+
 ## Deferred operations
 
-The following are modeled so capabilities and request validation can name them,
-but they are **not implemented** and fail closed:
-
-- `install` (from the online repository) and `update`: `capabilities` reports
-  `install: false` / `update: false`, and a plan with `action: install` or
-  `action: update` is rejected. They contact Synology's online repository, run
-  asynchronously over minutes, and download and run remote code, which does not
-  fit the synchronous plan/apply postcondition contract.
+- `update`/`upgrade` apply (installing a newer version over an installed
+  package) is modeled but **not implemented**: a package upgrade has no
+  supported downgrade path, so it stays deferred until it ships as its own
+  guarded, explicitly authorized operation. `package available --updates`
+  covers the read side.
 
 Writing the **trust level**, **beta channel**, and **default install volume** is
 also not supported: trust level has no DSM write endpoint, and the beta channel
 (base `Setting.set` `update_channel`) and default volume
-(`SYNO.Core.Package.Setting.Volume.set`) are separate follow-ups. The online
-catalog browse and per-package application-specific settings are deferred too.
+(`SYNO.Core.Package.Setting.Volume.set`) are separate follow-ups. Per-package
+application-specific settings are deferred too.
 
 ## DSM backends (verified on DSM 7.3)
 
@@ -144,6 +175,15 @@ The API names and fields are verified against DSM 7.3-81168:
 - Start/stop: `SYNO.Core.Package.Control` `start`/`stop` with `id` (verified live;
   DSM refuses to stop packages required by others, surfaced as an error).
 - Uninstall: `SYNO.Core.Package.Uninstallation` `uninstall` with `id`.
+- Catalog: `SYNO.Core.Package.Server` `list`, merging the `packages` and
+  `beta_packages` arrays with the download link, checksum, size, and `deppkgs`.
+- Install: `SYNO.Core.Package.Installation` method **`install`** (not
+  `download`, which returns code 103 on DSM 7.3) with `name`, `url`,
+  `checksum`, `filesize`, `volume_path`, `beta`, `blqinst`,
+  `installrunpackage`. It returns a download `taskid` whose id changes between
+  the download and install phases, so completion is confirmed against the
+  inventory; `blqinst: true` performs the headless quick install. Verified
+  live installing Synology Photos 1.9.1 (WI-029).
 
 Reads decode every optional field defensively, and each mutation operation gates
 on `SYNO.API.Info` discovery: if a target does not advertise its API, that
