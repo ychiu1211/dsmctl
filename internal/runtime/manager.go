@@ -51,6 +51,16 @@ type Client interface {
 	ResourceMonitorSetting(ctx context.Context) (synology.ResourceRecordingSetting, error)
 	ResourceMonitorCapabilities(ctx context.Context) (synology.ResourceMonitorCapabilities, synology.CompatibilityReport, error)
 	ApplyResourceRecordingChange(ctx context.Context, change resmon.RecordingChange) (synology.ResourceRecordingMutationResult, error)
+	ExternalAccessAccountState(ctx context.Context) (synology.ExternalAccessAccountState, error)
+	ExternalAccessQuickConnectState(ctx context.Context) (synology.ExternalAccessQuickConnectState, error)
+	ExternalAccessDDNSState(ctx context.Context) (synology.ExternalAccessDDNSState, error)
+	ExternalAccessPortForwardState(ctx context.Context) (synology.ExternalAccessPortForwardState, error)
+	ExternalAccessCapabilities(ctx context.Context) (synology.ExternalAccessCapabilities, synology.CompatibilityReport, error)
+	ApplyExternalAccessQuickConnectChange(ctx context.Context, change synology.ExternalAccessQuickConnectChange) (synology.ExternalAccessQuickConnectMutationResult, error)
+	DownloadStationServiceState(ctx context.Context) (synology.DownloadStationServiceState, error)
+	DownloadStationTasks(ctx context.Context) (synology.DownloadStationTasks, error)
+	DownloadStationStatistics(ctx context.Context) (synology.DownloadStationStatistics, error)
+	DownloadStationCapabilities(ctx context.Context) (synology.DownloadStationCapabilities, synology.CompatibilityReport, error)
 }
 
 type Option func(*Manager)

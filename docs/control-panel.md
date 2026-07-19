@@ -330,6 +330,78 @@ dsmctl control-panel file-services tftp apply --file tftp.plan.json --approve <h
 MCP exposes `get_tftp_service_capabilities`, `get_tftp_service_state`,
 `plan_tftp_service_change`, and `apply_tftp_service_plan`.
 
+## External Access (read-only)
+
+DSM's Control Panel → External Access surface — the Synology Account (MyDS)
+binding, QuickConnect, and DDNS — is exposed as a read-only module under a
+dedicated top-level command, because its three areas are separate DSM API
+families and separate failure boundaries rather than one settings page:
+
+```console
+dsmctl external-access capabilities --nas office
+dsmctl external-access account --nas office --json
+dsmctl external-access quickconnect --nas office
+dsmctl external-access ddns --nas office --json
+dsmctl external-access port-forward --nas office
+```
+
+The four read areas are selected independently: a NAS can expose QuickConnect
+and DDNS while the account read is unavailable, and each reports its own backend
+in `capabilities`.
+
+- **Account** reads `SYNO.Core.MyDSCenter` (`query`) and `SYNO.Core.Package.MyDS`
+  (`get`): whether a Synology Account is signed in and activated, plus the
+  non-secret account identifier, customer id, and serial. The account token
+  (`auth_key`) is never decoded into the model, so no display or MCP path can
+  leak it.
+- **QuickConnect** reads `SYNO.Core.QuickConnect` (`get`, plus v3
+  `get_misc_config` for the relay setting and v1 `status` for live connection
+  status) and `SYNO.Core.QuickConnect.Permission` (`get`). It reports whether
+  QuickConnect is enabled, the QuickConnect ID and region, the relay setting,
+  the connection status, the per-service external exposure, and the derived
+  relay/direct hostnames. The relay setting and per-service list are null when
+  their independently versioned APIs are absent (for example a v1-only NAS).
+- **DDNS** reads `SYNO.Core.DDNS.Record` (`list`) and `SYNO.Core.DDNS.ExtIP`
+  (`list`): the configured DDNS hostnames and the WAN addresses DSM detected. An
+  empty record list means no DDNS hostname is configured.
+- **Port forwarding** reads `SYNO.Core.PortForwarding.Rules` (`load`) and
+  `SYNO.Core.PortForwarding.RouterConf` (`get`): the configured port-forwarding
+  rules and the paired router (brand/model plus UPnP and NAT-PMP support). All
+  fields are empty when no router is paired. Rule entries are decoded tolerantly
+  (like DDNS records) pending a live sample with a configured rule.
+
+MCP exposes the same reads through `get_external_access_capabilities`,
+`get_external_access_account`, `get_external_access_quickconnect`,
+`get_external_access_ddns`, and `get_external_access_port_forward`. All are
+read-only and never change the account binding, QuickConnect, DDNS, or router
+configuration.
+
+### Guarded QuickConnect relay toggle
+
+The one write in this module so far is the QuickConnect **relay** toggle, through
+the same hash-bound plan/apply contract as the other Control Panel modules. It is
+scoped deliberately narrowly: enabling QuickConnect, changing the alias, or
+per-service exposure re-register the NAS externally, while the relay flag is a
+local reachability setting.
+
+```console
+echo '{"relay_enabled": false}' | dsmctl external-access quickconnect plan --nas office -o relay.plan.json
+dsmctl external-access quickconnect apply --nas office -f relay.plan.json --approve <hash-from-plan>
+```
+
+The plan records and hashes the complete observed QuickConnect state; apply
+rejects a changed state, writes only the relay flag via `SYNO.Core.QuickConnect`
+v3 `set_misc_config` (`relay_enabled`), and re-reads to verify. Toggling relay
+changes external reachability, so the change is always **high risk**. MCP exposes
+`plan_external_access_quickconnect_change` and
+`apply_external_access_quickconnect_plan` (excluded from the read-only gateway).
+
+The remaining writes (DDNS record CRUD, QuickConnect enable/alias, per-service
+exposure) are deferred to a later slice of
+[WI-041](../spec/work-items/WI-041-external-access.md); reaching a NAS *by* its
+QuickConnect ID is a separate connection-layer concern in
+[WI-042](../spec/work-items/WI-042-quickconnect-transport.md).
+
 ## Adding another module
 
 Add a dedicated type under `internal/domain/controlpanel`, an operation package

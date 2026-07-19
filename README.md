@@ -105,6 +105,23 @@ dsmctl drive admin status --nas office
 dsmctl drive admin connections --nas office --json
 dsmctl drive admin team-folders --nas office
 dsmctl drive admin log list --nas office --username alice --limit 50
+dsmctl external-access capabilities --nas office
+dsmctl external-access account --nas office --json
+dsmctl external-access quickconnect --nas office
+dsmctl external-access ddns --nas office --json
+dsmctl external-access port-forward --nas office
+dsmctl download capabilities --nas office
+dsmctl download service --nas office --json
+dsmctl download tasks --nas office
+dsmctl download statistics --nas office
+```
+
+The one External Access write so far is the QuickConnect relay toggle, through
+the same plan/apply contract:
+
+```console
+echo '{"relay_enabled": false}' | dsmctl external-access quickconnect plan --nas office -o relay.plan.json
+dsmctl external-access quickconnect apply --nas office -f relay.plan.json --approve <hash-from-plan>
 ```
 
 Account and shared-folder writes use a two-step plan/apply contract. Put the desired change in JSON, create a plan bound to the current DSM resource ID/state, review it, then apply that exact plan with its hash:
@@ -230,6 +247,17 @@ Available tools:
 - `get_drive_admin_connections`: list active Drive client connections; read-only.
 - `get_drive_admin_team_folders`: list Drive team folders from the admin perspective; read-only.
 - `get_drive_admin_logs`: read Drive server logs with keyword/username/target/time-range filters; read-only.
+- `get_external_access_capabilities`: report which External Access read areas (Synology Account, QuickConnect, DDNS) are available and the DSM backend selected for each; read-only.
+- `get_external_access_account`: read the Synology Account (MyDS) binding — signed-in/activated state plus the non-secret account identifier, customer id, and serial; the account token is never returned; read-only.
+- `get_external_access_quickconnect`: read QuickConnect configuration, relay setting, live status, and per-service external exposure; read-only.
+- `get_external_access_ddns`: read configured DDNS records and detected WAN addresses; read-only.
+- `get_external_access_port_forward`: read the paired router configuration and configured port-forwarding rules; read-only.
+- `plan_external_access_quickconnect_change`: validate a QuickConnect relay-toggle patch and return a state-bound approval plan without mutating DSM.
+- `apply_external_access_quickconnect_plan`: apply an approved, unchanged QuickConnect relay plan and verify the relay setting.
+- `get_download_station_capabilities`: report Download Station read support, installed-package evidence, and selected backends; package-gated, read-only.
+- `get_download_station_service`: read Download Station service configuration (version, destination, rate limits, schedule); read-only.
+- `get_download_station_tasks`: list Download Station download tasks with type, size, status, and transfer speed; read-only.
+- `get_download_station_statistics`: read the current aggregate download/upload speed; read-only.
 - `plan_package_change`: validate a start/stop/uninstall lifecycle action or an automatic-update settings change and return a state-bound approval plan without mutating DSM; install, update, and trust-level changes are rejected.
 - `apply_package_plan`: apply an approved, unchanged Package Center plan (lifecycle or settings) and verify the terminal package-state or settings postcondition.
 

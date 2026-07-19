@@ -12,6 +12,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/domain/controlpanel"
 	"github.com/ychiu1211/dsmctl/internal/domain/discovery"
 	"github.com/ychiu1211/dsmctl/internal/domain/driveadmin"
+	"github.com/ychiu1211/dsmctl/internal/domain/externalaccess"
 	"github.com/ychiu1211/dsmctl/internal/domain/ftpservices"
 	"github.com/ychiu1211/dsmctl/internal/domain/identity"
 	"github.com/ychiu1211/dsmctl/internal/domain/nfsexport"
@@ -95,6 +96,79 @@ type getControlPanelTimeCapabilitiesOutput struct {
 	NAS          string                                `json:"nas" jsonschema:"NAS profile used for the request"`
 	Capabilities synology.ControlPanelTimeCapabilities `json:"capabilities" jsonschema:"Control Panel time module operations currently exposed by dsmctl"`
 	Report       synology.CompatibilityReport          `json:"report" jsonschema:"Discovered API and selected time-module backend"`
+}
+
+type getExternalAccessInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getExternalAccessCapabilitiesOutput struct {
+	NAS          string                              `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.ExternalAccessCapabilities `json:"capabilities" jsonschema:"External Access read areas currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport        `json:"report" jsonschema:"Discovered APIs and selected External Access backends"`
+}
+
+type getExternalAccessAccountOutput struct {
+	NAS     string                              `json:"nas" jsonschema:"NAS profile used for the request"`
+	Account synology.ExternalAccessAccountState `json:"account" jsonschema:"Normalized Synology Account binding without any account token"`
+}
+
+type getExternalAccessQuickConnectOutput struct {
+	NAS          string                                   `json:"nas" jsonschema:"NAS profile used for the request"`
+	QuickConnect synology.ExternalAccessQuickConnectState `json:"quickconnect" jsonschema:"Normalized QuickConnect configuration and live status"`
+}
+
+type getExternalAccessDDNSOutput struct {
+	NAS  string                           `json:"nas" jsonschema:"NAS profile used for the request"`
+	DDNS synology.ExternalAccessDDNSState `json:"ddns" jsonschema:"Normalized DDNS records and detected external addresses"`
+}
+
+type getExternalAccessPortForwardOutput struct {
+	NAS         string                                  `json:"nas" jsonschema:"NAS profile used for the request"`
+	PortForward synology.ExternalAccessPortForwardState `json:"port_forward" jsonschema:"Normalized router configuration and port-forwarding rules"`
+}
+
+type planExternalAccessQuickConnectChangeInput struct {
+	NAS     string                            `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request externalaccess.QuickConnectChange `json:"request" jsonschema:"Patch-only QuickConnect relay-toggle intent"`
+}
+
+type planExternalAccessQuickConnectChangeOutput struct {
+	Plan application.ExternalAccessQuickConnectPlan `json:"plan" jsonschema:"Validated plan bound to the complete observed QuickConnect state and approval hash"`
+}
+
+type applyExternalAccessQuickConnectPlanInput struct {
+	Plan         application.ExternalAccessQuickConnectPlan `json:"plan" jsonschema:"Approved QuickConnect plan produced by plan_external_access_quickconnect_change"`
+	ApprovalHash string                                     `json:"approval_hash" jsonschema:"Exact SHA-256 approval hash from the plan"`
+}
+
+type applyExternalAccessQuickConnectPlanOutput struct {
+	Result application.ExternalAccessQuickConnectApplyResult `json:"result" jsonschema:"Apply outcome including the selected DSM mutation backend"`
+}
+
+type getDownloadStationInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getDownloadStationCapabilitiesOutput struct {
+	NAS          string                               `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.DownloadStationCapabilities `json:"capabilities" jsonschema:"Download Station reads currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport         `json:"report" jsonschema:"Discovered APIs and selected Download Station backends"`
+}
+
+type getDownloadStationServiceOutput struct {
+	NAS     string                               `json:"nas" jsonschema:"NAS profile used for the request"`
+	Service synology.DownloadStationServiceState `json:"service" jsonschema:"Normalized Download Station service configuration"`
+}
+
+type getDownloadStationTasksOutput struct {
+	NAS   string                        `json:"nas" jsonschema:"NAS profile used for the request"`
+	Tasks synology.DownloadStationTasks `json:"tasks" jsonschema:"Download task list"`
+}
+
+type getDownloadStationStatisticsOutput struct {
+	NAS        string                             `json:"nas" jsonschema:"NAS profile used for the request"`
+	Statistics synology.DownloadStationStatistics `json:"statistics" jsonschema:"Aggregate transfer statistics"`
 }
 
 type planControlPanelTimeChangeInput struct {
@@ -798,6 +872,149 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getControlPanelTimeStateOutput{}, err
 		}
 		return nil, getControlPanelTimeStateOutput{NAS: result.NAS, Time: result.Time}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_external_access_capabilities",
+		Title:       "Get External Access capabilities",
+		Description: "Report which External Access read areas (Synology Account, QuickConnect, DDNS) are available for a NAS and the DSM API backend selected for each. Each area is independent.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getExternalAccessInput) (*mcp.CallToolResult, getExternalAccessCapabilitiesOutput, error) {
+		result, err := service.GetExternalAccessCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getExternalAccessCapabilitiesOutput{}, err
+		}
+		return nil, getExternalAccessCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_external_access_account",
+		Title:       "Get Synology Account binding",
+		Description: "Read the Synology Account (MyDS) binding for a NAS: whether an account is signed in and activated, plus the non-secret account identifier, customer id, and serial. The account token is never returned. This tool never changes the binding.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getExternalAccessInput) (*mcp.CallToolResult, getExternalAccessAccountOutput, error) {
+		result, err := service.GetExternalAccessAccount(ctx, input.NAS)
+		if err != nil {
+			return nil, getExternalAccessAccountOutput{}, err
+		}
+		return nil, getExternalAccessAccountOutput{NAS: result.NAS, Account: result.Account}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_external_access_quickconnect",
+		Title:       "Get QuickConnect configuration",
+		Description: "Read QuickConnect configuration and live status for a NAS: whether it is enabled, the QuickConnect ID and region, the relay setting, the connection status, and which services are exposed externally. This tool never changes QuickConnect.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getExternalAccessInput) (*mcp.CallToolResult, getExternalAccessQuickConnectOutput, error) {
+		result, err := service.GetExternalAccessQuickConnect(ctx, input.NAS)
+		if err != nil {
+			return nil, getExternalAccessQuickConnectOutput{}, err
+		}
+		return nil, getExternalAccessQuickConnectOutput{NAS: result.NAS, QuickConnect: result.QuickConnect}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_external_access_ddns",
+		Title:       "Get DDNS configuration",
+		Description: "Read the configured Dynamic DNS records and the WAN addresses DSM detected for a NAS. This tool never changes DDNS records.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getExternalAccessInput) (*mcp.CallToolResult, getExternalAccessDDNSOutput, error) {
+		result, err := service.GetExternalAccessDDNS(ctx, input.NAS)
+		if err != nil {
+			return nil, getExternalAccessDDNSOutput{}, err
+		}
+		return nil, getExternalAccessDDNSOutput{NAS: result.NAS, DDNS: result.DDNS}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_external_access_port_forward",
+		Title:       "Get router and port-forwarding configuration",
+		Description: "Read the paired router configuration and the configured port-forwarding rules for a NAS (Control Panel → External Access → Router Configuration). This tool never changes router or port-forwarding settings.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getExternalAccessInput) (*mcp.CallToolResult, getExternalAccessPortForwardOutput, error) {
+		result, err := service.GetExternalAccessPortForward(ctx, input.NAS)
+		if err != nil {
+			return nil, getExternalAccessPortForwardOutput{}, err
+		}
+		return nil, getExternalAccessPortForwardOutput{NAS: result.NAS, PortForward: result.PortForward}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_external_access_quickconnect_change",
+		Title:       "Plan a QuickConnect relay change",
+		Description: "Validate a patch-only QuickConnect relay-toggle request and return an approval plan bound to the complete observed QuickConnect state. Only the relay flag is writable; enabling QuickConnect or changing the alias are not. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planExternalAccessQuickConnectChangeInput) (*mcp.CallToolResult, planExternalAccessQuickConnectChangeOutput, error) {
+		plan, err := service.PlanExternalAccessQuickConnectChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planExternalAccessQuickConnectChangeOutput{}, err
+		}
+		return nil, planExternalAccessQuickConnectChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_external_access_quickconnect_plan",
+		Title:       "Apply an approved QuickConnect plan",
+		Description: "Apply an unmodified QuickConnect plan only while its approval hash and the complete observed QuickConnect state still match, then verify the relay setting. Toggling relay changes external reachability and is classified high risk.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyExternalAccessQuickConnectPlanInput) (*mcp.CallToolResult, applyExternalAccessQuickConnectPlanOutput, error) {
+		result, err := service.ApplyExternalAccessQuickConnectPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applyExternalAccessQuickConnectPlanOutput{}, err
+		}
+		return nil, applyExternalAccessQuickConnectPlanOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_download_station_capabilities",
+		Title:       "Get Download Station capabilities",
+		Description: "Report which Download Station reads are available for a NAS, the installed DownloadStation package evidence, and the DSM backend selected for each. Fails closed when the package is not installed.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDownloadStationInput) (*mcp.CallToolResult, getDownloadStationCapabilitiesOutput, error) {
+		result, err := service.GetDownloadStationCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getDownloadStationCapabilitiesOutput{}, err
+		}
+		return nil, getDownloadStationCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_download_station_service",
+		Title:       "Get Download Station service configuration",
+		Description: "Read the Download Station service configuration for a NAS: version, manager flag, default destination, eMule/auto-unzip switches, per-protocol rate limits, and the bandwidth schedule. This tool never changes the configuration.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDownloadStationInput) (*mcp.CallToolResult, getDownloadStationServiceOutput, error) {
+		result, err := service.GetDownloadStationService(ctx, input.NAS)
+		if err != nil {
+			return nil, getDownloadStationServiceOutput{}, err
+		}
+		return nil, getDownloadStationServiceOutput{NAS: result.NAS, Service: result.Service}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_download_station_tasks",
+		Title:       "Get Download Station tasks",
+		Description: "List the Download Station download tasks for a NAS with per-task type, title, size, status, and transfer speed. This tool never creates, pauses, resumes, or deletes tasks.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDownloadStationInput) (*mcp.CallToolResult, getDownloadStationTasksOutput, error) {
+		result, err := service.GetDownloadStationTasks(ctx, input.NAS)
+		if err != nil {
+			return nil, getDownloadStationTasksOutput{}, err
+		}
+		return nil, getDownloadStationTasksOutput{NAS: result.NAS, Tasks: result.Tasks}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_download_station_statistics",
+		Title:       "Get Download Station statistics",
+		Description: "Read the current aggregate download and upload speed for a NAS's Download Station. This tool is read-only.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDownloadStationInput) (*mcp.CallToolResult, getDownloadStationStatisticsOutput, error) {
+		result, err := service.GetDownloadStationStatistics(ctx, input.NAS)
+		if err != nil {
+			return nil, getDownloadStationStatisticsOutput{}, err
+		}
+		return nil, getDownloadStationStatisticsOutput{NAS: result.NAS, Statistics: result.Statistics}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

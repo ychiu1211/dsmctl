@@ -37,7 +37,10 @@ flowchart LR
   WI038 --> WI017["WI-017 amd64 Linux/Synology distribution"]
   WI037 --> WI039["WI-039 Web-login page design tokens"]
   WI039 --> WI040["WI-040 dsmctl favicon"]
+  WI006 --> WI041["WI-041 External Access module"]
+  WI041 -. "reach a NAS by QC id" .-> WI042["WI-042 QuickConnect transport"]
   WI019["WI-019 Package Center"] --> WI022["WI-022 Package-scoped operations + Drive Admin"]
+  WI022 --> WI043["WI-043 Download Station"]
   WI023["WI-023 LAN device discovery"]
 ```
 
@@ -85,6 +88,9 @@ flowchart LR
 | [WI-038](work-items/WI-038-mcp-server-flow-refinements.md) | P1 | `done` | G | WI-037 | Streamline high-risk approval, MCP-token lifecycle, NAS enrollment, and audit flows; require explicit remote NAS targets; rename `nas.admin` to `lan.discover`. |
 | [WI-039](work-items/WI-039-weblogin-page-design-tokens.md) | P2 | `done` | G | WI-037 | Restyle the `auth login` loopback helper page with the shared design tokens, four localized sign-in states, and browser-language detection. |
 | [WI-040](work-items/WI-040-dsmctl-favicon.md) | P2 | `done` | G | WI-037, WI-039 | Design one small-size dsmctl favicon and apply it consistently to the Admin UI and web-login helper. |
+| [WI-041](work-items/WI-041-external-access.md) | P2 | `in_progress` | C | WI-006 | External Access module: read-only Synology Account/QuickConnect/DDNS/port-forward + guarded QuickConnect relay write shipped and live-verified (reverted). DDNS-record CRUD and QuickConnect enable/alias writes still deferred. QuickConnect-as-transport carved out to WI-042. |
+| [WI-042](work-items/WI-042-quickconnect-transport.md) | P3 | `proposed` | H | — | Reach a NAS by its QuickConnect ID: coordinator resolution (get_site_list/get_server_info) to a Direct endpoint, then the existing login/client path; relay/hole-punch is a stretch. Connection-layer, not a Control Panel module. |
+| [WI-043](work-items/WI-043-download-station.md) | P2 | `in_progress` | C | WI-019, WI-022 | Read-only Download Station module (service config, task list, statistics), package-gated on DownloadStation (legacy SYNO.DownloadStation.* API); shipped + live-verified on 4.1.2. Task/config writes deferred. |
 
 Parallel groups indicate likely file overlap. Items in different groups may run
 at the same time after checking their `touches` lists. Only one agent should
