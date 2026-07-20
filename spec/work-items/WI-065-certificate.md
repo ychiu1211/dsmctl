@@ -1,9 +1,9 @@
 ---
 id: WI-065
 title: Certificate management
-status: proposed
+status: in_progress
 priority: P1
-owner: ""
+owner: "claude"
 depends_on: [WI-006]
 parallel_group: C
 touches:
@@ -176,18 +176,21 @@ module.
 
 ## Acceptance criteria
 
-- [ ] Slice A: `certificate capabilities|list|services` (CLI) and the matching
-      `get_certificate_*` MCP tools return normalized state — certs with
-      subject/issuer/SAN/expiry/days-remaining/default flag and the
-      service→cert binding map — and a unit test asserts no private-key field can
-      decode into the domain model.
-- [ ] Slice A live verification on the DSM 7.3 lab: read the installed
-      certificate(s), confirm the default and self-signed flags, and confirm the
-      service-binding read shows which cert serves the DSM desktop; `--json`
-      output contains no key material.
-- [ ] Capability report lists each certificate operation with stable name,
-      backend, API, and version; a NAS without `SYNO.Core.Certificate.Service`
-      reports it `(not supported)` while `CRT` reads still work.
+- [x] Slice A: `certificate capabilities|list` (CLI) and the `get_certificates`
+      / `get_certificate_capabilities` MCP tools return normalized state — certs
+      with subject/issuer/SAN/expiry/days-remaining/default flag and the bound
+      services — and a decoder test asserts no private-key field decodes into the
+      domain model. (Bindings are inline in `CRT.list`, so no separate `services`
+      read/`SYNO.Core.Certificate.Service` call is needed — that API's `list` is
+      code 103 on the lab; the per-cert `services[]` array is authoritative.)
+- [x] Slice A live verification on the DSM 7.3 lab: read the two installed
+      certificates (self-signed default `synology` serving 6 services incl. the
+      DSM desktop; renewable Let's Encrypt QuickConnect cert), confirmed the
+      default/self-signed/renewable flags and expiry-in-days; `--json` output
+      carries no key material.
+- [x] Capability report lists the certificate read operation with stable name,
+      backend, API, and version; a NAS without `SYNO.Core.Certificate.CRT`
+      reports it `(not supported)` and fails closed.
 - [ ] Pre-apply local validation: import plan rejects a key/cert mismatch, an
       expired leaf, and (for a DSM-service binding) a leaf whose SAN does not
       cover the connection host — proven by unit tests over fixture PEMs.

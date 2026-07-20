@@ -1005,6 +1005,21 @@ type getDriveAdminInput struct {
 	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
 }
 
+type getCertificateInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getCertificatesOutput struct {
+	NAS          string                `json:"nas" jsonschema:"NAS profile used for the request"`
+	Certificates synology.Certificates `json:"certificates" jsonschema:"Installed certificates with their bound services"`
+}
+
+type getCertificateCapabilitiesOutput struct {
+	NAS          string                           `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.CertificateCapabilities `json:"capabilities" jsonschema:"Certificate operations currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport     `json:"report" jsonschema:"Discovered APIs and selected certificate backend"`
+}
+
 type getDriveAdminCapabilitiesOutput struct {
 	NAS          string                          `json:"nas" jsonschema:"NAS profile used for the request"`
 	Capabilities synology.DriveAdminCapabilities `json:"capabilities" jsonschema:"Drive Admin operations currently exposed by dsmctl, with installed-package evidence"`
@@ -2758,6 +2773,32 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, applyPackageInstallPlanOutput{}, err
 		}
 		return nil, applyPackageInstallPlanOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_certificate_capabilities",
+		Title:       "Get certificate capabilities",
+		Description: "Report which DSM certificate operations dsmctl supports on the selected NAS and the backend for each. This slice is read-only; guarded certificate writes are deferred.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getCertificateInput) (*mcp.CallToolResult, getCertificateCapabilitiesOutput, error) {
+		result, err := service.GetCertificateCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getCertificateCapabilitiesOutput{}, err
+		}
+		return nil, getCertificateCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_certificates",
+		Title:       "List DSM certificates",
+		Description: "List the installed DSM certificates (Control Panel > Security > Certificate): subject, issuer, SANs, key type, validity with computed days-to-expiry, whether each is the default or broken, and which DSM services and packages each certificate serves. Returns public certificate metadata only — never private-key material. This tool never changes certificates.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getCertificateInput) (*mcp.CallToolResult, getCertificatesOutput, error) {
+		result, err := service.GetCertificates(ctx, input.NAS)
+		if err != nil {
+			return nil, getCertificatesOutput{}, err
+		}
+		return nil, getCertificatesOutput{NAS: result.NAS, Certificates: result.Certificates}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
