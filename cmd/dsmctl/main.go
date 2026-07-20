@@ -14,7 +14,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	if err := cli.Execute(ctx, buildinfo.Version); err != nil {
-		fmt.Fprintln(os.Stderr, "Error:", err)
-		os.Exit(1)
+		fmt.Fprintln(os.Stderr, cli.FormatError(err))
+		os.Exit(cli.ExitCode(err))
 	}
 }

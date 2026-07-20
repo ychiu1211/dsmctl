@@ -47,16 +47,19 @@ jobs:
             rm -rf "$gateway_tmp"
           }
           trap cleanup EXIT
-          printf '{"nas":{}}\n' > "$gateway_tmp/config.json"
-          printf '0123456789abcdef0123456789abcdef\n' > "$gateway_tmp/dev-token"
+          mkdir "$gateway_tmp/secrets"
+          printf '0123456789abcdef0123456789abcdef' > "$gateway_tmp/secrets/master.key"
+          chmod 0755 "$gateway_tmp/secrets"
+          chmod 0600 "$gateway_tmp/secrets/master.key"
+          sudo chown 10001:10001 "$gateway_tmp/secrets/master.key"
           gateway_container="$(docker run -d \
             --read-only \
             --cap-drop ALL \
             --security-opt no-new-privileges \
             --tmpfs /tmp:size=16m \
+            --tmpfs /data:size=16m,mode=0700,uid=10001,gid=10001 \
             -p 127.0.0.1:18765:8080 \
-            -v "$gateway_tmp/config.json:/data/config.json:ro" \
-            -v "$gateway_tmp/dev-token:/run/secrets/dev-token:ro" \
+            -v "$gateway_tmp/secrets:/run/secrets:ro" \
             dsmctl-gateway:ci)"
           test "$(docker inspect --format '{{.Config.User}}' "$gateway_container")" = "10001:10001"
           test "$(docker inspect --format '{{.HostConfig.ReadonlyRootfs}}' "$gateway_container")" = "true"

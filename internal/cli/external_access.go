@@ -107,6 +107,8 @@ func newExternalAccessQuickConnectCommand(opts *options) *cobra.Command {
 	command.AddCommand(
 		newExternalAccessQuickConnectPlanCommand(opts),
 		newExternalAccessQuickConnectApplyCommand(opts),
+		newExternalAccessQuickConnectConfigCommand(opts),
+		newExternalAccessQuickConnectPermissionCommand(opts),
 	)
 	return command
 }
@@ -191,6 +193,10 @@ func newExternalAccessDDNSCommand(opts *options) *cobra.Command {
 		},
 	}
 	command.Flags().BoolVar(&jsonOutput, "json", false, "output structured JSON")
+	command.AddCommand(
+		newExternalAccessDDNSPlanCommand(opts),
+		newExternalAccessDDNSApplyCommand(opts),
+	)
 	return command
 }
 
@@ -328,4 +334,177 @@ func yesNoPointer(value *bool) string {
 		return "-"
 	}
 	return yesNo(*value)
+}
+
+func newExternalAccessQuickConnectConfigCommand(opts *options) *cobra.Command {
+	command := &cobra.Command{
+		Use:   "config",
+		Short: "Guarded QuickConnect enable/alias/region change (plan/apply; high risk)",
+	}
+	var inputPath, outputPath string
+	plan := &cobra.Command{
+		Use:   "plan",
+		Short: "Validate a QuickConnect enable/alias/region patch and emit an approval plan as JSON",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var request externalaccess.QuickConnectConfigChange
+			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
+				return fmt.Errorf("read QuickConnect config change: %w", err)
+			}
+			service, err := loadService(opts.configPath)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.PlanExternalAccessQuickConnectConfigChange(cmd.Context(), opts.nas, request)
+			if err != nil {
+				return err
+			}
+			return encodeJSONOutput(cmd, outputPath, result)
+		},
+	}
+	plan.Flags().StringVarP(&inputPath, "file", "f", "-", "config change JSON file, or - for stdin")
+	plan.Flags().StringVarP(&outputPath, "output", "o", "-", "plan JSON file, or - for stdout")
+	var applyPath, approvalHash string
+	apply := &cobra.Command{
+		Use:   "apply",
+		Short: "Apply a QuickConnect config plan after hash and stale-state validation",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var p application.ExternalAccessQuickConnectConfigPlan
+			if err := decodeJSONInput(cmd, applyPath, &p); err != nil {
+				return fmt.Errorf("read QuickConnect config plan: %w", err)
+			}
+			service, err := loadService(opts.configPath)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.ApplyExternalAccessQuickConnectConfigPlan(cmd.Context(), p, approvalHash)
+			if err != nil {
+				return err
+			}
+			return encodeIndentedJSON(cmd.OutOrStdout(), result)
+		},
+	}
+	apply.Flags().StringVarP(&applyPath, "file", "f", "-", "config plan JSON file, or - for stdin")
+	apply.Flags().StringVar(&approvalHash, "approve", "", "exact SHA-256 hash printed by config plan")
+	_ = apply.MarkFlagRequired("approve")
+	command.AddCommand(plan, apply)
+	return command
+}
+
+func newExternalAccessQuickConnectPermissionCommand(opts *options) *cobra.Command {
+	command := &cobra.Command{
+		Use:   "permission",
+		Short: "Guarded QuickConnect per-service exposure change (plan/apply; high risk)",
+	}
+	var inputPath, outputPath string
+	plan := &cobra.Command{
+		Use:   "plan",
+		Short: "Validate a per-service exposure patch and emit an approval plan as JSON",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var request externalaccess.QuickConnectPermissionChange
+			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
+				return fmt.Errorf("read QuickConnect permission change: %w", err)
+			}
+			service, err := loadService(opts.configPath)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.PlanExternalAccessQuickConnectPermissionChange(cmd.Context(), opts.nas, request)
+			if err != nil {
+				return err
+			}
+			return encodeJSONOutput(cmd, outputPath, result)
+		},
+	}
+	plan.Flags().StringVarP(&inputPath, "file", "f", "-", "permission change JSON file, or - for stdin")
+	plan.Flags().StringVarP(&outputPath, "output", "o", "-", "plan JSON file, or - for stdout")
+	var applyPath, approvalHash string
+	apply := &cobra.Command{
+		Use:   "apply",
+		Short: "Apply a QuickConnect permission plan after hash and stale-state validation",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var p application.ExternalAccessQuickConnectPermissionPlan
+			if err := decodeJSONInput(cmd, applyPath, &p); err != nil {
+				return fmt.Errorf("read QuickConnect permission plan: %w", err)
+			}
+			service, err := loadService(opts.configPath)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.ApplyExternalAccessQuickConnectPermissionPlan(cmd.Context(), p, approvalHash)
+			if err != nil {
+				return err
+			}
+			return encodeIndentedJSON(cmd.OutOrStdout(), result)
+		},
+	}
+	apply.Flags().StringVarP(&applyPath, "file", "f", "-", "permission plan JSON file, or - for stdin")
+	apply.Flags().StringVar(&approvalHash, "approve", "", "exact SHA-256 hash printed by permission plan")
+	_ = apply.MarkFlagRequired("approve")
+	command.AddCommand(plan, apply)
+	return command
+}
+
+func newExternalAccessDDNSPlanCommand(opts *options) *cobra.Command {
+	var inputPath, outputPath string
+	command := &cobra.Command{
+		Use:   "plan",
+		Short: "Validate a DDNS record create/set/delete and emit an approval plan as JSON",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var request externalaccess.DDNSRecordChange
+			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
+				return fmt.Errorf("read DDNS change: %w", err)
+			}
+			service, err := loadService(opts.configPath)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.PlanExternalAccessDDNSChange(cmd.Context(), opts.nas, request)
+			if err != nil {
+				return err
+			}
+			return encodeJSONOutput(cmd, outputPath, result)
+		},
+	}
+	command.Flags().StringVarP(&inputPath, "file", "f", "-", "DDNS change JSON file, or - for stdin")
+	command.Flags().StringVarP(&outputPath, "output", "o", "-", "plan JSON file, or - for stdout")
+	return command
+}
+
+func newExternalAccessDDNSApplyCommand(opts *options) *cobra.Command {
+	var inputPath, approvalHash string
+	command := &cobra.Command{
+		Use:   "apply",
+		Short: "Apply a DDNS record plan after hash and stale-state validation",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var p application.ExternalAccessDDNSPlan
+			if err := decodeJSONInput(cmd, inputPath, &p); err != nil {
+				return fmt.Errorf("read DDNS plan: %w", err)
+			}
+			service, err := loadService(opts.configPath)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.ApplyExternalAccessDDNSPlan(cmd.Context(), p, approvalHash)
+			if err != nil {
+				return err
+			}
+			return encodeIndentedJSON(cmd.OutOrStdout(), result)
+		},
+	}
+	command.Flags().StringVarP(&inputPath, "file", "f", "-", "DDNS plan JSON file, or - for stdin")
+	command.Flags().StringVar(&approvalHash, "approve", "", "exact SHA-256 hash printed by ddns plan")
+	_ = command.MarkFlagRequired("approve")
+	return command
 }

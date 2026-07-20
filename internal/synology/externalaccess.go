@@ -12,7 +12,11 @@ import (
 type ExternalAccessAccountState = externalaccess.AccountState
 type ExternalAccessQuickConnectState = externalaccess.QuickConnectState
 type ExternalAccessQuickConnectChange = externalaccess.QuickConnectChange
+type ExternalAccessQuickConnectConfigChange = externalaccess.QuickConnectConfigChange
+type ExternalAccessQuickConnectPermissionChange = externalaccess.QuickConnectPermissionChange
+type ExternalAccessDDNSRecordChange = externalaccess.DDNSRecordChange
 type ExternalAccessQuickConnectMutationResult = externalaccessops.QuickConnectMutationResult
+type ExternalAccessMutationResult = externalaccessops.MutationResult
 type ExternalAccessDDNSState = externalaccess.DDNSState
 type ExternalAccessPortForwardState = externalaccess.PortForwardState
 type ExternalAccessCapabilities = externalaccess.Capabilities
@@ -107,6 +111,65 @@ func (c *Client) ApplyExternalAccessQuickConnectChange(ctx context.Context, chan
 	return result, nil
 }
 
+// ApplyExternalAccessQuickConnectConfigChange writes the guarded QuickConnect
+// enable/alias/region config via `set`. NOT live-verified (see the operation's
+// note); the caller has confirmed the patch differs from the observed state.
+func (c *Client) ApplyExternalAccessQuickConnectConfigChange(ctx context.Context, change ExternalAccessQuickConnectConfigChange) (ExternalAccessMutationResult, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.prepareCompatibilityTargetLocked(ctx, externalaccessops.APINames()...); err != nil {
+		return ExternalAccessMutationResult{}, fmt.Errorf("prepare External Access QuickConnect config mutation target: %w", err)
+	}
+	result, _, err := externalaccessops.ExecuteQuickConnectConfigSet(ctx, c.target, lockedExecutor{client: c}, externalaccessops.QuickConnectConfigSetInput{
+		Enabled: change.Enabled, ServerAlias: change.ServerAlias, Region: change.Region,
+	})
+	if err != nil {
+		return ExternalAccessMutationResult{}, fmt.Errorf("apply QuickConnect configuration: %w", err)
+	}
+	return result, nil
+}
+
+// ApplyExternalAccessQuickConnectPermissionChange writes the guarded per-service
+// external-exposure toggles. Live-verified (reversible per-service boolean).
+// desired must be the COMPLETE service list: DSM's Permission.set rejects a
+// partial list (error 2901, confirmed live), so the application layer merges the
+// patch onto the full observed set before calling this.
+func (c *Client) ApplyExternalAccessQuickConnectPermissionChange(ctx context.Context, desired []externalaccess.QuickConnectService) (ExternalAccessMutationResult, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.prepareCompatibilityTargetLocked(ctx, externalaccessops.APINames()...); err != nil {
+		return ExternalAccessMutationResult{}, fmt.Errorf("prepare External Access QuickConnect permission mutation target: %w", err)
+	}
+	result, _, err := externalaccessops.ExecuteQuickConnectPermissionSet(ctx, c.target, lockedExecutor{client: c}, desired)
+	if err != nil {
+		return ExternalAccessMutationResult{}, fmt.Errorf("apply QuickConnect service permissions: %w", err)
+	}
+	return result, nil
+}
+
+// ApplyExternalAccessDDNSChange writes a guarded DDNS record create/update/delete.
+// password is the plaintext resolved from a credential reference at apply time
+// (empty for delete or to keep the stored one). NOT live-verified.
+func (c *Client) ApplyExternalAccessDDNSChange(ctx context.Context, change ExternalAccessDDNSRecordChange, password string) (ExternalAccessMutationResult, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.prepareCompatibilityTargetLocked(ctx, externalaccessops.APINames()...); err != nil {
+		return ExternalAccessMutationResult{}, fmt.Errorf("prepare External Access DDNS mutation target: %w", err)
+	}
+	result, _, err := externalaccessops.ExecuteDDNSSet(ctx, c.target, lockedExecutor{client: c}, externalaccessops.DDNSRecordSetInput{
+		Action: change.Action, Provider: change.Provider, Hostname: change.Hostname,
+		Username: change.Username, Password: password,
+		Enable: change.Enable, Heartbeat: change.Heartbeat, IPv6: change.IPv6,
+	})
+	if err != nil {
+		return ExternalAccessMutationResult{}, fmt.Errorf("apply DDNS record %s: %w", change.Action, err)
+	}
+	return result, nil
+}
+
 // ExternalAccessCapabilities reports which of the read areas this NAS exposes,
 // each selected independently so one missing API does not disable the others,
 // plus whether the guarded QuickConnect relay write is available.
@@ -126,6 +189,9 @@ func (c *Client) ExternalAccessCapabilities(ctx context.Context) (ExternalAccess
 		{externalaccessops.SelectDDNS, externalaccessops.DDNSReadCapabilityName},
 		{externalaccessops.SelectPortForward, externalaccessops.PortForwardReadCapabilityName},
 		{externalaccessops.SelectQuickConnectRelaySet, externalaccessops.QuickConnectRelaySetCapabilityName},
+		{externalaccessops.SelectQuickConnectConfigSet, externalaccessops.QuickConnectConfigSetCapabilityName},
+		{externalaccessops.SelectQuickConnectPermissionSet, externalaccessops.QuickConnectPermissionSetCapabilityName},
+		{externalaccessops.SelectDDNSSet, externalaccessops.DDNSSetCapabilityName},
 	}
 	selections := make([]compatibility.Selection, 0, len(selectors))
 	for _, selector := range selectors {
@@ -139,11 +205,14 @@ func (c *Client) ExternalAccessCapabilities(ctx context.Context) (ExternalAccess
 		selections = append(selections, selection)
 	}
 	capabilities := ExternalAccessCapabilities{
-		Account:         selections[0].Supported,
-		QuickConnect:    selections[1].Supported,
-		DDNS:            selections[2].Supported,
-		PortForward:     selections[3].Supported,
-		QuickConnectSet: selections[4].Supported,
+		Account:                   selections[0].Supported,
+		QuickConnect:              selections[1].Supported,
+		DDNS:                      selections[2].Supported,
+		PortForward:               selections[3].Supported,
+		QuickConnectSet:           selections[4].Supported,
+		QuickConnectConfigSet:     selections[5].Supported,
+		QuickConnectPermissionSet: selections[6].Supported,
+		DDNSSet:                   selections[7].Supported,
 	}
 	return capabilities, c.target.Report(selections...), nil
 }

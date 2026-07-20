@@ -94,31 +94,39 @@ error ever contains a SID, SynoToken, password, or OTP.
 
 ## Acceptance criteria
 
-- [ ] A `Category` type with the nine fixed string values exists in
-      `internal/synology`, and a unit test asserts each spelling.
-- [ ] `APIError.Category()` and `synology.Classify(err)` return the correct
-      category for a table of DSM codes covering every category, including
-      `106/107/119` (session→auth), `403/406/404` (OTP→auth), and `unknown`
-      fallback; verified by a table-driven unit test.
-- [ ] `synology.Classify` returns the correct category after the error is wrapped
-      by `authenticationError` and by `fmt.Errorf(... %w ...)`; a unit test wraps
-      and re-classifies.
-- [ ] `cmd/dsmctl/main.go` exits with the documented, category-specific code for
-      each category and `0` on success; a test over the category→exit-code map
-      asserts the mapping is total and codes are distinct.
-- [ ] Each MCP tool error result carries a stable `category` string plus a human
-      message in its structured content; a `server_test.go` case asserts the
-      field for at least an auth failure and a not-found failure.
-- [ ] A read-only call that returns a `transient`/`rate-limit` DSM error is
-      retried up to the configured bound with backoff and then succeeds or
-      surfaces the classified error; a fake-transport unit test asserts the
-      attempt count and that a mutating call path is invoked exactly once (no
-      retry).
-- [ ] A unit test feeds a SID and SynoToken through the failing HTTP and
-      failing-API paths and asserts neither value appears in the rendered error
-      text.
-- [ ] `docs/` documents the category set, the exit-code table, and the
-      MCP `category` field, and the roadmap row for this item is updated.
+Core taxonomy + CLI exit codes shipped 2026-07-20 (commit on main):
+
+- [x] A `Category` type with the nine fixed string values exists in
+      `internal/synology` (`category.go`), and a unit test asserts each spelling
+      and exhaustiveness.
+- [x] `APIError.Category()` and `synology.Classify(err)` return the correct
+      category for a table of DSM codes covering every mapped code, including
+      `106/107/119` (session→auth), `403/406/404` (OTP→auth), `102/103`
+      (not-found), `104` (unsupported), `105/402/407` (permission),
+      `101/114/120` (invalid-input), and the `unknown` fallback.
+- [x] `synology.Classify` returns the correct category after the error is wrapped
+      with `fmt.Errorf(... %w ...)` (single and double wrap) and recognizes
+      `SessionExpiredError` / `OTPRequiredError` as auth; unit-tested.
+- [x] `cmd/dsmctl/main.go` exits with the documented, category-specific code for
+      each category and `0` on success (`internal/cli/exitcode.go`); a test
+      asserts the map is total over the taxonomy and codes are distinct, and the
+      human stderr line is prefixed with the category (`FormatError`).
+- [x] A unit test asserts the rendered `APIError` message carries no
+      SID/SynoToken/password/OTP; the transfer-URL redaction (download/upload/
+      thumbnail) is separately guarded by WI-049's `redactTransferURL` test.
+- [x] `docs/errors.md` documents the category set and the exit-code table; the
+      roadmap row is updated.
+
+Deferred to a follow-on (a coherent second slice; noted in Handoff):
+
+- [ ] Each MCP tool error result carries a stable `category` field in structured
+      content — needs a central error-middleware over all ~146 tool handlers, not
+      146 per-tool edits.
+- [ ] HTTP-level transient/rate-limit typing (timeouts, 5xx, resets, 429) and
+      bounded retry of read-only calls with backoff — needs HTTP-error
+      classification in the request path plus call-site retry-eligibility
+      threading (no current DSM app-code maps to transient/rate-limit, so retry
+      is inert until HTTP errors are typed).
 
 ## Verification
 
@@ -146,4 +154,20 @@ error ever contains a SID, SynoToken, password, or OTP.
 
 ## Handoff
 
-Fill this only when pausing incomplete work.
+2026-07-20: the taxonomy foundation and CLI exit-code surface shipped
+(`internal/synology/category.go`, `internal/cli/exitcode.go`,
+`cmd/dsmctl/main.go`, `docs/errors.md`, with `category_test.go` and
+`exitcode_test.go`). Two pieces remain, deliberately split into a follow-on
+because each needs a design decision rather than more of the same wiring:
+
+1. **MCP structured `category` field.** The SDK turns a handler's returned Go
+   error into an error result with just the message. Surfacing the category on
+   every tool needs one central wrapper around `mcp.AddTool` (or an interceptor)
+   so all ~146 tools gain the field uniformly — not 146 edits. `synology.Classify`
+   is ready to supply the value.
+2. **Transient retry.** No DSM app-code currently classifies as `transient` or
+   `rate-limit`; those only arise from HTTP-level failures (timeout, 5xx, reset,
+   429) that the request path does not yet type. The retry loop is only
+   meaningful once `requestLocked` classifies those into `CategoryTransient` /
+   `CategoryRateLimit`, and the retry must be gated on a call-site read-only flag
+   (never the HTTP verb — all DSM calls are POST). Use an injectable clock.

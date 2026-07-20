@@ -157,6 +157,60 @@ type applyExternalAccessQuickConnectPlanOutput struct {
 	Result application.ExternalAccessQuickConnectApplyResult `json:"result" jsonschema:"Apply outcome including the selected DSM mutation backend"`
 }
 
+type planExternalAccessQuickConnectConfigChangeInput struct {
+	NAS     string                                  `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request externalaccess.QuickConnectConfigChange `json:"request" jsonschema:"Patch-only QuickConnect enable/alias/region intent"`
+}
+
+type planExternalAccessQuickConnectConfigChangeOutput struct {
+	Plan application.ExternalAccessQuickConnectConfigPlan `json:"plan" jsonschema:"Validated plan bound to the observed QuickConnect state and approval hash"`
+}
+
+type applyExternalAccessQuickConnectConfigPlanInput struct {
+	Plan         application.ExternalAccessQuickConnectConfigPlan `json:"plan" jsonschema:"Approved plan produced by plan_external_access_quickconnect_config_change"`
+	ApprovalHash string                                           `json:"approval_hash" jsonschema:"Exact SHA-256 approval hash from the plan"`
+}
+
+type applyExternalAccessQuickConnectConfigPlanOutput struct {
+	Result application.ExternalAccessQuickConnectConfigApplyResult `json:"result" jsonschema:"Apply outcome including the selected DSM mutation backend"`
+}
+
+type planExternalAccessQuickConnectPermissionChangeInput struct {
+	NAS     string                                      `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request externalaccess.QuickConnectPermissionChange `json:"request" jsonschema:"Per-service external-exposure intent"`
+}
+
+type planExternalAccessQuickConnectPermissionChangeOutput struct {
+	Plan application.ExternalAccessQuickConnectPermissionPlan `json:"plan" jsonschema:"Validated plan bound to the observed QuickConnect state and approval hash"`
+}
+
+type applyExternalAccessQuickConnectPermissionPlanInput struct {
+	Plan         application.ExternalAccessQuickConnectPermissionPlan `json:"plan" jsonschema:"Approved plan produced by plan_external_access_quickconnect_permission_change"`
+	ApprovalHash string                                               `json:"approval_hash" jsonschema:"Exact SHA-256 approval hash from the plan"`
+}
+
+type applyExternalAccessQuickConnectPermissionPlanOutput struct {
+	Result application.ExternalAccessQuickConnectPermissionApplyResult `json:"result" jsonschema:"Apply outcome including the selected DSM mutation backend"`
+}
+
+type planExternalAccessDDNSChangeInput struct {
+	NAS     string                          `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request externalaccess.DDNSRecordChange `json:"request" jsonschema:"DDNS record create/set/delete intent; the password is a credential reference, never a value"`
+}
+
+type planExternalAccessDDNSChangeOutput struct {
+	Plan application.ExternalAccessDDNSPlan `json:"plan" jsonschema:"Validated plan bound to the observed DDNS state and approval hash"`
+}
+
+type applyExternalAccessDDNSPlanInput struct {
+	Plan         application.ExternalAccessDDNSPlan `json:"plan" jsonschema:"Approved plan produced by plan_external_access_ddns_change"`
+	ApprovalHash string                            `json:"approval_hash" jsonschema:"Exact SHA-256 approval hash from the plan"`
+}
+
+type applyExternalAccessDDNSPlanOutput struct {
+	Result application.ExternalAccessDDNSApplyResult `json:"result" jsonschema:"Apply outcome including the selected DSM mutation backend"`
+}
+
 type getDownloadStationInput struct {
 	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
 }
@@ -1420,6 +1474,84 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, applyExternalAccessQuickConnectPlanOutput{}, err
 		}
 		return nil, applyExternalAccessQuickConnectPlanOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_external_access_quickconnect_config_change",
+		Title:       "Plan a QuickConnect config change",
+		Description: "Validate a patch-only QuickConnect enable/alias/region change and return a hash-bound approval plan. Always high risk: changing the alias re-registers a globally-unique external name and enabling/disabling changes public reachability. NOT live-verified against DSM; the guarded apply fails closed on a wrong field. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planExternalAccessQuickConnectConfigChangeInput) (*mcp.CallToolResult, planExternalAccessQuickConnectConfigChangeOutput, error) {
+		plan, err := service.PlanExternalAccessQuickConnectConfigChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planExternalAccessQuickConnectConfigChangeOutput{}, err
+		}
+		return nil, planExternalAccessQuickConnectConfigChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_external_access_quickconnect_config_plan",
+		Title:       "Apply an approved QuickConnect config plan",
+		Description: "Apply an unmodified QuickConnect config plan only while its approval hash and observed state still match, then verify each changed field. High risk; changing the alias re-registers a globally-unique external name.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyExternalAccessQuickConnectConfigPlanInput) (*mcp.CallToolResult, applyExternalAccessQuickConnectConfigPlanOutput, error) {
+		result, err := service.ApplyExternalAccessQuickConnectConfigPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applyExternalAccessQuickConnectConfigPlanOutput{}, err
+		}
+		return nil, applyExternalAccessQuickConnectConfigPlanOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_external_access_quickconnect_permission_change",
+		Title:       "Plan a QuickConnect per-service exposure change",
+		Description: "Validate a per-service QuickConnect exposure change (which services are reachable via QuickConnect) and return a hash-bound approval plan. High risk: alters public reachability. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planExternalAccessQuickConnectPermissionChangeInput) (*mcp.CallToolResult, planExternalAccessQuickConnectPermissionChangeOutput, error) {
+		plan, err := service.PlanExternalAccessQuickConnectPermissionChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planExternalAccessQuickConnectPermissionChangeOutput{}, err
+		}
+		return nil, planExternalAccessQuickConnectPermissionChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_external_access_quickconnect_permission_plan",
+		Title:       "Apply an approved QuickConnect permission plan",
+		Description: "Apply an unmodified QuickConnect per-service exposure plan only while its approval hash and observed state still match, then verify each service's exposure. High risk; alters public reachability.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyExternalAccessQuickConnectPermissionPlanInput) (*mcp.CallToolResult, applyExternalAccessQuickConnectPermissionPlanOutput, error) {
+		result, err := service.ApplyExternalAccessQuickConnectPermissionPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applyExternalAccessQuickConnectPermissionPlanOutput{}, err
+		}
+		return nil, applyExternalAccessQuickConnectPermissionPlanOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_external_access_ddns_change",
+		Title:       "Plan a DDNS record change",
+		Description: "Validate a DDNS record create/set/delete (keyed by provider + hostname; password via a credential reference, never a value) and return a hash-bound approval plan. Always high risk: creating a record publishes a public hostname pointing at the NAS. NOT live-verified against DSM; the guarded apply fails closed on a wrong field. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planExternalAccessDDNSChangeInput) (*mcp.CallToolResult, planExternalAccessDDNSChangeOutput, error) {
+		plan, err := service.PlanExternalAccessDDNSChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planExternalAccessDDNSChangeOutput{}, err
+		}
+		return nil, planExternalAccessDDNSChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_external_access_ddns_plan",
+		Title:       "Apply an approved DDNS record plan",
+		Description: "Apply an unmodified DDNS record plan only while its approval hash and observed state still match, resolve the credential reference, and verify the record is present (create/set) or absent (delete). High risk; publishes or removes a public hostname.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyExternalAccessDDNSPlanInput) (*mcp.CallToolResult, applyExternalAccessDDNSPlanOutput, error) {
+		result, err := service.ApplyExternalAccessDDNSPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applyExternalAccessDDNSPlanOutput{}, err
+		}
+		return nil, applyExternalAccessDDNSPlanOutput{Result: result}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

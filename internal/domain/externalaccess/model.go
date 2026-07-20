@@ -101,21 +101,71 @@ type PortForwardState struct {
 	Rules  []PortForwardRule `json:"rules" jsonschema:"Configured port-forwarding rules; empty when none"`
 }
 
-// QuickConnectChange is the patch-only intent for a guarded QuickConnect
-// mutation. A nil field keeps the current DSM value. Only the relay toggle is
-// modeled: it is a local reachability setting, unlike enabling QuickConnect or
-// changing the alias, which re-register the NAS externally.
+// QuickConnectChange is the patch-only intent for a guarded QuickConnect relay
+// mutation. A nil field keeps the current DSM value. The relay toggle is a local
+// reachability setting (live-verified); enabling QuickConnect or changing the
+// alias re-register the NAS externally and are handled by QuickConnectConfigChange.
 type QuickConnectChange struct {
 	RelayEnabled *bool `json:"relay_enabled,omitempty" jsonschema:"Desired QuickConnect relay-allowed flag; omit to keep the current value"`
+}
+
+// QuickConnectConfigChange is the patch-only intent for the externally-visible
+// QuickConnect configuration: the enabled flag, the alias (server_alias), and
+// the registration region. A nil field keeps the current DSM value. Every field
+// changes external exposure or the globally-unique alias registration, so a
+// plan is always high risk. NOT live-verified: field names come from the DSM
+// WebAPI source and a wrong field fails the guarded apply postcondition closed.
+type QuickConnectConfigChange struct {
+	Enabled     *bool   `json:"enabled,omitempty" jsonschema:"Enable or disable QuickConnect"`
+	ServerAlias *string `json:"server_alias,omitempty" jsonschema:"Desired QuickConnect alias (the external hostname label); globally unique across Synology accounts"`
+	Region      *string `json:"region,omitempty" jsonschema:"Desired QuickConnect registration region"`
+}
+
+// QuickConnectPermissionChange sets which QuickConnect services are reachable
+// externally. Each listed service's Enabled flag is written; unlisted services
+// keep their current value. Live-verified (a cleanly reversible per-service
+// boolean, no registration change).
+type QuickConnectPermissionChange struct {
+	Services []QuickConnectService `json:"services" jsonschema:"Per-service external-reachability toggles to write; unlisted services are unchanged"`
+}
+
+// DDNSAction is a guarded DDNS record mutation.
+type DDNSAction string
+
+const (
+	DDNSActionCreate DDNSAction = "create"
+	DDNSActionUpdate DDNSAction = "set"
+	DDNSActionDelete DDNSAction = "delete"
+)
+
+// DDNSRecordChange is the intent for a guarded DDNS record create/update/delete,
+// keyed by provider + hostname. The record password is supplied via a credential
+// reference (env:NAME), resolved at apply time and never stored in the change,
+// plan, hash, or logs. NOT live-verified: creating a record registers a real
+// public hostname and the lab has no provider identity; field names come from
+// the DSM WebAPI source (webapi-DDNS.h) and a wrong field fails the guarded
+// apply postcondition closed.
+type DDNSRecordChange struct {
+	Action      DDNSAction `json:"action" jsonschema:"DDNS record action: create, set (update), or delete"`
+	Provider    string     `json:"provider" jsonschema:"DDNS provider identifier, such as Synology or a third-party provider"`
+	Hostname    string     `json:"hostname" jsonschema:"DDNS hostname the record publishes"`
+	Username    string     `json:"username,omitempty" jsonschema:"Provider account username (create/set)"`
+	PasswordRef string     `json:"password_ref,omitempty" jsonschema:"Credential reference such as env:NAME resolving to the provider password; never a plaintext password"`
+	Enable      *bool      `json:"enable,omitempty" jsonschema:"Whether the record is active (create/set)"`
+	Heartbeat   *bool      `json:"heartbeat,omitempty" jsonschema:"Whether DSM sends provider heartbeats (create/set)"`
+	IPv6        *bool      `json:"ipv6,omitempty" jsonschema:"Whether the record publishes an IPv6 address (create/set)"`
 }
 
 // Capabilities reports which External Access read areas are currently exposed
 // for a NAS. Each is independent: a NAS may expose QuickConnect and DDNS while
 // the account read is unavailable.
 type Capabilities struct {
-	Account         bool `json:"account" jsonschema:"Whether the Synology Account binding can be read"`
-	QuickConnect    bool `json:"quickconnect" jsonschema:"Whether QuickConnect configuration can be read"`
-	QuickConnectSet bool `json:"quickconnect_set" jsonschema:"Whether the guarded QuickConnect relay toggle is available"`
-	DDNS            bool `json:"ddns" jsonschema:"Whether DDNS records can be read"`
-	PortForward     bool `json:"port_forward" jsonschema:"Whether the router/port-forwarding view can be read"`
+	Account                   bool `json:"account" jsonschema:"Whether the Synology Account binding can be read"`
+	QuickConnect              bool `json:"quickconnect" jsonschema:"Whether QuickConnect configuration can be read"`
+	QuickConnectSet           bool `json:"quickconnect_set" jsonschema:"Whether the guarded QuickConnect relay toggle is available"`
+	QuickConnectConfigSet     bool `json:"quickconnect_config_set" jsonschema:"Whether the guarded QuickConnect enable/alias/region write is available"`
+	QuickConnectPermissionSet bool `json:"quickconnect_permission_set" jsonschema:"Whether the guarded QuickConnect per-service exposure write is available"`
+	DDNS                      bool `json:"ddns" jsonschema:"Whether DDNS records can be read"`
+	DDNSSet                   bool `json:"ddns_set" jsonschema:"Whether the guarded DDNS record create/update/delete is available"`
+	PortForward               bool `json:"port_forward" jsonschema:"Whether the router/port-forwarding view can be read"`
 }

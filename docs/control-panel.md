@@ -376,30 +376,52 @@ MCP exposes the same reads through `get_external_access_capabilities`,
 read-only and never change the account binding, QuickConnect, DDNS, or router
 configuration.
 
-### Guarded QuickConnect relay toggle
+### Guarded External Access writes
 
-The one write in this module so far is the QuickConnect **relay** toggle, through
-the same hash-bound plan/apply contract as the other Control Panel modules. It is
-scoped deliberately narrowly: enabling QuickConnect, changing the alias, or
-per-service exposure re-register the NAS externally, while the relay flag is a
-local reachability setting.
+Every External Access write goes through the same hash-bound plan/apply contract
+and is **always high risk** — each changes what the NAS exposes to the public
+internet. All plan/apply tools are stripped from the read-only gateway.
+
+- **QuickConnect relay** (`quickconnect plan|apply`) — the relay flag via
+  `SYNO.Core.QuickConnect` v3 `set_misc_config` (`relay_enabled`).
+- **QuickConnect config** (`quickconnect config plan|apply`) — enable/alias/region
+  via `SYNO.Core.QuickConnect` `set`.
+- **QuickConnect per-service exposure** (`quickconnect permission plan|apply`) —
+  which services are reachable via QuickConnect, through
+  `SYNO.Core.QuickConnect.Permission` `set`.
+- **DDNS record CRUD** (`ddns plan|apply`) — create/set/delete via
+  `SYNO.Core.DDNS.Record`; the provider password uses a `password_ref: env:NAME`
+  credential reference resolved only at apply.
 
 ```console
 echo '{"relay_enabled": false}' | dsmctl external-access quickconnect plan --nas office -o relay.plan.json
 dsmctl external-access quickconnect apply --nas office -f relay.plan.json --approve <hash-from-plan>
+
+echo '{"services":[{"id":"dsm_portal","enabled":false}]}' | dsmctl external-access quickconnect permission plan --nas office -o perm.plan.json
+dsmctl external-access quickconnect permission apply --nas office -f perm.plan.json --approve <hash>
+
+echo '{"action":"create","provider":"Synology","hostname":"host.synology.me","password_ref":"env:DDNS_PW"}' \
+  | dsmctl external-access ddns plan --nas office -o ddns.plan.json
+dsmctl external-access ddns apply --nas office -f ddns.plan.json --approve <hash>
 ```
 
-The plan records and hashes the complete observed QuickConnect state; apply
-rejects a changed state, writes only the relay flag via `SYNO.Core.QuickConnect`
-v3 `set_misc_config` (`relay_enabled`), and re-reads to verify. Toggling relay
-changes external reachability, so the change is always **high risk**. MCP exposes
-`plan_external_access_quickconnect_change` and
-`apply_external_access_quickconnect_plan` (excluded from the read-only gateway).
+Each plan records and hashes the complete observed state; apply rejects a changed
+state and re-reads to verify the postcondition. Two DSM behaviours the writes
+account for (both found live): `SYNO.Core.QuickConnect.Permission.set` rejects a
+partial list (error 2901) — the **full** service list is sent, with the patch
+merged onto the observed set — and the `services` value is sent as a JSON array,
+not a pre-encoded string (which would double-encode). MCP exposes
+`plan_/apply_external_access_quickconnect_change`, `…_config_change`,
+`…_permission_change`, and `plan_/apply_external_access_ddns_change`.
 
-The remaining writes (DDNS record CRUD, QuickConnect enable/alias, per-service
-exposure) are deferred to a later slice of
-[WI-041](../spec/work-items/WI-041-external-access.md); reaching a NAS *by* its
-QuickConnect ID is a separate connection-layer concern in
+The relay and per-service exposure writes are live-verified (reverted) on the lab.
+The config (enable/alias/region) and DDNS record writes are implemented with their
+field names taken from the DSM WebAPI source but are **not live-applied**: the
+lab's alias is a real, globally-unique registered id, and DDNS record creation
+publishes a real public hostname the lab has no provider account for. The guarded
+plan/apply fails closed on a wrong field (postcondition mismatch), so an
+unverified field cannot corrupt state. Reaching a NAS *by* its QuickConnect ID is
+a separate connection-layer concern in
 [WI-042](../spec/work-items/WI-042-quickconnect-transport.md).
 
 ## Adding another module
