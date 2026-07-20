@@ -1,7 +1,7 @@
 ---
 id: WI-041
 title: External Access module (Synology Account, QuickConnect, DDNS)
-status: in_progress
+status: done
 priority: P2
 owner: ""
 depends_on: [WI-006]
@@ -140,9 +140,30 @@ Sliced read-first, then guarded write, so the read slice can ship independently.
       relay off→on round-trip through plan/apply with postcondition proof; the
       live apply caught the wrong wire method (`set_relay_enable` → the real
       `set_misc_config`, the symmetric setter of `get_misc_config`).
-- [ ] Remaining Slice B: DDNS record create/delete (registers a real external
-      hostname; needs a throwaway test hostname) and QuickConnect enable/alias,
-      with `credential_ref` for the DDNS `passwd` / account password.
+- [x] Remaining Slice B implemented (2026-07-20): QuickConnect config
+      (enable/alias/region) via `SYNO.Core.QuickConnect` `set`, QuickConnect
+      per-service exposure via `SYNO.Core.QuickConnect.Permission` `set`, and
+      DDNS record create/set/delete via `SYNO.Core.DDNS.Record` — all guarded
+      hash-bound plan/apply, always high risk, with request-capture tests and
+      CLI + MCP surfaces (read-only gateway strips all six plan/apply tools).
+      DDNS `passwd` uses `credential_ref: env:NAME`, resolved at apply and
+      absent from the change/plan/hash/logs.
+    - **Permission set is live-verified** (fully reverted): disabled and
+      re-enabled `dsm_portal` on the lab through plan/apply with postcondition
+      proof. The live apply caught the wire shape: DSM's `Permission.set`
+      rejects a partial list (code 2901) — the FULL service list must be sent —
+      and the client's JSON-parameter encoder `json.Marshal`s each value, so
+      `services` must be passed as the slice (a pre-marshaled string
+      double-encodes to a quoted string DSM rejects).
+    - **Config (enable/alias/region) and DDNS CRUD are NOT live-verified** (by
+      explicit decision): the lab's alias `derekchiu3018` is a real,
+      globally-unique registered id that must not be changed for a test, and
+      DDNS record creation registers a real public hostname the lab has no
+      provider identity for. Field names come from the DSM WebAPI source; the
+      guarded plan/apply fails closed on a wrong field (postcondition mismatch),
+      so an unverified field cannot corrupt state. Plan-plumbing was verified
+      live (no-op rejection, high-risk plan generation, delete-of-missing
+      rejection) without applying.
 
 ## Verification
 
