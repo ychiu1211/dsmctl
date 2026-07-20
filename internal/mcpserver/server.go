@@ -1127,6 +1127,26 @@ type exportCertificateOutput struct {
 	Result application.ExportCertificateResult `json:"result" jsonschema:"Local file the archive was written to and its size; no key bytes are returned"`
 }
 
+type getSecurityAdvisorInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getSecurityAdvisorStatusOutput struct {
+	NAS    string                         `json:"nas" jsonschema:"NAS profile used for the request"`
+	Status synology.SecurityAdvisorStatus `json:"status" jsonschema:"Normalized last-scan status and per-category findings"`
+}
+
+type getSecurityAdvisorScheduleOutput struct {
+	NAS           string                                `json:"nas" jsonschema:"NAS profile used for the request"`
+	Configuration synology.SecurityAdvisorConfiguration `json:"configuration" jsonschema:"Current scan schedule and security baseline"`
+}
+
+type getSecurityAdvisorCapabilitiesOutput struct {
+	NAS          string                               `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.SecurityAdvisorCapabilities `json:"capabilities" jsonschema:"Security Advisor operations currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport         `json:"report" jsonschema:"Discovered APIs and selected Security Advisor backends"`
+}
+
 type getDriveAdminCapabilitiesOutput struct {
 	NAS          string                          `json:"nas" jsonschema:"NAS profile used for the request"`
 	Capabilities synology.DriveAdminCapabilities `json:"capabilities" jsonschema:"Drive Admin operations currently exposed by dsmctl, with installed-package evidence"`
@@ -3061,6 +3081,45 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, exportCertificateOutput{}, err
 		}
 		return nil, exportCertificateOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_security_advisor_capabilities",
+		Title:       "Get Security Advisor capabilities",
+		Description: "Report which Security Advisor operations dsmctl supports on the selected NAS and the backend for each. Each SYNO.Core.SecurityScan.* API is an independent boundary, so status/findings and schedule/baseline reads are reported separately and a NAS without Security Advisor reports them unsupported without erroring. run_scan and schedule/baseline writes are reported from the advertised APIs but are deferred and never executed by this read slice.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getSecurityAdvisorInput) (*mcp.CallToolResult, getSecurityAdvisorCapabilitiesOutput, error) {
+		result, err := service.GetSecurityAdvisorCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getSecurityAdvisorCapabilitiesOutput{}, err
+		}
+		return nil, getSecurityAdvisorCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_security_advisor_status",
+		Title:       "Get Security Advisor scan status and findings",
+		Description: "Read the Security Advisor last-scan status and findings (Control Panel > Security > Security Advisor): whether a scan is running, overall progress and severity, the last scan time, and per-category results with a per-severity breakdown (danger, risk, warning, out-of-date, info) and pass/fail counts. Severity is normalized to a stable enum and an unrecognized value errors rather than being coerced. Descriptive audit output only — no session identity or credential is ever returned. This tool never triggers a scan and never changes the NAS.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getSecurityAdvisorInput) (*mcp.CallToolResult, getSecurityAdvisorStatusOutput, error) {
+		result, err := service.GetSecurityAdvisorStatus(ctx, input.NAS)
+		if err != nil {
+			return nil, getSecurityAdvisorStatusOutput{}, err
+		}
+		return nil, getSecurityAdvisorStatusOutput{NAS: result.NAS, Status: result.Status}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_security_advisor_schedule",
+		Title:       "Get Security Advisor schedule and baseline",
+		Description: "Read the Security Advisor scan schedule and the active security baseline (for example home or company): whether a scheduled scan is enabled, its time and weekday, and the baseline group. This tool never changes the NAS; changing the schedule or baseline is a deferred, guarded write.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getSecurityAdvisorInput) (*mcp.CallToolResult, getSecurityAdvisorScheduleOutput, error) {
+		result, err := service.GetSecurityAdvisorSchedule(ctx, input.NAS)
+		if err != nil {
+			return nil, getSecurityAdvisorScheduleOutput{}, err
+		}
+		return nil, getSecurityAdvisorScheduleOutput{NAS: result.NAS, Configuration: result.Configuration}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
