@@ -95,9 +95,11 @@ and System Administration groups first** (queued as WI-065…080).
 
 ### Not in this program (recorded for later)
 
-- **Data protection**: Hyper Backup, Snapshot Replication, Active Backup,
-  Cloud Sync, **Synology High Availability (SHA)**, **Shared Folder Sync**
-  (server-to-server replication).
+- **Data protection**: Hyper Backup, Active Backup, Cloud Sync, **Synology
+  High Availability (SHA)**, **Shared Folder Sync** (server-to-server
+  replication). Snapshot Replication left this list on 2026-07-21 as
+  **WI-087** (snapshot reads + guarded snapshot writes; replication
+  mutations still deferred inside that item).
 - **Virtualization/servers**: Container Manager/Docker, Virtual Machine
   Manager, VPN/DNS/DHCP/WebDAV/Web Station/Mail servers.
 - **Collaboration/dev/fleet**: Note Station/Calendar/Contacts/Chat servers,
