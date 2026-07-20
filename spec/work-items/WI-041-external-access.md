@@ -179,3 +179,19 @@ the QuickConnect Control Server HTTPS API"). Flow:
 
 This is a non-trivial connection-layer capability (new resolver + relay client),
 not a Control-Panel setting, and should be scoped on its own if pursued.
+
+## Handoff
+
+2026-07-20 review (remaining Slice B): the DDNS record create/delete and
+QuickConnect enable/alias writes were deliberately **not** implemented in this
+pass. Every remaining write is externally visible — a DDNS record registers a
+public hostname, and QuickConnect enable/alias/per-service exposure changes
+what is reachable from outside — so the live-mutation policy requires explicit
+per-session authorization plus a throwaway hostname, and this module's own
+history (the relay write's documented `set_relay_enable` → `set_misc_config`
+correction) shows that shipping a write here without a live apply is unsafe:
+the WebAPI definition sources have already been wrong once. Next owner: obtain
+explicit authorization (throwaway DDNS hostname on a disposable provider
+identity via `credential_ref`, and permission to briefly change the
+QuickConnect alias/enabled state), then implement following the relay-toggle
+pattern in `internal/synology/operations/externalaccess`.

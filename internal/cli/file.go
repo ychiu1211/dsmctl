@@ -56,7 +56,7 @@ func newFileShareLinkCommand(opts *options) *cobra.Command {
 		Aliases: []string{"sharelink"},
 		Short:   "Manage public FileStation sharing links",
 	}
-	command.AddCommand(newFileShareLinkListCommand(opts), newFileShareLinkCreateCommand(opts), newFileShareLinkDeleteCommand(opts))
+	command.AddCommand(newFileShareLinkListCommand(opts), newFileShareLinkCreateCommand(opts), newFileShareLinkEditCommand(opts), newFileShareLinkDeleteCommand(opts), newFileShareLinkClearInvalidCommand(opts))
 	return command
 }
 
@@ -114,6 +114,45 @@ func newFileShareLinkCreateCommand(opts *options) *cobra.Command {
 	}
 	command.Flags().StringVar(&passwordRef, "password-ref", "", "env:NAME reference to a link password")
 	command.Flags().StringVar(&expire, "expire", "", "expiry date YYYY-MM-DD")
+	mutationYesFlag(command, &yes)
+	return command
+}
+
+func newFileShareLinkEditCommand(opts *options) *cobra.Command {
+	var (
+		yes         bool
+		passwordRef string
+		expire      string
+	)
+	command := &cobra.Command{
+		Use:   "edit <link-id>",
+		Short: "Change the expiry and/or password of a sharing link (guarded plan/apply)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runFileMutation(cmd, opts, filestation.ChangeRequest{
+				Action:    filestation.ActionShareLinkEdit,
+				ShareLink: &filestation.ShareLinkChange{LinkID: args[0], PasswordRef: passwordRef, ExpireDate: expire},
+			}, yes)
+		},
+	}
+	command.Flags().StringVar(&passwordRef, "password-ref", "", "env:NAME reference to the new link password")
+	command.Flags().StringVar(&expire, "expire", "", "new expiry date YYYY-MM-DD")
+	mutationYesFlag(command, &yes)
+	return command
+}
+
+func newFileShareLinkClearInvalidCommand(opts *options) *cobra.Command {
+	var yes bool
+	command := &cobra.Command{
+		Use:   "clear-invalid",
+		Short: "Remove every expired or invalid sharing link (guarded plan/apply)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runFileMutation(cmd, opts, filestation.ChangeRequest{
+				Action: filestation.ActionShareLinkClearInvalid,
+			}, yes)
+		},
+	}
 	mutationYesFlag(command, &yes)
 	return command
 }

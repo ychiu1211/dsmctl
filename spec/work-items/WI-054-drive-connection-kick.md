@@ -1,10 +1,10 @@
 ---
-id: WI-053
+id: WI-054
 title: Guarded Drive client-session disconnect
 status: done
 priority: P2
 owner: ""
-depends_on: [WI-022, WI-052]
+depends_on: [WI-022, WI-053]
 parallel_group: C
 touches:
   - internal/domain/driveadmin
@@ -17,7 +17,7 @@ touches:
   - docs/drive-admin.md
 ---
 
-# WI-053 — Guarded Drive client-session disconnect
+# WI-054 — Guarded Drive client-session disconnect
 
 ## Outcome
 

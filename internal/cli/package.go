@@ -69,7 +69,7 @@ func newPackageUpdateCommand(opts *options) *cobra.Command {
 	var approvalHash string
 	command := &cobra.Command{
 		Use:   "update <package-id>",
-		Short: "Upgrade an installed package to the offered version (plan by default; --approve to run; no downgrade path)",
+		Short: "Update an installed package to the offered version (plan by default; --approve to run)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			service, err := loadService(opts.configPath)
@@ -92,7 +92,7 @@ func newPackageUpdateCommand(opts *options) *cobra.Command {
 			return encodeIndentedJSON(cmd.OutOrStdout(), result)
 		},
 	}
-	command.Flags().StringVar(&approvalHash, "approve", "", "exact SHA-256 hash printed by the update plan to execute the upgrade")
+	command.Flags().StringVar(&approvalHash, "approve", "", "exact SHA-256 hash printed by the update plan to execute the update")
 	return command
 }
 

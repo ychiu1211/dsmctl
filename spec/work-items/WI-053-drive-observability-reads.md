@@ -1,5 +1,5 @@
 ---
-id: WI-052
+id: WI-053
 title: Drive Admin observability and activation reads
 status: done
 priority: P2
@@ -16,7 +16,7 @@ touches:
   - docs/drive-admin.md
 ---
 
-# WI-052 — Drive Admin observability and activation reads
+# WI-053 — Drive Admin observability and activation reads
 
 ## Outcome
 

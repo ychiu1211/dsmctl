@@ -57,6 +57,7 @@ func newOfficeCapabilitiesCommand(opts *options) *cobra.Command {
 			fmt.Fprintf(writer, "Preferences read:\t%s\n", yesNo(result.Capabilities.PreferencesRead))
 			fmt.Fprintf(writer, "Preferences set:\t%s\n", yesNo(result.Capabilities.PreferencesSet))
 			fmt.Fprintf(writer, "Fonts read:\t%s\n", yesNo(result.Capabilities.FontsRead))
+			fmt.Fprintf(writer, "Fonts set:\t%s\n", yesNo(result.Capabilities.FontsSet))
 			fmt.Fprintln(writer, "\nOPERATION\tSUPPORTED\tBACKEND\tAPI\tVERSION")
 			for _, operation := range result.Report.Operations {
 				fmt.Fprintf(writer, "%s\t%s\t%s\t%s\tv%d\n", operation.Operation, yesNo(operation.Supported), valueOrDash(operation.Backend), valueOrDash(operation.API), operation.Version)
@@ -189,9 +190,9 @@ func newOfficeFontsCommand(opts *options) *cobra.Command {
 			writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
 			fmt.Fprintf(writer, "NAS:\t%s\n", result.NAS)
 			fmt.Fprintf(writer, "Fonts:\t%d\n", len(result.Fonts))
-			fmt.Fprintln(writer, "\nNAME\tDISPLAY NAME")
+			fmt.Fprintln(writer, "\nNAME\tDISPLAY NAME\tCUSTOM\tENABLED")
 			for _, font := range result.Fonts {
-				fmt.Fprintf(writer, "%s\t%s\n", font.Name, valueOrDash(font.DisplayName))
+				fmt.Fprintf(writer, "%s\t%s\t%s\t%s\n", font.Name, valueOrDash(font.DisplayName), yesNo(font.Custom), yesNo(font.Enabled))
 			}
 			return writer.Flush()
 		},

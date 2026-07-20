@@ -1,5 +1,5 @@
 ---
-id: WI-058
+id: WI-059
 title: Drive log export to a local file
 status: ready
 priority: P3
@@ -14,14 +14,14 @@ touches:
   - docs/drive-admin.md
 ---
 
-# WI-058 — Drive log export to a local file
+# WI-059 — Drive log export to a local file
 
 ## Outcome
 
 `dsmctl drive admin log export` writes Drive's server log to a local file for
 compliance and handover, with the same filters as `log list`.
 
-## Source evidence (synosyncfolder, 4.0 official branch, gathered in WI-052)
+## Source evidence (synosyncfolder, 4.0 official branch, gathered in WI-053)
 
 `server/ui-web/src/handlers/log/export.cpp`: `SYNO.SynologyDrive.Log`
 `export` (POST, admin-only) answers a **file response**

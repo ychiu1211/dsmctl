@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strconv"
 
 	"github.com/ychiu1211/dsmctl/internal/domain/filestation"
 	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
@@ -18,6 +19,12 @@ const (
 	BackgroundTaskCapabilityName = "file.backgroundtask"
 )
 
+// quoteParam encodes a string value as a JSON string literal. The Sharing API
+// silently ignores bare string values for parameters like date_expired
+// (live-verified: a raw date left the link unchanged while the quoted form
+// stuck), so every string parameter is sent JSON-quoted.
+func quoteParam(value string) string { return strconv.Quote(value) }
+
 type SharingCreateInput struct {
 	Path       string
 	Password   string
@@ -26,6 +33,15 @@ type SharingCreateInput struct {
 
 type SharingDeleteInput struct {
 	LinkID string
+}
+
+// SharingEditInput adjusts an existing link. Password carries the plaintext
+// resolved from a credential reference at apply time (empty string = leave
+// unchanged); ExpireDate "" leaves the expiry unchanged.
+type SharingEditInput struct {
+	LinkID     string
+	Password   string
+	ExpireDate string
 }
 
 var sharingListOperation = compatibility.Operation[struct{}, filestation.SharingLinks]{
@@ -52,12 +68,12 @@ var sharingCreateOperation = compatibility.Operation[SharingCreateInput, Mutatio
 			Name: "filestation-sharing-create-v3", API: SharingAPIName, Version: 3, Priority: 10,
 			Match: compatibility.APIVersion(SharingAPIName, 3),
 			Execute: func(ctx context.Context, executor compatibility.Executor, input SharingCreateInput) (MutationResult, error) {
-				params := url.Values{"path": {input.Path}}
+				params := url.Values{"path": {quoteParam(input.Path)}}
 				if input.Password != "" {
-					params.Set("password", input.Password)
+					params.Set("password", quoteParam(input.Password))
 				}
 				if input.ExpireDate != "" {
-					params.Set("date_expired", input.ExpireDate)
+					params.Set("date_expired", quoteParam(input.ExpireDate))
 				}
 				data, err := executor.Execute(ctx, compatibility.Request{API: SharingAPIName, Version: 3, Method: "create", Parameters: params})
 				if err != nil {
@@ -76,11 +92,50 @@ var sharingDeleteOperation = compatibility.Operation[SharingDeleteInput, Mutatio
 			Name: "filestation-sharing-delete-v3", API: SharingAPIName, Version: 3, Priority: 10,
 			Match: compatibility.APIVersion(SharingAPIName, 3),
 			Execute: func(ctx context.Context, executor compatibility.Executor, input SharingDeleteInput) (MutationResult, error) {
-				_, err := executor.Execute(ctx, compatibility.Request{API: SharingAPIName, Version: 3, Method: "delete", Parameters: url.Values{"id": {input.LinkID}}})
+				_, err := executor.Execute(ctx, compatibility.Request{API: SharingAPIName, Version: 3, Method: "delete", Parameters: url.Values{"id": {quoteParam(input.LinkID)}}})
 				if err != nil {
 					return MutationResult{}, fmt.Errorf("call %s.delete: %w", SharingAPIName, err)
 				}
 				return MutationResult{Paths: []string{input.LinkID}}, nil
+			},
+		},
+	},
+}
+
+var sharingEditOperation = compatibility.Operation[SharingEditInput, MutationResult]{
+	Name: SharingCapabilityName,
+	Variants: []compatibility.Variant[SharingEditInput, MutationResult]{
+		{
+			Name: "filestation-sharing-edit-v3", API: SharingAPIName, Version: 3, Priority: 10,
+			Match: compatibility.APIVersion(SharingAPIName, 3),
+			Execute: func(ctx context.Context, executor compatibility.Executor, input SharingEditInput) (MutationResult, error) {
+				params := url.Values{"id": {quoteParam(input.LinkID)}}
+				if input.Password != "" {
+					params.Set("password", quoteParam(input.Password))
+				}
+				if input.ExpireDate != "" {
+					params.Set("date_expired", quoteParam(input.ExpireDate))
+				}
+				if _, err := executor.Execute(ctx, compatibility.Request{API: SharingAPIName, Version: 3, Method: "edit", Parameters: params}); err != nil {
+					return MutationResult{}, fmt.Errorf("call %s.edit: %w", SharingAPIName, err)
+				}
+				return MutationResult{Paths: []string{input.LinkID}}, nil
+			},
+		},
+	},
+}
+
+var sharingClearInvalidOperation = compatibility.Operation[struct{}, MutationResult]{
+	Name: SharingCapabilityName,
+	Variants: []compatibility.Variant[struct{}, MutationResult]{
+		{
+			Name: "filestation-sharing-clear-invalid-v3", API: SharingAPIName, Version: 3, Priority: 10,
+			Match: compatibility.APIVersion(SharingAPIName, 3),
+			Execute: func(ctx context.Context, executor compatibility.Executor, _ struct{}) (MutationResult, error) {
+				if _, err := executor.Execute(ctx, compatibility.Request{API: SharingAPIName, Version: 3, Method: "clear_invalid"}); err != nil {
+					return MutationResult{}, fmt.Errorf("call %s.clear_invalid: %w", SharingAPIName, err)
+				}
+				return MutationResult{}, nil
 			},
 		},
 	},
@@ -217,6 +272,14 @@ func ExecuteSharingCreate(ctx context.Context, target compatibility.Target, exec
 
 func ExecuteSharingDelete(ctx context.Context, target compatibility.Target, executor compatibility.Executor, input SharingDeleteInput) (MutationResult, compatibility.Selection, error) {
 	return sharingDeleteOperation.Run(ctx, target, executor, input)
+}
+
+func ExecuteSharingEdit(ctx context.Context, target compatibility.Target, executor compatibility.Executor, input SharingEditInput) (MutationResult, compatibility.Selection, error) {
+	return sharingEditOperation.Run(ctx, target, executor, input)
+}
+
+func ExecuteSharingClearInvalid(ctx context.Context, target compatibility.Target, executor compatibility.Executor) (MutationResult, compatibility.Selection, error) {
+	return sharingClearInvalidOperation.Run(ctx, target, executor, struct{}{})
 }
 
 func ExecuteBackgroundTaskList(ctx context.Context, target compatibility.Target, executor compatibility.Executor) (filestation.BackgroundTasks, compatibility.Selection, error) {

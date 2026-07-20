@@ -7,7 +7,7 @@ returned summary/warnings, then apply with the exact hash. Each step names
 the MCP tool an agent would use instead.
 
 Every step of this flow was executed live against a DSM 7.3.2 target with
-Synology Drive Server 4.0.3 during WI-050…WI-055 verification.
+Synology Drive Server 4.0.3 during WI-050…WI-056 verification.
 
 ## 1. Install Synology Drive Server
 

@@ -122,10 +122,22 @@ var uninstallOperation = compatibility.Operation[UninstallInput, MutationResult]
 	},
 }
 
-// updateOperation is modeled but has no variant yet (upgrade is a follow-up), so
-// it reports unsupported and fails closed. Install is backed by the real online
-// download operation defined in install.go.
-var updateOperation = compatibility.Operation[Input, MutationResult]{Name: UpdateCapabilityName}
+// updateOperation reports whether the guarded update is available. An update
+// runs through the same online download+install backend as install (defined in
+// install.go); the version-bound planning and downgrade refusal live in the
+// application layer.
+var updateOperation = compatibility.Operation[Input, MutationResult]{
+	Name: UpdateCapabilityName,
+	Variants: []compatibility.Variant[Input, MutationResult]{
+		{
+			Name: "core-package-installation-download-v1", API: InstallationAPIName, Version: 1, Priority: 10,
+			Match: compatibility.APIVersion(InstallationAPIName, 1),
+			Execute: func(context.Context, compatibility.Executor, Input) (MutationResult, error) {
+				return MutationResult{}, fmt.Errorf("package update executes through the guarded install path, not this operation")
+			},
+		},
+	},
+}
 
 // APINames lists every DSM API this package may use, so the facade can discover
 // them in one call before selecting variants.

@@ -55,7 +55,7 @@ dsmctl drive admin log list --nas office --username alice --keyword report --fro
   (lowercased, for example `enabled`) plus the package evidence observed with
   this exact call.
 - `connections` lists active Drive client sessions with the fields the Drive
-  server actually reports (WI-053): the session id (the target for a guarded
+  server actually reports (WI-054): the session id (the target for a guarded
   kick), device name, client type, address, status, client version, location,
   device UUID, relay flag, and login/last-auth times. Sessions are not
   attributed to an account name by the API.
@@ -72,7 +72,7 @@ dsmctl drive admin log list --nas office --username alice --keyword report --fro
   rendered message, so entries surface the structured fields: time, username,
   client type, IP address, event code, path, and team folder.
 
-Observability reads round out the overview page (WI-052):
+Observability reads round out the overview page (WI-053):
 
 ```console
 dsmctl drive admin summary --nas office
@@ -104,7 +104,7 @@ dsmctl drive admin activation --nas office
   modification time. `file-versions --path <path>` lists a node's stored
   versions (time, size, content hash, storing client). Together they answer
   "what got deleted and which version do I want back"; the restore write is a
-  planned follow-up (WI-056 defers `Node.Restore`).
+  planned follow-up (WI-057 defers `Node.Restore`).
 - `activation` reports whether the package completed its online activation
   (registration against the NAS serial). An unactivated Drive still serves
   clients — verified live — so this is informational; performing the
@@ -172,7 +172,7 @@ invalidates it), and apply verifies the session left the list. The kicked
 client must authenticate again to resume syncing; files already synced stay
 on the device, and dsmctl never sends Drive's remote data-wipe companion
 field. The delete request shape is verified against the Drive server source;
-the surrounding contract is live-verified (see WI-053 for the limits). MCP:
+the surrounding contract is live-verified (see WI-054 for the limits). MCP:
 `plan_drive_connection_kick` / `apply_drive_connection_kick_plan`.
 
 ## Deferred operations

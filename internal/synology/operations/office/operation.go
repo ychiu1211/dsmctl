@@ -30,6 +30,7 @@ const (
 	PreferencesReadCapabilityName = "office.preferences.read"
 	PreferencesSetCapabilityName  = "office.preferences.set"
 	FontsReadCapabilityName       = "office.fonts.read"
+	FontsSetCapabilityName        = "office.fonts.set"
 )
 
 // baselinePackage gates every variant on Synology Office 3.x, the family whose
@@ -160,6 +161,31 @@ var fontsReadOperation = compatibility.Operation[Input, []office.Font]{
 	},
 }
 
+var fontsSetOperation = compatibility.Operation[office.FontChange, MutationResult]{
+	Name: FontsSetCapabilityName,
+	Variants: []compatibility.Variant[office.FontChange, MutationResult]{
+		{
+			Name: "office-setting-font-v1", API: FontAPIName, Version: 1, Priority: 10,
+			Match: compatibility.All(compatibility.APIVersion(FontAPIName, 1), baselinePackage),
+			Execute: func(ctx context.Context, executor compatibility.Executor, change office.FontChange) (MutationResult, error) {
+				if len(change.Names) == 0 {
+					return MutationResult{}, fmt.Errorf("office fonts %s: no font names", change.Action)
+				}
+				method := string(change.Action)
+				switch change.Action {
+				case office.FontActionAdd, office.FontActionEnable, office.FontActionDisable, office.FontActionDelete:
+				default:
+					return MutationResult{}, fmt.Errorf("office fonts: unknown action %q", change.Action)
+				}
+				if _, err := executor.Execute(ctx, compatibility.Request{API: FontAPIName, Version: 1, Method: method, JSONParameters: encodeFontChange(change)}); err != nil {
+					return MutationResult{}, fmt.Errorf("call %s.%s v1: %w", FontAPIName, method, err)
+				}
+				return MutationResult{}, nil
+			},
+		},
+	},
+}
+
 func APINames() []string {
 	return []string{InfoAPIName, SettingAPIName, SystemAPIName, FontAPIName}
 }
@@ -194,6 +220,11 @@ func SelectFontsRead(target compatibility.Target) (compatibility.Selection, erro
 	return selection, err
 }
 
+func SelectFontsSet(target compatibility.Target) (compatibility.Selection, error) {
+	_, selection, err := fontsSetOperation.Select(target)
+	return selection, err
+}
+
 func ExecuteInfoRead(ctx context.Context, target compatibility.Target, executor compatibility.Executor) (office.Info, compatibility.Selection, error) {
 	return infoReadOperation.Run(ctx, target, executor, Input{})
 }
@@ -224,4 +255,12 @@ func ExecutePreferencesSet(ctx context.Context, target compatibility.Target, exe
 
 func ExecuteFontsRead(ctx context.Context, target compatibility.Target, executor compatibility.Executor) ([]office.Font, compatibility.Selection, error) {
 	return fontsReadOperation.Run(ctx, target, executor, Input{})
+}
+
+func ExecuteFontsSet(ctx context.Context, target compatibility.Target, executor compatibility.Executor, change office.FontChange) (MutationResult, compatibility.Selection, error) {
+	result, selection, err := fontsSetOperation.Run(ctx, target, executor, change)
+	if err == nil {
+		result.Backend, result.API, result.Version, result.Method = selection.Backend, selection.API, selection.Version, string(change.Action)
+	}
+	return result, selection, err
 }

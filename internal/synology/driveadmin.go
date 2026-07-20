@@ -382,7 +382,7 @@ func (c *Client) DriveAdminCapabilities(ctx context.Context) (DriveAdminCapabili
 	}
 	selections = append(selections, configRead, configSet)
 
-	// Observability reads (WI-052) are likewise selected after the stable
+	// Observability reads (WI-053) are likewise selected after the stable
 	// Admin Console order.
 	extendedSelectors := []struct {
 		selectOperation func(compatibility.Target) (compatibility.Selection, error)

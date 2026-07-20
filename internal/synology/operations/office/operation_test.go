@@ -96,11 +96,15 @@ func TestPreferencesReadDecodesLiveShape(t *testing.T) {
 
 func TestFontsReadNormalizesMapToSortedSlice(t *testing.T) {
 	target := officeTarget("3.7.2-22592", true)
+	// Live shape from Office 3.7.2: system fonts are {} or {display}; custom
+	// entries carry system:false and, when disabled, disable:true.
 	executor := &capturingExecutor{response: json.RawMessage(`{
 		"Verdana":{},
 		"Arial":{},
 		"標楷體":{},
-		"Microsoft JhengHei":{"display":"微軟正黑體"}
+		"Microsoft JhengHei":{"display":"微軟正黑體"},
+		"dsmctl-e2e-font":{"system":false},
+		"dsmctl-e2e-off":{"system":false,"disable":true}
 	}`)}
 
 	fonts, selection, err := ExecuteFontsRead(context.Background(), target, executor)
@@ -108,13 +112,47 @@ func TestFontsReadNormalizesMapToSortedSlice(t *testing.T) {
 		t.Fatalf("ExecuteFontsRead() error = %v", err)
 	}
 	want := []office.Font{
-		{Name: "Arial"},
-		{Name: "Microsoft JhengHei", DisplayName: "微軟正黑體"},
-		{Name: "Verdana"},
-		{Name: "標楷體"},
+		{Name: "Arial", Enabled: true},
+		{Name: "Microsoft JhengHei", DisplayName: "微軟正黑體", Enabled: true},
+		{Name: "Verdana", Enabled: true},
+		{Name: "dsmctl-e2e-font", Custom: true, Enabled: true},
+		{Name: "dsmctl-e2e-off", Custom: true, Enabled: false},
+		{Name: "標楷體", Enabled: true},
 	}
 	if selection.Backend != "office-setting-font-v1" || !reflect.DeepEqual(fonts, want) {
 		t.Fatalf("fonts = %#v, want %#v", fonts, want)
+	}
+}
+
+func TestFontsSetSendsNamesArrayPerAction(t *testing.T) {
+	target := officeTarget("3.7.2-22592", true)
+	for _, action := range []office.FontAction{
+		office.FontActionAdd, office.FontActionEnable, office.FontActionDisable, office.FontActionDelete,
+	} {
+		executor := &capturingExecutor{}
+		change := office.FontChange{Action: action, Names: []string{"dsmctl-e2e-font"}}
+		result, _, err := ExecuteFontsSet(context.Background(), target, executor, change)
+		if err != nil {
+			t.Fatalf("ExecuteFontsSet(%s) error = %v", action, err)
+		}
+		want := map[string]any{"fonts": []string{"dsmctl-e2e-font"}}
+		if executor.request.API != FontAPIName || executor.request.Method != string(action) ||
+			!reflect.DeepEqual(executor.request.JSONParameters, want) {
+			t.Fatalf("fonts %s request = %#v, want method %q with %#v", action, executor.request, action, want)
+		}
+		if result.Method != string(action) {
+			t.Fatalf("fonts %s result method = %q", action, result.Method)
+		}
+	}
+}
+
+func TestFontsSetRejectsEmptyNamesAndUnknownAction(t *testing.T) {
+	target := officeTarget("3.7.2-22592", true)
+	if _, _, err := ExecuteFontsSet(context.Background(), target, &capturingExecutor{}, office.FontChange{Action: office.FontActionAdd}); err == nil {
+		t.Fatal("ExecuteFontsSet() accepted empty names")
+	}
+	if _, _, err := ExecuteFontsSet(context.Background(), target, &capturingExecutor{}, office.FontChange{Action: "rename", Names: []string{"x"}}); err == nil {
+		t.Fatal("ExecuteFontsSet() accepted an unknown action")
 	}
 }
 
@@ -170,6 +208,7 @@ func TestSelectFailsClosedWithoutPackage(t *testing.T) {
 		"preferences read": SelectPreferencesRead,
 		"preferences set":  SelectPreferencesSet,
 		"fonts read":       SelectFontsRead,
+		"fonts set":        SelectFontsSet,
 	}
 	for name, selectOperation := range selectors {
 		if selection, err := selectOperation(officeTarget("", false)); err == nil || selection.Supported || !compatibility.IsUnsupported(err) {

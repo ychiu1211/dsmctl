@@ -12,11 +12,14 @@ import (
 type fakeOfficeClient struct {
 	system       synology.OfficeSystemSettings
 	preferences  synology.OfficePreferences
+	fonts        []synology.OfficeFont
 	systemErr    error
 	systemSets   []office.SystemChange
 	prefSets     []office.PreferencesChange
+	fontSets     []office.FontChange
 	applySystem  func(office.SystemChange)
 	applyPrefs   func(office.PreferencesChange)
+	applyFonts   func(office.FontChange)
 	capabilities synology.OfficeCapabilities
 }
 
@@ -24,10 +27,14 @@ func newFakeOfficeClient() *fakeOfficeClient {
 	client := &fakeOfficeClient{
 		system:      synology.OfficeSystemSettings{HistoryPrune: false},
 		preferences: synology.OfficePreferences{Ruler: true, AIHelperLanguages: []string{}},
+		fonts: []synology.OfficeFont{
+			{Name: "Arial", Enabled: true},
+			{Name: "dsmctl-e2e-font", Custom: true, Enabled: true},
+		},
 		capabilities: synology.OfficeCapabilities{
 			Module: office.ModuleName, InfoRead: true,
 			SystemRead: true, SystemSet: true,
-			PreferencesRead: true, PreferencesSet: true, FontsRead: true,
+			PreferencesRead: true, PreferencesSet: true, FontsRead: true, FontsSet: true,
 			Package: office.PackageEvidence{ID: "Spreadsheet", Installed: true, Version: "3.7.2-22592", Running: true},
 		},
 	}
@@ -39,6 +46,28 @@ func newFakeOfficeClient() *fakeOfficeClient {
 	client.applyPrefs = func(change office.PreferencesChange) {
 		if change.Ruler != nil {
 			client.preferences.Ruler = *change.Ruler
+		}
+	}
+	client.applyFonts = func(change office.FontChange) {
+		for _, name := range change.Names {
+			switch change.Action {
+			case office.FontActionAdd:
+				client.fonts = append(client.fonts, synology.OfficeFont{Name: name, Custom: true, Enabled: true})
+			case office.FontActionEnable, office.FontActionDisable:
+				for index := range client.fonts {
+					if client.fonts[index].Name == name && client.fonts[index].Custom {
+						client.fonts[index].Enabled = change.Action == office.FontActionEnable
+					}
+				}
+			case office.FontActionDelete:
+				kept := client.fonts[:0]
+				for _, font := range client.fonts {
+					if font.Name != name || !font.Custom {
+						kept = append(kept, font)
+					}
+				}
+				client.fonts = kept
+			}
 		}
 	}
 	return client
@@ -57,7 +86,9 @@ func (c *fakeOfficeClient) OfficePreferences(context.Context) (synology.OfficePr
 }
 
 func (c *fakeOfficeClient) OfficeFonts(context.Context) ([]synology.OfficeFont, error) {
-	return []synology.OfficeFont{{Name: "Arial"}}, nil
+	fonts := make([]synology.OfficeFont, len(c.fonts))
+	copy(fonts, c.fonts)
+	return fonts, nil
 }
 
 func (c *fakeOfficeClient) OfficeCapabilities(context.Context) (synology.OfficeCapabilities, synology.CompatibilityReport, error) {
@@ -73,6 +104,12 @@ func (c *fakeOfficeClient) ApplyOfficeSystemChange(_ context.Context, change off
 func (c *fakeOfficeClient) ApplyOfficePreferencesChange(_ context.Context, change office.PreferencesChange) (synology.OfficeMutationResult, error) {
 	c.prefSets = append(c.prefSets, change)
 	c.applyPrefs(change)
+	return synology.OfficeMutationResult{}, nil
+}
+
+func (c *fakeOfficeClient) ApplyOfficeFontChange(_ context.Context, change office.FontChange) (synology.OfficeMutationResult, error) {
+	c.fontSets = append(c.fontSets, change)
+	c.applyFonts(change)
 	return synology.OfficeMutationResult{}, nil
 }
 
@@ -157,6 +194,65 @@ func TestApplyOfficePlanAppliesAndVerifiesPreferences(t *testing.T) {
 	}
 	if !result.Applied || len(client.prefSets) != 1 || client.preferences.Ruler {
 		t.Fatalf("apply result = %#v, sets = %#v", result, client.prefSets)
+	}
+}
+
+func TestPlanOfficeFontChangeValidatesTargets(t *testing.T) {
+	client := newFakeOfficeClient()
+	plan := func(action office.FontAction, names ...string) error {
+		_, err := planOfficeChangeWithClient(context.Background(), "lab", client,
+			office.Change{Fonts: &office.FontChange{Action: action, Names: names}})
+		return err
+	}
+	if err := plan(office.FontActionDisable, "Arial"); err == nil ||
+		!strings.Contains(err.Error(), "system font") {
+		t.Fatalf("disable of a system font error = %v", err)
+	}
+	if err := plan(office.FontActionAdd, "Arial"); err == nil ||
+		!strings.Contains(err.Error(), "system font") {
+		t.Fatalf("re-add of a system font error = %v", err)
+	}
+	if err := plan(office.FontActionDelete, "missing-font"); err == nil ||
+		!strings.Contains(err.Error(), "does not exist") {
+		t.Fatalf("delete of a missing font error = %v", err)
+	}
+	if err := plan(office.FontActionEnable, "dsmctl-e2e-font"); err == nil ||
+		!strings.Contains(err.Error(), "would not change") {
+		t.Fatalf("enable of an already-enabled font error = %v", err)
+	}
+	if err := plan(office.FontActionDisable, "dsmctl-e2e-font"); err != nil {
+		t.Fatalf("valid disable plan error = %v", err)
+	}
+}
+
+func TestApplyOfficeFontPlanAppliesAndVerifies(t *testing.T) {
+	client := newFakeOfficeClient()
+	request := office.Change{Fonts: &office.FontChange{Action: office.FontActionAdd, Names: []string{"dsmctl-e2e-new"}}}
+	plan, err := planOfficeChangeWithClient(context.Background(), "lab", client, request)
+	if err != nil {
+		t.Fatalf("planOfficeChangeWithClient() error = %v", err)
+	}
+	result, err := applyOfficePlanWithClient(context.Background(), client, plan)
+	if err != nil {
+		t.Fatalf("applyOfficePlanWithClient() error = %v", err)
+	}
+	if !result.Applied || len(client.fontSets) != 1 {
+		t.Fatalf("apply result = %#v, sets = %#v", result, client.fontSets)
+	}
+}
+
+func TestApplyOfficeFontPlanFailsOnSilentSkip(t *testing.T) {
+	client := newFakeOfficeClient()
+	// DSM accepts the call but silently skips the change.
+	client.applyFonts = func(office.FontChange) {}
+	request := office.Change{Fonts: &office.FontChange{Action: office.FontActionDelete, Names: []string{"dsmctl-e2e-font"}}}
+	plan, err := planOfficeChangeWithClient(context.Background(), "lab", client, request)
+	if err != nil {
+		t.Fatalf("planOfficeChangeWithClient() error = %v", err)
+	}
+	if _, err := applyOfficePlanWithClient(context.Background(), client, plan); err == nil ||
+		!strings.Contains(err.Error(), "do not match the approved patch") {
+		t.Fatalf("silent-skip apply error = %v", err)
 	}
 }
 

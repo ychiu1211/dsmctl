@@ -51,13 +51,14 @@ flowchart LR
   WI022 --> WI050["WI-050 Drive team-folder write"]
   WI031 -. "plan/apply + package gating pattern" .-> WI050
   WI022 --> WI051["WI-051 Synology Office settings"]
-  WI022 --> WI052["WI-052 Drive observability reads"]
-  WI052 --> WI053["WI-053 Drive connection kick"]
-  WI052 --> WI054["WI-054 Drive user-privilege view"]
-  WI050 --> WI055["WI-055 My Drive home versioning"]
-  WI022 --> WI056["WI-056 Drive node views"]
-  WI056 --> WI057["WI-057 Drive node restore"]
-  WI022 --> WI058["WI-058 Drive log export"]
+  WI051 --> WI052["WI-052 Office font management write"]
+  WI022 --> WI053["WI-053 Drive observability reads"]
+  WI053 --> WI054["WI-054 Drive connection kick"]
+  WI053 --> WI055["WI-055 Drive user-privilege view"]
+  WI050 --> WI056["WI-056 My Drive home versioning"]
+  WI022 --> WI057["WI-057 Drive node views"]
+  WI057 --> WI058["WI-058 Drive node restore"]
+  WI022 --> WI059["WI-059 Drive log export"]
   WI023["WI-023 LAN device discovery"]
 ```
 
@@ -93,7 +94,7 @@ flowchart LR
 | [WI-026](work-items/WI-026-smb-advanced-service-discovery.md) | P2 | `done` | C | WI-012 | Service discovery (Time Machine + WS-Discovery) and SMB advanced toggles (oplock, leases, durable handles, local master browser). |
 | [WI-027](work-items/WI-027-ftp-sftp.md) | P2 | `done` | C | WI-006 | Guarded FTP/FTPS and SFTP service switches and SFTP port (advanced FTP "Others" fields deferred). |
 | [WI-028](work-items/WI-028-rsync-tftp.md) | P3 | `done` | C | WI-006 | Guarded rsync service (switch + account) and TFTP service (switch, root, permission, logging, timeout); SSH-port and IP-range writes deferred; AFP/WebDAV out of scope. |
-| [WI-029](work-items/WI-029-package-install-update.md) | P2 | `done` | C | WI-019 | Online package catalog read, guarded install (live-verified installing Synology Photos), and guarded upgrade with version-confirming apply (plan live-verified; apply not auto-run), CLI + MCP. |
+| [WI-029](work-items/WI-029-package-install-update.md) | P2 | `done` | C | WI-019 | Online package catalog read, guarded online install, and guarded version-bound update (downgrade refused, stable-over-beta), CLI + MCP, live-verified (installed Synology Photos; updated PHP 8.2). |
 | [WI-030](work-items/WI-030-photos-admin.md) | P2 | `done` | C | WI-019, WI-022 | Synology Photos administration module: read + guarded partial write of `SYNO.Foto.Setting.Admin` (package-gated), CLI + MCP, live-verified. |
 | [WI-031](work-items/WI-031-drive-server-config.md) | P2 | `done` | C | WI-022 | Guarded Synology Drive server database config (vmtouch pair) via `SYNO.SynologyDrive.Config`; first Drive write, CLI + MCP, live-verified. |
 | [WI-032](work-items/WI-032-gateway-local-administrator.md) | P0 | `done` | G | WI-015, WI-016 | Replace bootstrap/platform administration with a portable one-hour local-account setup and browser sessions. |
@@ -107,22 +108,23 @@ flowchart LR
 | [WI-040](work-items/WI-040-dsmctl-favicon.md) | P2 | `done` | G | WI-037, WI-039 | Design one small-size dsmctl favicon and apply it consistently to the Admin UI and web-login helper. |
 | [WI-041](work-items/WI-041-external-access.md) | P2 | `in_progress` | C | WI-006 | External Access module: read-only Synology Account/QuickConnect/DDNS/port-forward + guarded QuickConnect relay write shipped and live-verified (reverted). DDNS-record CRUD and QuickConnect enable/alias writes still deferred. QuickConnect-as-transport carved out to WI-042. |
 | [WI-042](work-items/WI-042-quickconnect-transport.md) | P3 | `proposed` | H | — | Reach a NAS by its QuickConnect ID: coordinator resolution (get_site_list/get_server_info) to a Direct endpoint, then the existing login/client path; relay/hole-punch is a stretch. Connection-layer, not a Control Panel module. |
-| [WI-043](work-items/WI-043-download-station.md) | P2 | `in_progress` | C | WI-019, WI-022 | Read-only Download Station module (service config, task list, statistics), package-gated on DownloadStation (legacy SYNO.DownloadStation.* API); shipped + live-verified on 4.1.2. Task/config writes deferred. |
+| [WI-043](work-items/WI-043-download-station.md) | P2 | `done` | C | WI-019, WI-022 | Download Station module, package-gated on DownloadStation: reads, guarded task create/pause/resume/delete/edit, group-dispatched settings writes, and credential-ref NZB/extraction password changes, CLI + MCP, live-verified on 4.1.2; eMule group and search/RSS management out of scope. |
 | [WI-044](work-items/WI-044-dsm-compatibility-versioning.md) | P1 | `done` | E | - | Version all front ends and release artifacts from the certified DSM compatibility train plus a dsmctl build revision. |
 | [WI-045](work-items/WI-045-power-user-mcp-connection-design.md) | P1 | `done` | G | WI-038 | Define the private power-user connection, default-authority, client identity, and interoperability gap model. |
 | [WI-046](work-items/WI-046-gateway-admin-ui-spacing-feedback.md) | P2 | `done` | G | WI-038 | Correct Admin UI vertical rhythm, password grouping, and dismissible feedback behavior. |
 | [WI-047](work-items/WI-047-admin-ui-workflow-redesign.md) | P1 | `done` | G | WI-045, WI-046 | Redesign authenticated pages around resource lists, state-aware actions, and guided workflows. |
 | [WI-048](work-items/WI-048-mcp-oauth-url-login.md) | P0 | `done` | G | WI-045 | Add standards-based MCP OAuth URL login while retaining manual client tokens. |
 | [WI-050](work-items/WI-050-drive-team-folder-write.md) | P1 | `done` | C | WI-022, WI-031 | Guarded Drive team-folder enable/disable and versioning via `SYNO.SynologyDrive.Share` set, replacing the WI-022 fail-closed stub; CLI + MCP. |
-| [WI-058](work-items/WI-058-drive-log-export.md) | P3 | `ready` | C | WI-022 | Drive log export to a local file (Log.export file response via the byte transport); Log.delete stays deferred. |
-| [WI-057](work-items/WI-057-drive-node-restore.md) | P2 | `ready` | C | WI-056 | Guarded Drive node restore (async Restore start/status/finish task) completing the rescue story; live choreography spec'd. |
-| [WI-056](work-items/WI-056-drive-node-views.md) | P2 | `done` | C | WI-022, WI-050 | Drive rescue-view reads: browse team folders/My Drive including removed entries, and per-node version history; CLI + MCP, live-verified. Node.Restore write deferred as its own item. |
-| [WI-055](work-items/WI-055-drive-home-versioning.md) | P3 | `done` | C | WI-050 | My Drive home versioning via the team-folder write (set_versioning only), always high risk with a fan-out warning; live-verified 8→10→8. |
-| [WI-054](work-items/WI-054-drive-user-privilege-view.md) | P2 | `done` | C | WI-022, WI-052 | Drive user-privilege view read; live-verified that Drive access control is the account module's application privilege (Privilege.set deliberately not exposed). |
-| [WI-053](work-items/WI-053-drive-connection-kick.md) | P2 | `done` | C | WI-022, WI-052 | Guarded Drive client-session disconnect (Connection.delete v2) plus source-true connection fields incl. session id; CLI + MCP. |
-| [WI-052](work-items/WI-052-drive-observability-reads.md) | P2 | `done` | C | WI-022 | Drive Admin observability reads: connection summary, cached DB usage, top accessed files, and package activation state; CLI + MCP, live-verified. |
+| [WI-059](work-items/WI-059-drive-log-export.md) | P3 | `ready` | C | WI-022 | Drive log export to a local file (Log.export file response via the byte transport); Log.delete stays deferred. |
+| [WI-058](work-items/WI-058-drive-node-restore.md) | P2 | `ready` | C | WI-057 | Guarded Drive node restore (async Restore start/status/finish task) completing the rescue story; live choreography spec'd. |
+| [WI-057](work-items/WI-057-drive-node-views.md) | P2 | `done` | C | WI-022, WI-050 | Drive rescue-view reads: browse team folders/My Drive including removed entries, and per-node version history; CLI + MCP, live-verified. Node.Restore write deferred as its own item. |
+| [WI-056](work-items/WI-056-drive-home-versioning.md) | P3 | `done` | C | WI-050 | My Drive home versioning via the team-folder write (set_versioning only), always high risk with a fan-out warning; live-verified 8→10→8. |
+| [WI-055](work-items/WI-055-drive-user-privilege-view.md) | P2 | `done` | C | WI-022, WI-053 | Drive user-privilege view read; live-verified that Drive access control is the account module's application privilege (Privilege.set deliberately not exposed). |
+| [WI-054](work-items/WI-054-drive-connection-kick.md) | P2 | `done` | C | WI-022, WI-053 | Guarded Drive client-session disconnect (Connection.delete v2) plus source-true connection fields incl. session id; CLI + MCP. |
+| [WI-053](work-items/WI-053-drive-observability-reads.md) | P2 | `done` | C | WI-022 | Drive Admin observability reads: connection summary, cached DB usage, top accessed files, and package activation state; CLI + MCP, live-verified. |
 | [WI-051](work-items/WI-051-office-admin.md) | P2 | `done` | C | WI-019, WI-022 | Synology Office settings module: info/system-setting/preferences/fonts reads + guarded system and preference writes (package-gated on `Spreadsheet`), CLI + MCP, live-verified; font mutations and per-object settings deferred. |
-| [WI-049](work-items/WI-049-file-station.md) | P1 | `in_progress` | C | WI-006 | Full read/write FileStation module (core SYNO.FileStation.*), shipped + live-verified end-to-end on DSM 7.3: reads (list/stat/search/dir-size/md5/virtual-folders/permission-check), streaming download+upload binary transport, and the mutation surface (create/rename/copy/move/delete/compress/extract/upload + sharing links) via hash-bound plan/apply, plus favorites and background-task list — across CLI (`file …`) and MCP (114 tools; read-only gateway strips writes + content transfer). Optional follow-ons: Sharing.edit/clear_invalid, Thumb, BackgroundTask.clear_finished. |
+| [WI-052](work-items/WI-052-office-font-management.md) | P2 | `done` | C | WI-051 | Guarded Office custom-font name-registry management (add/enable/disable/delete) as a third Office change scope; custom/enabled font read fields; TTF upload deferred. |
+| [WI-049](work-items/WI-049-file-station.md) | P1 | `done` | C | WI-006 | Full read/write FileStation module (core SYNO.FileStation.*), shipped + live-verified end-to-end on DSM 7.3: reads (list/stat/search/dir-size/md5/virtual-folders/permission-check), streaming download+upload binary transport, and the mutation surface (create/rename/copy/move/delete/compress/extract/upload + sharing links) via hash-bound plan/apply, plus favorites and background-task list — across CLI (`file …`) and MCP (114 tools; read-only gateway strips writes + content transfer). Sharing edit/clear_invalid shipped as follow-ons (live-verified); Thumb and BackgroundTask.clear_finished remain optional. |
 
 Parallel groups indicate likely file overlap. Items in different groups may run
 at the same time after checking their `touches` lists. Only one agent should

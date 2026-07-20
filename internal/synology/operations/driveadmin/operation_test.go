@@ -322,7 +322,7 @@ func TestExecuteTeamFoldersRequiresName(t *testing.T) {
 }
 
 func TestExecuteObservabilityReads(t *testing.T) {
-	// Response shapes captured live from Drive 4.0.3 (WI-052).
+	// Response shapes captured live from Drive 4.0.3 (WI-053).
 	executor := &capturingExecutor{response: json.RawMessage(`{"summary":{"desktop":2,"mobile":1,"sharesync":0,"total":3}}`)}
 	summary, selection, err := ExecuteConnectionSummary(context.Background(), driveTarget("4.0.3-27892", true), executor)
 	if err != nil {
@@ -376,7 +376,7 @@ func TestExecuteObservabilityReads(t *testing.T) {
 }
 
 func TestExecutePrivilegeListRequestShapeAndDecode(t *testing.T) {
-	// Response shape captured live from Drive 4.0.3 (WI-054).
+	// Response shape captured live from Drive 4.0.3 (WI-055).
 	executor := &capturingExecutor{response: json.RawMessage(`{
 		"offset": 0, "total": 3,
 		"users": [
@@ -413,7 +413,7 @@ func TestExecutePrivilegeListRequestShapeAndDecode(t *testing.T) {
 }
 
 func TestExecuteNodesRequestShapeAndDecode(t *testing.T) {
-	// Response shape captured live from Drive 4.0.3 (WI-056): node_id is a
+	// Response shape captured live from Drive 4.0.3 (WI-057): node_id is a
 	// string, file_type 1 is a folder, and removed entries stay listed.
 	executor := &capturingExecutor{response: json.RawMessage(`{
 		"total": 2,
@@ -459,7 +459,7 @@ func TestExecuteNodesRequestShapeAndDecode(t *testing.T) {
 }
 
 func TestExecuteNodeVersionsDecodes(t *testing.T) {
-	// Response shape captured live from Drive 4.0.3 (WI-056).
+	// Response shape captured live from Drive 4.0.3 (WI-057).
 	executor := &capturingExecutor{response: json.RawMessage(`{
 		"disable_download": false, "disable_restore": false, "is_locked": false, "is_removed": false,
 		"items": [{"create_time":1776070439,"hash":"6e49df46c155b48fc3929f580c457f26","modify_time":1776070434,

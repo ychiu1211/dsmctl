@@ -1,5 +1,5 @@
 ---
-id: WI-056
+id: WI-057
 title: Drive node views: browse (including removed) and version history
 status: done
 priority: P2
@@ -16,7 +16,7 @@ touches:
   - docs/drive-admin.md
 ---
 
-# WI-056 — Drive node views: browse (including removed) and version history
+# WI-057 — Drive node views: browse (including removed) and version history
 
 ## Outcome
 

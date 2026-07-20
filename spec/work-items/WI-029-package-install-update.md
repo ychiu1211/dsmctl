@@ -65,19 +65,18 @@ Implemented (MCP parity, 2026-07-20):
   remote authorization and single-use high-risk approval checks as every other
   apply (install plans are always high risk).
 
-Implemented (update/upgrade apply, 2026-07-20):
+Implemented (update apply, 2026-07-20):
 
-- Guarded upgrade through the same install plan machinery: `PlanPackageUpdate`
-  requires the package installed with an offered newer version, resolves any
-  new dependencies deps-first, defaults the volume to the installed location,
-  and always plans high risk with an explicit no-downgrade warning. Apply
-  reuses the install path but confirms the **new version** in the inventory
-  (`ExpectVersion`), not mere presence. CLI `package update <id>` (plan by
-  default, `--approve` to run); MCP `plan_package_update` +
-  `apply_package_install_plan`; read-only gateway strips the plan.
-- Per the standing policy, the upgrade apply is implemented guarded but was
-  **not executed against the lab** (upgrades cannot be rolled back); the plan
-  path was live-verified resolving UniversalViewer 1.4.0-0712 → 1.5.0-0831.
+- Guarded update through the shared install machinery: `PlanPackageUpdate`
+  binds to the installed version (apply re-reads the inventory and rejects a
+  changed/removed package), refuses a repository build that is not newer than
+  the installed one (File Station on DSM 7.3 ships 1.4.3-2210 while the repo
+  offers 1.4.3-1610 — a version difference is not permission to downgrade),
+  prefers the stable catalog row over a beta of the same package, resolves
+  new dependencies deps-first, and completes when the inventory reports the
+  offered version. CLI `package update <id> [--approve]`; MCP
+  `plan_package_update` + the shared `apply_package_install_plan`; the
+  `packagecenter.update` capability now selects the Installation backend.
 
 ## Design constraints
 
@@ -108,9 +107,10 @@ Implemented (update/upgrade apply, 2026-07-20):
       running); the already-installed guard then rejects a re-install.
 - [x] Update **check**: catalog cross-references the inventory and flags
       installed/update-available; live-verified via `package available --updates`.
-- [x] Update/upgrade **apply** implemented (guarded; not auto-run — upgrades are
-      not cleanly reversible). Plan path live-verified; version-confirming
-      postcondition unit-tested.
+- [x] Update/upgrade **apply** implemented (guarded, version-bound, downgrade
+      refused); live-verified updating PHP 8.2 8.2.28-0107 -> 8.2.30-0170 on
+      the DSM 7.3 lab, with the up-to-date and downgrade guards confirmed
+      live afterwards.
 - [x] MCP parity for catalog/install with read-only gateway exclusion (plus
       profile-revision-bound hashes and remote high-risk authorization on
       install-apply).

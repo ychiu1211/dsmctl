@@ -1,10 +1,10 @@
 ---
-id: WI-057
+id: WI-058
 title: Guarded Drive node restore (deleted files and versions)
 status: ready
 priority: P2
 owner: ""
-depends_on: [WI-056]
+depends_on: [WI-057]
 parallel_group: C
 touches:
   - internal/domain/driveadmin
@@ -17,15 +17,15 @@ touches:
   - docs/drive-admin.md
 ---
 
-# WI-057 — Guarded Drive node restore (deleted files and versions)
+# WI-058 — Guarded Drive node restore (deleted files and versions)
 
 ## Outcome
 
-Complete the rescue story WI-056 started: restore removed nodes (and, if the
+Complete the rescue story WI-057 started: restore removed nodes (and, if the
 API allows selecting one, a specific stored version) in a Drive view through
 a guarded plan/apply built on Drive's asynchronous restore task.
 
-## Source evidence (synosyncfolder, 4.0 official branch, gathered in WI-056)
+## Source evidence (synosyncfolder, 4.0 official branch, gathered in WI-057)
 
 `server/ui-web/src/handlers/node/restore/{start,status,finish}.cpp`:
 
@@ -42,11 +42,11 @@ a guarded plan/apply built on Drive's asynchronous restore task.
 
 ## Plan/apply sketch
 
-- Plan binds the observed node entry (WI-056 read: `is_removed`, `ver_cnt`)
+- Plan binds the observed node entry (WI-057 read: `is_removed`, `ver_cnt`)
   and the requested scope; risk high when `override` would replace current
   content.
 - Apply: `start` → poll `status` until `current == total` (bounded, the
-  existing async patterns apply) → `finish` → postcondition via the WI-056
+  existing async patterns apply) → `finish` → postcondition via the WI-057
   reads (node no longer removed / expected version restored).
 - Live verification choreography on a disposable `dsmctl-e2e-*` team folder:
   upload a file (FileStation module), overwrite it (second version), delete

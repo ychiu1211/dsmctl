@@ -116,11 +116,19 @@ dsmctl file extract /home/out.zip /home/restored --yes
 ```console
 dsmctl file share-link create /home/report.pdf --yes   # high risk (public URL)
 dsmctl file share-link list
+dsmctl file share-link edit <link-id> --expire 2026-08-01 --yes
+dsmctl file share-link clear-invalid --yes
 dsmctl file share-link delete <link-id> --yes
 ```
 
 Creating a link publishes the path to an anonymous public URL, so it is high
 risk. `list` shows each link's id, path, public URL, and password protection.
+`edit` changes the expiry and/or the password (`--password-ref env:NAME`) of an
+existing link and verifies the new expiry after apply; `clear-invalid` removes
+every expired or broken link in one guarded action. One DSM behavior the
+mutations account for (live-verified): the Sharing API silently ignores bare
+string parameter values — an unquoted `date_expired` leaves the link unchanged
+— so every string parameter is sent as a JSON string literal.
 
 ### Favorites and background tasks
 

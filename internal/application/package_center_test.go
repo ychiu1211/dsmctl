@@ -122,42 +122,6 @@ func TestPackageInstallPlanResolvesDependenciesAndHash(t *testing.T) {
 		t.Fatalf("already-installed error = %v", err)
 	}
 
-	// Update mode: the installed target upgrades to the offered version.
-	updater := testPackageClient()
-	updater.packages = append(updater.packages, packagecenter.Package{ID: "SurveillanceStation", Version: "9.2.0", Status: packagecenter.StatusRunning, Volume: "/volume1"})
-	updater.catalog = synology.PackageCatalog{Packages: []packagecenter.AvailablePackage{
-		{ID: "SurveillanceStation", Name: "Surveillance Station", Version: "9.2.3", DownloadLink: "https://example/ss.spk", Installed: true, UpdateAvailable: true},
-	}}
-	updatePlan, err := planPackageInstallOrUpdateWithClient(context.Background(), "lab", updater, "SurveillanceStation", "", true, true, true)
-	if err != nil {
-		t.Fatalf("update plan error = %v", err)
-	}
-	if !updatePlan.Update || updatePlan.InstalledVersion != "9.2.0" || updatePlan.VolumePath != "/volume1" || len(updatePlan.Steps) != 1 {
-		t.Fatalf("update plan = %#v", updatePlan)
-	}
-	foundNoRollback := false
-	for _, warning := range updatePlan.Warnings {
-		if strings.Contains(warning, "downgrade") {
-			foundNoRollback = true
-		}
-	}
-	if !foundNoRollback {
-		t.Fatalf("update warnings = %#v", updatePlan.Warnings)
-	}
-	// Already at the offered version → rejected.
-	upToDate := testPackageClient()
-	upToDate.packages = append(upToDate.packages, packagecenter.Package{ID: "SurveillanceStation", Version: "9.2.3", Status: packagecenter.StatusRunning})
-	upToDate.catalog = synology.PackageCatalog{Packages: []packagecenter.AvailablePackage{
-		{ID: "SurveillanceStation", Version: "9.2.3", DownloadLink: "https://example/ss.spk", Installed: true},
-	}}
-	if _, err := planPackageInstallOrUpdateWithClient(context.Background(), "lab", upToDate, "SurveillanceStation", "", true, true, true); err == nil || !strings.Contains(err.Error(), "already at the offered version") {
-		t.Fatalf("up-to-date error = %v", err)
-	}
-	// Updating something not installed → rejected.
-	if _, err := planPackageInstallOrUpdateWithClient(context.Background(), "lab", testPackageClient(), "SurveillanceStation", "", true, true, true); err == nil || !strings.Contains(err.Error(), "not installed") {
-		t.Fatalf("not-installed error = %v", err)
-	}
-
 	// A required dependency that is neither installed nor offered is a hard
 	// precheck error naming both packages.
 	missingDep := testPackageClient()
@@ -167,6 +131,90 @@ func TestPackageInstallPlanResolvesDependenciesAndHash(t *testing.T) {
 	if _, err := planPackageInstallWithClient(context.Background(), "lab", missingDep, "SurveillanceStation", "/volume1", true, true); err == nil ||
 		!strings.Contains(err.Error(), "SurveillanceVideoExtension") || !strings.Contains(err.Error(), "not offered") {
 		t.Fatalf("missing dependency error = %v", err)
+	}
+}
+
+func TestPackageUpdatePlanBindsToInstalledVersion(t *testing.T) {
+	client := testPackageClient()
+	client.packages[0].Version = "3.5.1"
+	client.packages[0].Volume = "/volume1"
+	client.catalog = synology.PackageCatalog{Packages: []packagecenter.AvailablePackage{
+		{ID: "SynologyDrive", Name: "Synology Drive Server", Version: "4.0.3", Size: 2048,
+			DownloadLink: "https://example/drive.spk", Checksum: "cc",
+			Installed: true, UpdateAvailable: true, Dependencies: []string{"NewRuntime"}},
+		{ID: "NewRuntime", Name: "New Runtime", Version: "1.0.0", Size: 128,
+			DownloadLink: "https://example/rt.spk", Checksum: "dd"},
+	}}
+
+	plan, err := planPackageUpdateWithClient(context.Background(), "lab", client, "SynologyDrive")
+	if err != nil {
+		t.Fatalf("planPackageUpdateWithClient() error = %v", err)
+	}
+	if !plan.Update || plan.FromVersion != "3.5.1" || plan.Version != "4.0.3" ||
+		plan.VolumePath != "/volume1" || !plan.RunAfterInstall || plan.Risk != "high" || plan.Hash == "" {
+		t.Fatalf("plan = %#v", plan)
+	}
+	// The new dependency installs before the update target.
+	if len(plan.Steps) != 2 || !plan.Steps[0].Dependency || plan.Steps[0].PackageID != "NewRuntime" ||
+		plan.Steps[1].PackageID != "SynologyDrive" || plan.Steps[1].Dependency {
+		t.Fatalf("steps = %#v", plan.Steps)
+	}
+
+	// A package that is not installed must use install instead.
+	if _, err := planPackageUpdateWithClient(context.Background(), "lab", client, "NewRuntime"); err == nil ||
+		!strings.Contains(err.Error(), "not installed") {
+		t.Fatalf("not-installed error = %v", err)
+	}
+	// Already at the offered version.
+	client.packages[0].Version = "4.0.3"
+	if _, err := planPackageUpdateWithClient(context.Background(), "lab", client, "SynologyDrive"); err == nil ||
+		!strings.Contains(err.Error(), "already at the offered version") {
+		t.Fatalf("up-to-date error = %v", err)
+	}
+	// The NAS ships a newer build than the repository offers (seen live with
+	// File Station): differing versions must never plan a downgrade.
+	client.packages[0].Version = "4.1.0-9999"
+	if _, err := planPackageUpdateWithClient(context.Background(), "lab", client, "SynologyDrive"); err == nil ||
+		!strings.Contains(err.Error(), "refusing to downgrade") {
+		t.Fatalf("downgrade error = %v", err)
+	}
+}
+
+func TestCatalogByIDPrefersStableOverBeta(t *testing.T) {
+	catalog := synology.PackageCatalog{Packages: []packagecenter.AvailablePackage{
+		{ID: "SynologyApplicationService", Version: "1.8.3-20742", Beta: false},
+		{ID: "SynologyApplicationService", Version: "1.9.0-20806", Beta: true},
+		{ID: "UniversalViewer", Version: "1.5.0-0831", Beta: true},
+	}}
+	offered := catalogByID(catalog)
+	if pkg := offered["SynologyApplicationService"]; pkg.Beta || pkg.Version != "1.8.3-20742" {
+		t.Fatalf("beta row shadowed the stable offer: %#v", pkg)
+	}
+	// A beta-only offer is still usable.
+	if pkg := offered["UniversalViewer"]; !pkg.Beta {
+		t.Fatalf("beta-only offer = %#v", pkg)
+	}
+}
+
+func TestPackageUpdatePreconditionRejectsChangedVersion(t *testing.T) {
+	client := testPackageClient()
+	client.packages[0].Version = "3.5.1"
+	plan := PackageInstallPlan{
+		APIVersion: packageInstallAPIVersion, NAS: "lab", PackageID: "SynologyDrive",
+		Update: true, FromVersion: "3.5.1",
+	}
+	if err := verifyPackageUpdatePrecondition(context.Background(), plan, client); err != nil {
+		t.Fatalf("matching precondition error = %v", err)
+	}
+	client.packages[0].Version = "4.0.3"
+	if err := verifyPackageUpdatePrecondition(context.Background(), plan, client); err == nil ||
+		!strings.Contains(err.Error(), "create a new plan") {
+		t.Fatalf("changed-version error = %v", err)
+	}
+	client.packages = client.packages[1:]
+	if err := verifyPackageUpdatePrecondition(context.Background(), plan, client); err == nil ||
+		!strings.Contains(err.Error(), "no longer installed") {
+		t.Fatalf("removed-package error = %v", err)
 	}
 }
 

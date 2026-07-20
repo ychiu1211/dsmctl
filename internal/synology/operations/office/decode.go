@@ -30,7 +30,10 @@ const (
 	keyAITranslatorLanguage = "ai_translator_language"
 	keyAIHelperLanguages    = "ai_helper_languages"
 
-	keyFontDisplay = "display"
+	keyFontDisplay  = "display"
+	keyFontSystem   = "system"
+	keyFontDisabled = "disable"
+	keyFonts        = "fonts"
 )
 
 func decodeInfo(data json.RawMessage) (office.Info, error) {
@@ -111,9 +114,10 @@ func decodePreferences(data json.RawMessage) (office.Preferences, error) {
 	}, nil
 }
 
-// decodeFonts normalizes the font inventory, a JSON object keyed by font name
-// whose values optionally carry a localized display name, into a stable
-// name-sorted slice.
+// decodeFonts normalizes the font inventory, a JSON object keyed by font name,
+// into a stable name-sorted slice. A system entry is `{}` or `{"display":..}`;
+// a custom entry carries `"system": false` and, when disabled,
+// `"disable": true` (live-verified on 3.7.2).
 func decodeFonts(data json.RawMessage) ([]office.Font, error) {
 	raw, err := decodeObject(data, "Office fonts")
 	if err != nil {
@@ -122,15 +126,28 @@ func decodeFonts(data json.RawMessage) ([]office.Font, error) {
 	fonts := make([]office.Font, 0, len(raw))
 	for name, value := range raw {
 		var detail struct {
-			Display string `json:"display"`
+			Display  string `json:"display"`
+			System   *bool  `json:"system"`
+			Disabled bool   `json:"disable"`
 		}
 		if err := json.Unmarshal(value, &detail); err != nil {
 			return nil, fmt.Errorf("decode Office font %q: %w", name, err)
 		}
-		fonts = append(fonts, office.Font{Name: name, DisplayName: detail.Display})
+		fonts = append(fonts, office.Font{
+			Name:        name,
+			DisplayName: detail.Display,
+			Custom:      detail.System != nil && !*detail.System,
+			Enabled:     !detail.Disabled,
+		})
 	}
 	sort.Slice(fonts, func(i, j int) bool { return fonts[i].Name < fonts[j].Name })
 	return fonts, nil
+}
+
+// encodeFontChange builds the `fonts` parameter: DSM expects a JSON array of
+// font family names (an array of objects is rejected with error 120).
+func encodeFontChange(change office.FontChange) map[string]any {
+	return map[string]any{keyFonts: change.Names}
 }
 
 // encodeSystemChange builds a partial set: only fields present in the patch are

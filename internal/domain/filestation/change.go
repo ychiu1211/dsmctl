@@ -15,12 +15,15 @@ const (
 	ActionUpload          = "upload"
 	ActionShareLinkCreate = "sharelink_create"
 	ActionShareLinkDelete = "sharelink_delete"
+	ActionShareLinkEdit   = "sharelink_edit"
+	// ActionShareLinkClearInvalid removes every expired/broken sharing link.
+	ActionShareLinkClearInvalid = "sharelink_clear_invalid"
 )
 
 // ChangeRequest is the typed union of FileStation mutations. Exactly one payload
 // matches Action.
 type ChangeRequest struct {
-	Action       string              `json:"action" jsonschema:"Mutation: create_folder, rename, copy, move, delete, compress, extract, or upload"`
+	Action       string              `json:"action" jsonschema:"Mutation: create_folder, rename, copy, move, delete, compress, extract, upload, sharelink_create, sharelink_edit, sharelink_delete, or sharelink_clear_invalid"`
 	CreateFolder *CreateFolderChange `json:"create_folder,omitempty" jsonschema:"Payload when action is create_folder"`
 	Rename       *RenameChange       `json:"rename,omitempty" jsonschema:"Payload when action is rename"`
 	Transfer     *TransferChange     `json:"transfer,omitempty" jsonschema:"Payload when action is copy or move"`
@@ -31,13 +34,14 @@ type ChangeRequest struct {
 	ShareLink    *ShareLinkChange    `json:"share_link,omitempty" jsonschema:"Payload when action is sharelink_create or sharelink_delete"`
 }
 
-// ShareLinkChange creates or deletes a public sharing link. Path is set for
-// creation; LinkID is set for deletion.
+// ShareLinkChange creates, edits, or deletes a public sharing link. Path is set
+// for creation; LinkID for deletion and editing. Edit adjusts the expiry and/or
+// password of an existing link; clear_invalid takes no payload.
 type ShareLinkChange struct {
 	Path        string `json:"path,omitempty" jsonschema:"Absolute path to expose publicly (creation)"`
-	LinkID      string `json:"link_id,omitempty" jsonschema:"Sharing-link id to delete (deletion)"`
-	PasswordRef string `json:"password_ref,omitempty" jsonschema:"Optional env:NAME reference to a link password (creation)"`
-	ExpireDate  string `json:"expire_date,omitempty" jsonschema:"Optional expiry date YYYY-MM-DD (creation)"`
+	LinkID      string `json:"link_id,omitempty" jsonschema:"Sharing-link id to delete or edit"`
+	PasswordRef string `json:"password_ref,omitempty" jsonschema:"Optional env:NAME reference to a link password (creation or edit)"`
+	ExpireDate  string `json:"expire_date,omitempty" jsonschema:"Optional expiry date YYYY-MM-DD (creation or edit)"`
 }
 
 // CreateFolderChange creates one folder under an existing parent.

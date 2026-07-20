@@ -331,7 +331,7 @@ type getDownloadStationSettingsOutput struct {
 
 type planDownloadStationTaskChangeInput struct {
 	NAS     string                     `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
-	Request downloadstation.TaskChange `json:"request" jsonschema:"Task create/pause/resume/delete intent"`
+	Request downloadstation.TaskChange `json:"request" jsonschema:"Task create/pause/resume/delete/edit intent"`
 }
 
 type planDownloadStationTaskChangeOutput struct {
@@ -636,7 +636,7 @@ type getOfficeFontsOutput struct {
 
 type planOfficeChangeInput struct {
 	NAS     string        `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
-	Request office.Change `json:"request" jsonschema:"Patch-only Office settings intent (exactly one scope: system or preferences)"`
+	Request office.Change `json:"request" jsonschema:"Patch-only Office settings intent (exactly one scope: system, preferences, or fonts)"`
 }
 
 type planOfficeChangeOutput struct {
@@ -966,17 +966,17 @@ type planPackageInstallInput struct {
 	QuickInstall    *bool `json:"quick_install,omitempty" jsonschema:"Quick install with defaults (no configuration wizard); defaults to true"`
 }
 
-type planPackageUpdateInput struct {
-	NAS       string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
-	PackageID string `json:"package_id" jsonschema:"Installed package identifier with an available update (see get_package_available with updates_only)"`
-}
-
 type planPackageInstallOutput struct {
 	Plan application.PackageInstallPlan `json:"plan" jsonschema:"Resolved install intent (dependencies first) bound to an approval hash"`
 }
 
+type planPackageUpdateInput struct {
+	NAS       string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	PackageID string `json:"package_id" jsonschema:"Stable DSM package identifier of an installed package with an available update"`
+}
+
 type applyPackageInstallPlanInput struct {
-	Plan         application.PackageInstallPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_package_install"`
+	Plan         application.PackageInstallPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_package_install or plan_package_update"`
 	ApprovalHash string                         `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved install plan"`
 }
 
@@ -1602,7 +1602,7 @@ func New(service *application.Service, version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_filestation_sharing_links",
 		Title:       "List FileStation sharing links",
-		Description: "List the public sharing links on a NAS (id, path, public URL, password protection, status). Manage links with plan_filestation_change using the sharelink_create and sharelink_delete actions. This tool is read-only.",
+		Description: "List the public sharing links on a NAS (id, path, public URL, password protection, status). Manage links with plan_filestation_change using the sharelink_create, sharelink_edit, sharelink_delete, and sharelink_clear_invalid actions. This tool is read-only.",
 		Annotations: readOnlyAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input fileStationNASInput) (*mcp.CallToolResult, getFileStationSharingLinksOutput, error) {
 		result, err := service.GetFileStationSharingLinks(ctx, input.NAS)
@@ -1628,7 +1628,7 @@ func New(service *application.Service, version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "plan_filestation_change",
 		Title:       "Plan a FileStation change",
-		Description: "Validate a FileStation mutation (create_folder, rename, copy, move, delete, compress, extract, upload, sharelink_create, or sharelink_delete) and return an approval plan bound to the observed state. The plan surfaces risk, warnings (data loss, overwrite, public exposure), and a hash. This tool never mutates the NAS. Move, delete, and sharelink_create (anonymous public URL) are high risk; upload reads local_path on the host running dsmctl.",
+		Description: "Validate a FileStation mutation (create_folder, rename, copy, move, delete, compress, extract, upload, sharelink_create, sharelink_edit, sharelink_delete, or sharelink_clear_invalid) and return an approval plan bound to the observed state. The plan surfaces risk, warnings (data loss, overwrite, public exposure), and a hash. This tool never mutates the NAS. Move, delete, and sharelink_create (anonymous public URL) are high risk; upload reads local_path on the host running dsmctl.",
 		Annotations: readOnlyAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planFileStationChangeInput) (*mcp.CallToolResult, planFileStationChangeOutput, error) {
 		plan, err := service.PlanFileStationChange(ctx, input.NAS, input.Request)
@@ -1667,7 +1667,7 @@ func New(service *application.Service, version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "plan_download_station_task_change",
 		Title:       "Plan a Download Station task change",
-		Description: "Validate a task create/pause/resume/delete request and return an approval plan. Control actions are bound to the observed target tasks so an apply fails if a target has since disappeared. This tool never mutates DSM.",
+		Description: "Validate a task create/pause/resume/delete/edit request and return an approval plan. Control actions are bound to the observed target tasks (edit also to their destinations) so an apply fails if a target has since changed. This tool never mutates DSM.",
 		Annotations: readOnlyAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planDownloadStationTaskChangeInput) (*mcp.CallToolResult, planDownloadStationTaskChangeOutput, error) {
 		plan, err := service.PlanDownloadStationTaskChange(ctx, input.NAS, input.Request)
@@ -2187,7 +2187,7 @@ func New(service *application.Service, version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "plan_office_change",
 		Title:       "Plan a Synology Office settings change",
-		Description: "Validate one patch-only Synology Office settings request (system scope or the calling user's preferences scope), read the current state, and return a hash-bound approval plan. This tool never mutates DSM.",
+		Description: "Validate one patch-only Synology Office settings request (system scope, the calling user's preferences scope, or a custom-font registry action), read the current state, and return a hash-bound approval plan. This tool never mutates DSM.",
 		Annotations: readOnlyAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planOfficeChangeInput) (*mcp.CallToolResult, planOfficeChangeOutput, error) {
 		plan, err := service.PlanOfficeChange(ctx, input.NAS, input.Request)
@@ -2583,7 +2583,7 @@ func New(service *application.Service, version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "plan_package_change",
 		Title:       "Plan a Package Center change",
-		Description: "Validate a patch-only global-settings change or a package lifecycle action (start, stop, uninstall) and return an approval plan bound to the observed settings or package state. Uninstall is refused when DSM reports the package is not removable; update is deferred and rejected, and online installs go through plan_package_install instead. This tool never mutates DSM.",
+		Description: "Validate a patch-only global-settings change or a package lifecycle action (start, stop, uninstall) and return an approval plan bound to the observed settings or package state. Uninstall is refused when DSM reports the package is not removable; online installs go through plan_package_install and updates through plan_package_update instead. This tool never mutates DSM.",
 		Annotations: readOnlyAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planPackageChangeInput) (*mcp.CallToolResult, planPackageChangeOutput, error) {
 		plan, err := service.PlanPackageChange(ctx, input.NAS, input.Request)
@@ -2651,8 +2651,8 @@ func New(service *application.Service, version string) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "plan_package_update",
-		Title:       "Plan a guarded package upgrade",
-		Description: "Resolve upgrading one installed package to the version offered by the online package server and return a hash-bound plan (apply it with apply_package_install_plan). Missing new dependencies install first; the apply confirms the new version in the inventory. Upgrades have no supported downgrade path, so plans are always high risk. This tool never mutates DSM.",
+		Title:       "Plan a guarded package update",
+		Description: "Resolve an installed package against the online catalog and return a hash-bound update plan bound to the currently installed version: new dependencies are listed as ordered steps before the target, a package that is not installed or already at the offered version is rejected, and the plan is always high risk because an update downloads and runs third-party software and cannot be downgraded. Apply it with apply_package_install_plan. This tool never mutates DSM.",
 		Annotations: readOnlyAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planPackageUpdateInput) (*mcp.CallToolResult, planPackageInstallOutput, error) {
 		plan, err := service.PlanPackageUpdate(ctx, input.NAS, input.PackageID)
@@ -2664,8 +2664,8 @@ func New(service *application.Service, version string) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "apply_package_install_plan",
-		Title:       "Apply an approved package install plan",
-		Description: "Install the packages in an unmodified install plan (dependencies first, target last) only with its exact approval hash. DSM downloads each package from the online server and runs it; completion is confirmed against the installed-package inventory, and large packages can take minutes per step.",
+		Title:       "Apply an approved package install or update plan",
+		Description: "Install the packages in an unmodified install or update plan (dependencies first, target last) only with its exact approval hash. An update plan is additionally rejected when the installed version no longer matches the version it was planned against. DSM downloads each package from the online server and runs it; completion is confirmed against the installed-package inventory (an update completes when the inventory reports the offered version), and large packages can take minutes per step.",
 		Annotations: mutationAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyPackageInstallPlanInput) (*mcp.CallToolResult, applyPackageInstallPlanOutput, error) {
 		result, err := service.ApplyPackageInstallPlan(ctx, input.Plan, input.ApprovalHash)

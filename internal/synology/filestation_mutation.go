@@ -105,6 +105,23 @@ func (c *Client) ApplyFileStationChange(ctx context.Context, request FileStation
 		}
 		c.target.AddCapability(filestationops.SharingCapabilityName)
 		return result, nil
+	case filestation.ActionShareLinkEdit:
+		change := request.ShareLink
+		result, _, err := filestationops.ExecuteSharingEdit(ctx, c.target, executor, filestationops.SharingEditInput{
+			LinkID: change.LinkID, Password: password, ExpireDate: change.ExpireDate,
+		})
+		if err != nil {
+			return FileStationMutationResult{}, err
+		}
+		c.target.AddCapability(filestationops.SharingCapabilityName)
+		return result, nil
+	case filestation.ActionShareLinkClearInvalid:
+		result, _, err := filestationops.ExecuteSharingClearInvalid(ctx, c.target, executor)
+		if err != nil {
+			return FileStationMutationResult{}, err
+		}
+		c.target.AddCapability(filestationops.SharingCapabilityName)
+		return result, nil
 	default:
 		return FileStationMutationResult{}, fmt.Errorf("unsupported FileStation mutation action %q", request.Action)
 	}

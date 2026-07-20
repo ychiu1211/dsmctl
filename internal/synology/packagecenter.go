@@ -162,9 +162,10 @@ type PackageInstallInput struct {
 	QuickInstall    bool
 	VolumePath      string
 	RunAfterInstall bool
-	// ExpectVersion switches the inventory confirmation from presence to an
-	// exact version match — required for upgrades, where the package is
-	// already present at the old version.
+	// ExpectVersion, when set, makes the inventory confirmation require this
+	// exact installed version. An update targets a package that is already in
+	// the inventory, so plain presence would confirm instantly against the old
+	// version.
 	ExpectVersion string
 }
 
@@ -229,7 +230,7 @@ func (c *Client) PackageInstall(ctx context.Context, input PackageInstallInput) 
 		}
 		if time.Now().After(deadline) {
 			if input.ExpectVersion != "" {
-				return result, fmt.Errorf("upgrade of %s to %s was not confirmed by the inventory within the timeout", input.Name, input.ExpectVersion)
+				return result, fmt.Errorf("install of %s did not reach version %s in the inventory within the timeout", input.Name, input.ExpectVersion)
 			}
 			return result, fmt.Errorf("install of %s did not appear in the inventory within the timeout", input.Name)
 		}

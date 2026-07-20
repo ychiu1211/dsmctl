@@ -47,6 +47,7 @@ const (
 	StatisticReadCapabilityName = "download.statistic.read"
 	SettingsReadCapabilityName  = "download.settings.read"
 	TaskWriteCapabilityName     = "download.task.write"
+	TaskEditCapabilityName      = "download.task.edit"
 	SettingsWriteCapabilityName = "download.settings.write"
 )
 
@@ -279,6 +280,50 @@ func SelectTaskWrite(target compatibility.Target) (compatibility.Selection, erro
 	return selection, err
 }
 
+// taskEditOp re-targets tasks to a new destination via the legacy Task API
+// method `edit`, which exists from version 2 (live-verified on 4.1.2: v1
+// returns error 103). It is a separate operation so a NAS advertising only
+// Task v1 reports edit unsupported instead of receiving an untested request.
+var taskEditOp = compatibility.Operation[downloadstation.TaskChange, downloadstation.TaskMutationResult]{
+	Name: TaskEditCapabilityName,
+	Variants: []compatibility.Variant[downloadstation.TaskChange, downloadstation.TaskMutationResult]{
+		{
+			Name: "downloadstation-task-edit-v2", API: TaskAPIName, Version: 2, Priority: 10,
+			Match: compatibility.All(compatibility.APIVersion(TaskAPIName, 2), baselinePackage),
+			Execute: func(ctx context.Context, executor compatibility.Executor, change downloadstation.TaskChange) (downloadstation.TaskMutationResult, error) {
+				params := url.Values{
+					"id":          {strings.Join(change.TaskIDs, ",")},
+					"destination": {strings.TrimSpace(change.Destination)},
+				}
+				data, err := executor.Execute(ctx, compatibility.Request{API: TaskAPIName, Version: 2, Method: "edit", Parameters: params})
+				if err != nil {
+					return downloadstation.TaskMutationResult{}, fmt.Errorf("call %s.edit: %w", TaskAPIName, err)
+				}
+				// edit responds without a per-task result list when everything
+				// succeeded; fall back to the requested ids.
+				affected, err := decodeTaskControlResult(data)
+				if err != nil || len(affected) == 0 {
+					affected = change.TaskIDs
+				}
+				return downloadstation.TaskMutationResult{API: TaskAPIName, Version: 2, Method: "edit", AffectedIDs: affected}, nil
+			},
+		},
+	},
+}
+
+func SelectTaskEdit(target compatibility.Target) (compatibility.Selection, error) {
+	_, selection, err := taskEditOp.Select(target)
+	return selection, err
+}
+
+func ExecuteTaskEdit(ctx context.Context, target compatibility.Target, executor compatibility.Executor, change downloadstation.TaskChange) (downloadstation.TaskMutationResult, compatibility.Selection, error) {
+	result, selection, err := taskEditOp.Run(ctx, target, executor, change)
+	if err == nil {
+		result.Backend = selection.Backend
+	}
+	return result, selection, err
+}
+
 // btGetOp reads the current BitTorrent settings so a guarded write can merge a
 // patch into the complete object (the set is a full-object replace).
 var btGetOp = compatibility.Operation[Input, downloadstation.BTSettings]{
@@ -380,6 +425,18 @@ func encodeFtpHttpSettings(f downloadstation.FtpHttpSettings) url.Values {
 	return v
 }
 
+// stringParam encodes a string value for the DownloadStation2 form-encoded
+// JSON-request APIs. A bare empty form value is treated as "not provided" by
+// DSM (live-verified: username="" left the stored name untouched), so an empty
+// string is sent as the JSON literal "" to actually clear the field; non-empty
+// values stay raw, the form live-verified writes have always used.
+func stringParam(value string) string {
+	if value == "" {
+		return `""`
+	}
+	return value
+}
+
 func boolParam(b bool) string {
 	if b {
 		return "true"
@@ -456,9 +513,9 @@ var schedulerSetOp = settingsSetOp("download.settings.scheduler.set", SettingsSc
 var globalGetOp = settingsGetOp("download.settings.global.get", SettingsGlobalAPIName, 2, decodeGlobalSettings)
 var globalSetOp = settingsSetOp("download.settings.global.set", SettingsGlobalAPIName, 2, "global", encodeGlobalSettings)
 var autoExtractionGetOp = settingsGetOp("download.settings.auto_extraction.get", SettingsAutoExtractionAPIName, 1, decodeAutoExtractionSettings)
-var autoExtractionSetOp = settingsSetOp("download.settings.auto_extraction.set", SettingsAutoExtractionAPIName, 1, "auto_extraction", encodeAutoExtractionChange)
+var autoExtractionSetOp = settingsSetOp("download.settings.auto_extraction.set", SettingsAutoExtractionAPIName, 1, "auto_extraction", encodeAutoExtractionSetInput)
 var nzbGetOp = settingsGetOp("download.settings.nzb.get", SettingsNzbAPIName, 1, decodeNzbSettings)
-var nzbSetOp = settingsSetOp("download.settings.nzb.set", SettingsNzbAPIName, 1, "nzb", encodeNzbChange)
+var nzbSetOp = settingsSetOp("download.settings.nzb.set", SettingsNzbAPIName, 1, "nzb", encodeNzbSetInput)
 
 func encodeRssSettings(r downloadstation.RssSettings) url.Values {
 	v := url.Values{}
@@ -472,6 +529,40 @@ func encodeRssSettings(r downloadstation.RssSettings) url.Values {
 // returns) untouched, so a non-secret patch never disturbs stored passwords. The
 // on-the-wire unzip_location parameter is a boolean (extract to the local
 // folder), distinct from the string the read returns.
+// AutoExtractionSetInput carries the patch plus the archive password list
+// resolved from a credential reference at apply time. The plaintext exists
+// only in memory for the DSM call; it is never part of a plan or log.
+type AutoExtractionSetInput struct {
+	Change    downloadstation.AutoExtractionSettingsChange
+	Passwords *[]string
+}
+
+// NzbSetInput carries the patch plus the news-server password resolved from a
+// credential reference at apply time.
+type NzbSetInput struct {
+	Change   downloadstation.NzbSettingsChange
+	Password *string
+}
+
+func encodeAutoExtractionSetInput(input AutoExtractionSetInput) url.Values {
+	v := encodeAutoExtractionChange(input.Change)
+	if input.Passwords != nil {
+		encoded, err := json.Marshal(*input.Passwords)
+		if err == nil {
+			v.Set("passwords", string(encoded))
+		}
+	}
+	return v
+}
+
+func encodeNzbSetInput(input NzbSetInput) url.Values {
+	v := encodeNzbChange(input.Change)
+	if input.Password != nil {
+		v.Set("password", stringParam(*input.Password))
+	}
+	return v
+}
+
 func encodeAutoExtractionChange(c downloadstation.AutoExtractionSettingsChange) url.Values {
 	v := url.Values{}
 	if c.EnableUnzip != nil {
@@ -490,7 +581,7 @@ func encodeAutoExtractionChange(c downloadstation.AutoExtractionSettingsChange) 
 		v.Set("unzip_location", boolParam(*c.UnzipToLocal))
 	}
 	if c.UnzipToPath != nil {
-		v.Set("unzip_to_path", *c.UnzipToPath)
+		v.Set("unzip_to_path", stringParam(*c.UnzipToPath))
 	}
 	return v
 }
@@ -502,13 +593,13 @@ func encodeAutoExtractionChange(c downloadstation.AutoExtractionSettingsChange) 
 func encodeNzbChange(c downloadstation.NzbSettingsChange) url.Values {
 	v := url.Values{}
 	if c.Server != nil {
-		v.Set("server", *c.Server)
+		v.Set("server", stringParam(*c.Server))
 	}
 	if c.Port != nil {
 		v.Set("port", strconv.Itoa(*c.Port))
 	}
 	if c.Username != nil {
-		v.Set("username", *c.Username)
+		v.Set("username", stringParam(*c.Username))
 	}
 	if c.EnableAuth != nil {
 		v.Set("enable_auth", boolParam(*c.EnableAuth))
@@ -533,10 +624,10 @@ func encodeNzbChange(c downloadstation.NzbSettingsChange) url.Values {
 
 func encodeLocationSettings(l downloadstation.LocationSettings) url.Values {
 	v := url.Values{}
-	v.Set("default_destination", l.DefaultDestination)
+	v.Set("default_destination", stringParam(l.DefaultDestination))
 	v.Set("enable_torrent_nzb_watch", boolParam(l.EnableTorrentNzbWatch))
 	v.Set("enable_delete_torrent_nzb_watch", boolParam(l.EnableDeleteTorrentNzbWatch))
-	v.Set("torrent_nzb_watch_folder", l.TorrentNzbWatchFolder)
+	v.Set("torrent_nzb_watch_folder", stringParam(l.TorrentNzbWatchFolder))
 	return v
 }
 
@@ -597,14 +688,14 @@ func ExecuteGlobalSet(ctx context.Context, t compatibility.Target, e compatibili
 func ExecuteAutoExtractionGet(ctx context.Context, t compatibility.Target, e compatibility.Executor) (downloadstation.AutoExtractionSettings, compatibility.Selection, error) {
 	return runSettingsGet(ctx, autoExtractionGetOp, t, e)
 }
-func ExecuteAutoExtractionSet(ctx context.Context, t compatibility.Target, e compatibility.Executor, change downloadstation.AutoExtractionSettingsChange) (downloadstation.SettingsMutationResult, compatibility.Selection, error) {
-	return runSettingsSet(ctx, autoExtractionSetOp, t, e, change)
+func ExecuteAutoExtractionSet(ctx context.Context, t compatibility.Target, e compatibility.Executor, input AutoExtractionSetInput) (downloadstation.SettingsMutationResult, compatibility.Selection, error) {
+	return runSettingsSet(ctx, autoExtractionSetOp, t, e, input)
 }
 func ExecuteNzbGet(ctx context.Context, t compatibility.Target, e compatibility.Executor) (downloadstation.NzbSettings, compatibility.Selection, error) {
 	return runSettingsGet(ctx, nzbGetOp, t, e)
 }
-func ExecuteNzbSet(ctx context.Context, t compatibility.Target, e compatibility.Executor, change downloadstation.NzbSettingsChange) (downloadstation.SettingsMutationResult, compatibility.Selection, error) {
-	return runSettingsSet(ctx, nzbSetOp, t, e, change)
+func ExecuteNzbSet(ctx context.Context, t compatibility.Target, e compatibility.Executor, input NzbSetInput) (downloadstation.SettingsMutationResult, compatibility.Selection, error) {
+	return runSettingsSet(ctx, nzbSetOp, t, e, input)
 }
 
 func SelectSettingsWrite(target compatibility.Target) (compatibility.Selection, error) {

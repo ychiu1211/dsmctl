@@ -383,6 +383,28 @@ func buildFilePrecondition(ctx context.Context, client runtime.Client, request f
 		targets = []filestation.PathObservation{observed}
 		summary = append(summary, fmt.Sprintf("delete sharing link %q", change.LinkID))
 
+	case filestation.ActionShareLinkEdit:
+		change := request.ShareLink
+		observed, err := observeSharingLink(ctx, client, change.LinkID)
+		if err != nil {
+			return filestation.FilePrecondition{}, false, nil, nil, err
+		}
+		if !observed.Exists {
+			return filestation.FilePrecondition{}, false, nil, nil, fmt.Errorf("sharing link %q does not exist", change.LinkID)
+		}
+		targets = []filestation.PathObservation{observed}
+		if change.ExpireDate != "" {
+			summary = append(summary, fmt.Sprintf("set sharing link %q expiry to %s", change.LinkID, change.ExpireDate))
+		}
+		if change.PasswordRef != "" {
+			summary = append(summary, fmt.Sprintf("change the password of sharing link %q (resolved from the credential reference at apply)", change.LinkID))
+		}
+
+	case filestation.ActionShareLinkClearInvalid:
+		// A global cleanup of expired/broken links; it binds to no specific
+		// path, so the precondition carries no targets.
+		summary = append(summary, "remove every expired or invalid sharing link")
+
 	default:
 		return filestation.FilePrecondition{}, false, nil, nil, fmt.Errorf("unsupported FileStation action %q", request.Action)
 	}
@@ -469,6 +491,26 @@ func verifyFilePostcondition(ctx context.Context, client runtime.Client, request
 		}
 		if observed.Exists {
 			return fmt.Errorf("sharing link %q still exists after delete", request.ShareLink.LinkID)
+		}
+	case filestation.ActionShareLinkEdit:
+		links, err := client.FileStationSharingList(ctx)
+		if err != nil {
+			return fmt.Errorf("verify sharing link edit: %w", err)
+		}
+		for _, link := range links.Links {
+			if link.ID != request.ShareLink.LinkID {
+				continue
+			}
+			if want := request.ShareLink.ExpireDate; want != "" && !strings.HasPrefix(link.DateExpired, want) {
+				return fmt.Errorf("sharing link %q expiry is %q, want %s", link.ID, link.DateExpired, want)
+			}
+			return nil
+		}
+		return fmt.Errorf("sharing link %q was not found after edit", request.ShareLink.LinkID)
+	case filestation.ActionShareLinkClearInvalid:
+		// The cleanup has no per-link postcondition beyond a successful re-read.
+		if _, err := client.FileStationSharingList(ctx); err != nil {
+			return fmt.Errorf("verify sharing cleanup: %w", err)
 		}
 	}
 	return nil
@@ -562,7 +604,8 @@ func actionSupported(capabilities synology.FileStationCapabilities, action strin
 		return capabilities.Extract
 	case filestation.ActionUpload:
 		return capabilities.Upload
-	case filestation.ActionShareLinkCreate, filestation.ActionShareLinkDelete:
+	case filestation.ActionShareLinkCreate, filestation.ActionShareLinkDelete,
+		filestation.ActionShareLinkEdit, filestation.ActionShareLinkClearInvalid:
 		return capabilities.Sharing
 	default:
 		return false
@@ -579,7 +622,7 @@ func passwordRefFor(request filestation.ChangeRequest) string {
 		if request.Extract != nil {
 			return request.Extract.PasswordRef
 		}
-	case filestation.ActionShareLinkCreate:
+	case filestation.ActionShareLinkCreate, filestation.ActionShareLinkEdit:
 		if request.ShareLink != nil {
 			return request.ShareLink.PasswordRef
 		}
@@ -717,6 +760,20 @@ func validateFileChange(request filestation.ChangeRequest) error {
 		change := request.ShareLink
 		if change == nil || strings.TrimSpace(change.LinkID) == "" {
 			return fmt.Errorf("share_link link_id is required for deletion")
+		}
+		return nil
+	case filestation.ActionShareLinkEdit:
+		change := request.ShareLink
+		if change == nil || strings.TrimSpace(change.LinkID) == "" {
+			return fmt.Errorf("share_link link_id is required for editing")
+		}
+		if strings.TrimSpace(change.ExpireDate) == "" && strings.TrimSpace(change.PasswordRef) == "" {
+			return fmt.Errorf("a sharing-link edit requires expire_date and/or password_ref")
+		}
+		return assertCredentialRef(change.PasswordRef)
+	case filestation.ActionShareLinkClearInvalid:
+		if request.ShareLink != nil {
+			return fmt.Errorf("sharelink_clear_invalid takes no payload")
 		}
 		return nil
 	default:

@@ -1,10 +1,10 @@
 ---
-id: WI-054
+id: WI-055
 title: Drive user-privilege view (read) and the access-control finding
 status: done
 priority: P2
 owner: ""
-depends_on: [WI-022, WI-052]
+depends_on: [WI-022, WI-053]
 parallel_group: C
 touches:
   - internal/domain/driveadmin
@@ -16,7 +16,7 @@ touches:
   - docs/drive-admin.md
 ---
 
-# WI-054 — Drive user-privilege view (read) and the access-control finding
+# WI-055 — Drive user-privilege view (read) and the access-control finding
 
 ## Outcome
 

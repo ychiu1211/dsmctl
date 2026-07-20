@@ -57,6 +57,29 @@ func TestValidateFileChange(t *testing.T) {
 			wantErr: "link_id",
 		},
 		{
+			name:    "sharelink edit ok",
+			request: filestation.ChangeRequest{Action: filestation.ActionShareLinkEdit, ShareLink: &filestation.ShareLinkChange{LinkID: "abc", ExpireDate: "2026-07-21"}},
+		},
+		{
+			name:    "sharelink edit needs a field",
+			request: filestation.ChangeRequest{Action: filestation.ActionShareLinkEdit, ShareLink: &filestation.ShareLinkChange{LinkID: "abc"}},
+			wantErr: "expire_date and/or password_ref",
+		},
+		{
+			name:    "sharelink edit literal password refused",
+			request: filestation.ChangeRequest{Action: filestation.ActionShareLinkEdit, ShareLink: &filestation.ShareLinkChange{LinkID: "abc", PasswordRef: "secret"}},
+			wantErr: "env:NAME",
+		},
+		{
+			name:    "sharelink clear_invalid takes no payload",
+			request: filestation.ChangeRequest{Action: filestation.ActionShareLinkClearInvalid, ShareLink: &filestation.ShareLinkChange{LinkID: "abc"}},
+			wantErr: "no payload",
+		},
+		{
+			name:    "sharelink clear_invalid ok",
+			request: filestation.ChangeRequest{Action: filestation.ActionShareLinkClearInvalid},
+		},
+		{
 			name:    "unknown action",
 			request: filestation.ChangeRequest{Action: "explode"},
 			wantErr: "unsupported",

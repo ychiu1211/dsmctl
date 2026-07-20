@@ -1,7 +1,7 @@
 ---
 id: WI-049
 title: FileStation module (full read/write)
-status: in_progress
+status: done
 priority: P1
 owner: ""
 depends_on: [WI-006]
@@ -166,6 +166,15 @@ any concurrent client-core change.
     the `get_` prefix so the remote read-scope classifier (`ToolScope`) recognizes
     them; `plan_/apply_filestation_*` and `get_filestation_file_content` are
     stripped from the read-only gateway.
-- Possible follow-ons (not required by this WI): `Sharing.edit`/`clear_invalid`,
-  `Thumb.get`, `BackgroundTask.clear_finished`, and a synchronous `DirSize` path
-  for trivially small folders.
+- Follow-ons shipped 2026-07-20: `Sharing.edit` (expiry/password via
+  credential reference; the expiry postcondition exposed that the Sharing API
+  silently ignores bare string values, so string parameters are now sent as
+  JSON literals — live-verified) and `Sharing.clear_invalid`, both as
+  `sharelink_edit` / `sharelink_clear_invalid` plan/apply actions with
+  `file share-link edit|clear-invalid` CLI wrappers; live-verified on the lab
+  with a disposable folder/link (future expiry -> past expiry -> cleared),
+  fully cleaned up. Still possible later: `Thumb.get` (needs a binary
+  transport slot and a disposable image asset) and
+  `BackgroundTask.clear_finished` (needs a remote-scope class for a direct
+  mutation tool), plus a synchronous `DirSize` path for trivially small
+  folders.

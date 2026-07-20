@@ -45,8 +45,9 @@ read-only.
 
 Download tasks are created and controlled through the same hash-bound plan/apply
 contract as the other modules. One request performs exactly one action —
-`create` (with `uris` and an optional `destination`), or `pause` / `resume` /
-`delete` (with `task_ids`):
+`create` (with `uris` and an optional `destination`), `pause` / `resume` /
+`delete` (with `task_ids`), or `edit` (with `task_ids` and a required
+`destination` to re-target the tasks):
 
 ```console
 echo '{"action":"create","uris":["https://example.com/file.iso"],"destination":"Share"}' \
@@ -58,15 +59,21 @@ dsmctl download tasks apply --nas office -f pause.plan.json --approve <hash>
 ```
 
 A control plan binds to the **stable identity** of the target tasks (id, title,
-type) — not their volatile transfer progress — so an apply fails cleanly if a
-target has since disappeared, while a download progressing does not invalidate
-the plan. Apply verifies the postcondition afterward: `create` confirms a task
-with a matching uri exists, `pause`/`resume` confirm the paused state, and
-`delete` confirms the task is gone. Per-task failures in DSM's response are
-surfaced, never silently dropped. `create` and `resume` make the NAS fetch
-external content and `delete` removes the task, so those are **high** risk;
-`pause` is medium. MCP exposes `plan_download_station_task_change` and
-`apply_download_station_task_plan` (excluded from the read-only gateway).
+type — and for `edit` the observed destination) — not their volatile transfer
+progress — so an apply fails cleanly if a target has since disappeared, while a
+download progressing does not invalidate the plan. Apply verifies the
+postcondition afterward: `create` confirms a task with a matching uri exists,
+`pause`/`resume` confirm the paused state, `delete` confirms the task is gone,
+and `edit` confirms each task reports the new destination. Per-task failures in
+DSM's response are surfaced, never silently dropped. `create` and `resume` make
+the NAS fetch external content and `delete` removes the task, so those are
+**high** risk; `pause` and `edit` are medium (editing moves the task's data to
+the new destination). `edit` uses the legacy Task API method `edit`, which
+exists from **version 2** (v1 returns error 103), so it is a separately gated
+operation (`download.task.edit`) that fails closed on a NAS advertising only
+Task v1. Task rename is not a Download Station feature. MCP exposes
+`plan_download_station_task_change` and `apply_download_station_task_plan`
+(excluded from the read-only gateway).
 
 ## Guarded settings write
 
@@ -87,8 +94,16 @@ exactly one patch-only group patch. The writable groups are:
   PAR2 repair, connections per download, max download rate).
 
   Auto-extraction and NZB are applied as **partial sets** — only the patched
-  non-secret fields are sent, so the passwords the read never returns are never
-  touched. Changing a password is out of scope; use the DSM UI.
+  fields are sent, so the passwords the read never returns are left untouched
+  by default. Passwords change only through **credential references**: the NZB
+  patch takes `password_ref` (e.g. `env:MY_NZB_PASSWORD`) and auto-extraction
+  takes `passwords_ref` resolving to a newline-separated password list. The
+  reference — never the value — is what enters the plan; it resolves only while
+  an approved plan is applied. `clear_password` / `clear_passwords` remove the
+  stored secrets explicitly (an empty environment variable is rejected by the
+  resolver). The auto-extraction postcondition re-checks the
+  `password_configured` flag; the NZB API returns no password indicator, so
+  that write is confirmed by DSM's success response only.
 
 ```console
 echo '{"bt":{"max_upload_rate":15,"enable_preview":false}}' | dsmctl download settings plan --nas office -o bt.plan.json
@@ -103,7 +118,11 @@ router (external exposure) and is high risk; other changes are medium. MCP
 exposes `plan_download_station_settings_change` and
 `apply_download_station_settings_plan` (excluded from the read-only gateway).
 
-Two DSM behaviors the guard accounts for. The scheduler `schedule` is a
+Three DSM behaviors the guard accounts for. An **empty string form value is
+dropped** by the DownloadStation2 JSON-request parser (live-verified: sending
+`username=` left the stored name untouched, caught by the postcondition), so
+dsmctl encodes an empty string as the JSON literal `""`, which does clear the
+field. The scheduler `schedule` is a
 168-character weekly bitmap that must be sent as a quoted JSON string (an
 all-digit value otherwise parses as a number and DSM rejects it). The location
 default destination is a **per-user share binding**: DSM applies it but provides
@@ -112,9 +131,9 @@ no API to clear it back to unset, so a set can only re-point it to another share
 which the reader normalizes to empty so a subsequent set does not echo the
 sentinel back and fail path validation.
 
-Field shapes and set semantics are live-verified on Download Station 4.1.2. Still
-out of scope: the **passwords** in the NZB and auto-extraction groups (the writes
-cover only non-secret fields), the eMule group (enabling it starts the eMule
-service), task `edit` (rename/re-target), BT/eMule search, RSS feed management,
+Field shapes and set semantics are live-verified on Download Station 4.1.2,
+including the task edit round-trip and both password writes (set via
+credential reference, then cleared). Still out of scope: the eMule group
+(enabling it starts the eMule service), BT/eMule search, RSS feed management,
 and eMule server management — see
 [WI-043](../spec/work-items/WI-043-download-station.md).
