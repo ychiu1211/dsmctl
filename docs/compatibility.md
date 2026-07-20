@@ -137,6 +137,46 @@ The selector chooses a backend before executing it. It does not try every implem
 
 Read operations may later implement a bounded fallback only for explicit unsupported-method or incompatible-schema signals. Authentication, authorization, TLS, network, and internal DSM errors must be returned directly.
 
+## Live-verification evidence record
+
+This table records the exact DSM build, and any relevant package version, each
+module or operation group was live-verified against. It is **documentation of
+observed history, not a runtime gate** — the compatibility selector never reads
+it, and it must never be used to widen operation support beyond what advertised
+APIs and verified release/package evidence already permit. It complements the
+per-operation `capabilities` report, which reflects what the *connected* NAS
+advertises at runtime.
+
+| Module / operation group | DSM build verified | Relevant package version | Work item(s) |
+| --- | --- | --- | --- |
+| Package Center (inventory, PHP profile, guarded update) | DSM 7.3-81168 | — | WI-029 |
+| Storage & SAN | DSM 7.3 | — | — |
+| File Station (reads, sharing, transfer, thumbnail) | DSM 7.3 | — | WI-049 |
+| Certificate (read) | DSM 7.3 | — | WI-065 |
+| External Access (Synology Account, QuickConnect, DDNS, port forwarding) | DSM 7.3-81168 (DS3018xs) | QuickConnect API v3 | WI-041 |
+| Download Station | DSM 7.3 | Download Station 4.1.2 | WI-043 |
+| Synology Office (settings, system, fonts) | DSM 7.3.2-86009 Update 1 (DS923+) | Synology Office 3.7.2-22592 | WI-051, WI-052 |
+| Synology Drive — team folders | DSM 7.3.2 | Synology Drive 4.0.3-27892 | WI-050 |
+| Synology Drive — admin (nodes, connections, logs, activation) | DSM 7.3.2 | Synology Drive 4.0.3-27892 | WI-053–WI-057 |
+
+### Adding a row
+
+When an operation group is live-verified against a NAS, add or update its row
+with:
+
+1. The DSM build string from a safe information operation — prefer the most
+   specific form available (`7.3.2-86009 Update 1`, `7.3-81168`), not just the
+   `7.3` train.
+2. The relevant package version (`stable id` plus parsed version, e.g.
+   `Synology Office 3.7.2-22592`) for a package-scoped module, or `—` for a
+   DSM-core module.
+3. The work item(s) under which the verification was performed.
+
+Record only what was actually observed live. A source-derived request shape that
+was shipped without a live apply (for example a registration-style write the
+safety policy forbids exercising) is noted in its work item's handoff, not added
+here as verified.
+
 Mutating operations must never switch variants after execution begins. Control Panel and SAN writes must select and validate one backend during planning, then apply through that same backend so a partial change cannot be followed by a second implementation.
 
 ## Tests

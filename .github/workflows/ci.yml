@@ -9,6 +9,45 @@ permissions:
 
 jobs:
   test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Guard against live-test environment variables
+        shell: bash
+        run: |
+          leaked=""
+          for var in DSMCTL_LIVE_NAS DSMCTL_LIVE_CONFIG DSMCTL_MCP_BINARY DSMCTL_LIVE_MUTATIONS DSMCTL_LIVE_SAN_MUTATIONS; do
+            if [[ -n "${!var:-}" ]]; then
+              echo "::error::$var is set in CI; live and destructive DSM tests must never run in CI"
+              leaked="1"
+            fi
+          done
+          if [[ -n "$leaked" ]]; then
+            exit 1
+          fi
+          echo "no live-test environment variables set; integration live tests will skip"
+      - name: Resolve and verify shared source version
+        shell: bash
+        run: |
+          source_version="$(go run ./cmd/dsmctl --version | awk '{print $NF}')"
+          test "$source_version" = "$(go run ./cmd/dsmctl-mcp --version | awk '{print $NF}')"
+          test "$source_version" = "$(go run ./cmd/dsmctl-gateway --version | awk '{print $NF}')"
+      - run: go build ./cmd/dsmctl ./cmd/dsmctl-mcp ./cmd/dsmctl-gateway
+      - run: go vet ./...
+      - run: go test ./...
+      - name: Confirm live integration tests skip without a live environment
+        shell: bash
+        run: go test ./integration -run Live -v
+
+  gateway-image:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -16,16 +55,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Resolve and verify shared source version
+      - name: Resolve shared source version
         shell: bash
         run: |
           source_version="$(go run ./cmd/dsmctl --version | awk '{print $NF}')"
-          test "$source_version" = "$(go run ./cmd/dsmctl-mcp --version | awk '{print $NF}')"
-          test "$source_version" = "$(go run ./cmd/dsmctl-gateway --version | awk '{print $NF}')"
           echo "DSMCTL_SOURCE_VERSION=$source_version" >> "$GITHUB_ENV"
-      - run: go test ./...
-      - run: go vet ./...
-      - run: go build ./cmd/dsmctl ./cmd/dsmctl-mcp ./cmd/dsmctl-gateway
       - run: go build -trimpath -o /tmp/dsmctl-gateway ./cmd/dsmctl-gateway
         env:
           CGO_ENABLED: "0"

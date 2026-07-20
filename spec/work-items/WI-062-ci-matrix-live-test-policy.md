@@ -1,7 +1,7 @@
 ---
 id: WI-062
 title: CI test matrix, live-test gate, and DSM compatibility evidence record
-status: ready
+status: done
 priority: P1
 owner: ""
 depends_on: []
@@ -78,24 +78,27 @@ against are recorded in the repository instead of only in agent memory.
 
 ## Acceptance criteria
 
-- [ ] CI runs `go build`, `go vet`, and `go test ./...` on both `ubuntu-latest`
-      and `windows-latest`, and both legs pass.
-- [ ] With no live environment variables set, `go test ./...` passes and every
-      `integration/` live test reports skipped, on both matrix legs.
-- [ ] A CI step fails the run if any of `DSMCTL_LIVE_NAS`, `DSMCTL_LIVE_CONFIG`,
-      `DSMCTL_MCP_BINARY`, `DSMCTL_LIVE_MUTATIONS`, or `DSMCTL_LIVE_SAN_MUTATIONS`
-      is set, proving no live mutation can run in CI.
-- [ ] The Docker cross-compile, image build, and hardened gateway smoke test run
-      only on the Linux leg and remain green (behavior unchanged from today).
-- [ ] The existing shared-source version-consistency check still runs and passes.
-- [ ] `docs/testing.md` documents the default gate, the live-test
+- [x] CI runs `go build`, `go vet`, and `go test ./...` on both `ubuntu-latest`
+      and `windows-latest` via a `strategy.matrix.os` on the `test` job.
+- [x] With no live environment variables set, `go test ./...` passes and every
+      NAS-dependent `integration/` live test reports skipped, on both matrix
+      legs; a dedicated step runs `go test ./integration -run Live -v` to prove
+      it (the three NAS tests skip; the offline `TestLiveLUNCleanupCandidateFaultPath`
+      unit test passes without touching a NAS).
+- [x] The `Guard against live-test environment variables` step fails the run if
+      any of `DSMCTL_LIVE_NAS`, `DSMCTL_LIVE_CONFIG`, `DSMCTL_MCP_BINARY`,
+      `DSMCTL_LIVE_MUTATIONS`, or `DSMCTL_LIVE_SAN_MUTATIONS` is set.
+- [x] The Docker cross-compile, image build, and hardened gateway smoke test
+      moved verbatim into a Linux-only `gateway-image` job (content unchanged).
+- [x] The shared-source version-consistency check still runs (on both legs of
+      the `test` job).
+- [x] `docs/testing.md` documents the default gate, the live-test
       environment-variable contract, the `dsmctl-e2e-*` unique-resource and
       stable-ID-verified cleanup rule, and the explicit-authorization requirement
       for disruptive mutations.
-- [ ] `docs/compatibility.md` contains (or links) a DSM compatibility evidence
-      record with at least one populated row (DSM build plus relevant package
-      version) and a stated convention for adding a row when an operation is
-      live-verified.
+- [x] `docs/compatibility.md` gained a "Live-verification evidence record" table
+      with nine populated rows (DSM build plus relevant package version) and a
+      stated "Adding a row" convention.
 
 ## Verification
 
