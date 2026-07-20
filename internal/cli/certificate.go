@@ -31,7 +31,7 @@ func newCertificateCapabilitiesCommand(opts *options) *cobra.Command {
 		Short: "Show certificate operation support and the selected backend",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
@@ -64,7 +64,7 @@ func newCertificateListCommand(opts *options) *cobra.Command {
 		Short: "List installed certificates, their expiry, and the services they serve",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			service, err := loadService(opts.configPath)
+			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
