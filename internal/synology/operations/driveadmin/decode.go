@@ -134,6 +134,84 @@ func decodeLog(data json.RawMessage) (driveadmin.Log, error) {
 	return result, nil
 }
 
+// decodeConnectionSummary reads Connection.summary v2. Verified live on Drive
+// 4.0.3: {"summary":{"desktop":0,"mobile":0,"sharesync":0,"total":0}}.
+func decodeConnectionSummary(data json.RawMessage) (driveadmin.ConnectionSummary, error) {
+	root, err := decodeObject(data, "Drive connection summary")
+	if err != nil {
+		return driveadmin.ConnectionSummary{}, err
+	}
+	summary, ok := root["summary"].(map[string]any)
+	if !ok {
+		return driveadmin.ConnectionSummary{}, fmt.Errorf("decode Drive connection summary: no summary object among %s", availableKeys(root))
+	}
+	return driveadmin.ConnectionSummary{
+		Desktop:   intValue(summary, "desktop"),
+		Mobile:    intValue(summary, "mobile"),
+		ShareSync: intValue(summary, "sharesync"),
+		Total:     intValue(summary, "total"),
+	}, nil
+}
+
+// decodeDBUsage reads DBUsage.get. Verified live on Drive 4.0.3:
+// {"database_size":…,"office_size":…,"repo_size":…,"update_time":…}.
+func decodeDBUsage(data json.RawMessage) (driveadmin.DBUsage, error) {
+	root, err := decodeObject(data, "Drive database usage")
+	if err != nil {
+		return driveadmin.DBUsage{}, err
+	}
+	if _, ok := root["repo_size"]; !ok {
+		return driveadmin.DBUsage{}, fmt.Errorf("decode Drive database usage: no repo_size field among %s", availableKeys(root))
+	}
+	return driveadmin.DBUsage{
+		RepositorySize: int64Value(root, "repo_size"),
+		DatabaseSize:   int64Value(root, "database_size"),
+		OfficeSize:     int64Value(root, "office_size"),
+		UpdatedUnix:    int64Value(root, "update_time"),
+	}, nil
+}
+
+// decodeTopAccessFiles reads Dashboard.top_access_files. The envelope
+// ({"files":[…]}) was verified live on Drive 4.0.3; row fields come from
+// Drive's access-log aggregation and are decoded leniently.
+func decodeTopAccessFiles(data json.RawMessage) (driveadmin.TopAccessFiles, error) {
+	root, err := decodeObject(data, "Drive top access files")
+	if err != nil {
+		return driveadmin.TopAccessFiles{}, err
+	}
+	items, ok := objectList(root, "files", "items", "data")
+	if !ok {
+		return driveadmin.TopAccessFiles{}, fmt.Errorf("decode Drive top access files: no file array among %s", availableKeys(root))
+	}
+	result := driveadmin.TopAccessFiles{Files: make([]driveadmin.TopAccessFile, 0, len(items))}
+	for _, item := range items {
+		result.Files = append(result.Files, driveadmin.TopAccessFile{
+			Path:        stringValue(item, "path", "file_path", "display_path"),
+			Name:        stringValue(item, "name", "file_name"),
+			AccessCount: intValue(item, "access_count", "count", "total"),
+		})
+	}
+	return result, nil
+}
+
+// decodeActivation reads Activation.get. Verified live on Drive 4.0.3:
+// {"activated":false,"activation_time":0,"serial_number":"…"}.
+func decodeActivation(data json.RawMessage) (driveadmin.Activation, error) {
+	root, err := decodeObject(data, "Drive activation")
+	if err != nil {
+		return driveadmin.Activation{}, err
+	}
+	activated, ok := boolValue(root, "activated")
+	if !ok {
+		return driveadmin.Activation{}, fmt.Errorf("decode Drive activation: required field \"activated\" is missing or not boolean among %s", availableKeys(root))
+	}
+	return driveadmin.Activation{
+		Activated:      activated,
+		SerialNumber:   stringValue(root, "serial_number"),
+		ActivationUnix: int64Value(root, "activation_time"),
+	}, nil
+}
+
 func decodeObject(data json.RawMessage, what string) (map[string]any, error) {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()

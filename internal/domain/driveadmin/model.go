@@ -65,6 +65,53 @@ type TeamFolders struct {
 	TeamFolders []TeamFolder `json:"team_folders" jsonschema:"Team folders reported by the Drive Admin Console"`
 }
 
+// ConnectionSummary counts active Drive client connections by family, as
+// shown on the Admin Console overview.
+type ConnectionSummary struct {
+	Desktop   int `json:"desktop" jsonschema:"Desktop sync clients (Drive, Drive Client backup, legacy Cloud Station)"`
+	Mobile    int `json:"mobile" jsonschema:"Mobile clients (Drive mobile, DS cloud)"`
+	ShareSync int `json:"sharesync" jsonschema:"Server-to-server sync connections (ShareSync)"`
+	Total     int `json:"total" jsonschema:"All active connections"`
+}
+
+// DBUsage is Drive's cached database usage breakdown in bytes.
+type DBUsage struct {
+	RepositorySize int64 `json:"repository_size" jsonschema:"Version repository size in bytes"`
+	DatabaseSize   int64 `json:"database_size" jsonschema:"Drive database size in bytes"`
+	OfficeSize     int64 `json:"office_size" jsonschema:"Synology Office document size in bytes"`
+	UpdatedUnix    int64 `json:"updated_unix,omitempty" jsonschema:"Unix time the cached usage was calculated"`
+}
+
+// TopAccessQuery selects the Admin Console top-accessed-files ranking.
+type TopAccessQuery struct {
+	RankingBy  string `json:"ranking_by,omitempty" jsonschema:"Ranking source: both (default), preview, or download"`
+	PeriodDays int    `json:"period_days,omitempty" jsonschema:"Days of history to rank, defaults to 1"`
+	Limit      int    `json:"limit,omitempty" jsonschema:"Maximum files to return; defaults to a bounded page size"`
+	Offset     int    `json:"offset,omitempty" jsonschema:"Number of entries to skip for pagination"`
+}
+
+// TopAccessFile is one ranked entry. Drive reports rows from its access log
+// aggregation; field presence varies, so entries are decoded leniently.
+type TopAccessFile struct {
+	Path        string `json:"path,omitempty" jsonschema:"File path when reported"`
+	Name        string `json:"name,omitempty" jsonschema:"File name when reported"`
+	AccessCount int    `json:"access_count,omitempty" jsonschema:"Aggregated access count when reported"`
+}
+
+// TopAccessFiles is the ranked list.
+type TopAccessFiles struct {
+	Files []TopAccessFile `json:"files" jsonschema:"Ranked files, most accessed first"`
+}
+
+// Activation reports Drive's package activation (the Admin Console's online
+// registration against the NAS serial number). An unactivated Drive still
+// serves clients; activation gates nothing dsmctl manages.
+type Activation struct {
+	Activated      bool   `json:"activated" jsonschema:"Whether the Drive package has been activated"`
+	SerialNumber   string `json:"serial_number,omitempty" jsonschema:"NAS serial number the activation binds to"`
+	ActivationUnix int64  `json:"activation_unix,omitempty" jsonschema:"Unix time of activation; 0 when not activated"`
+}
+
 // LogQuery selects and pages Drive server log entries. All filters are applied
 // by the Drive package. TeamFolder narrows the scope to one Drive team folder;
 // when empty, logs from every scope are returned.
@@ -158,4 +205,8 @@ type Capabilities struct {
 	TeamFoldersSet  bool            `json:"team_folders_set" jsonschema:"Whether guarded team-folder enable/disable and versioning changes are available"`
 	ConfigRead      bool            `json:"config_read" jsonschema:"Whether the Drive server database configuration can be read"`
 	ConfigSet       bool            `json:"config_set" jsonschema:"Whether guarded Drive server database configuration changes are available"`
+	ConnectionSummaryRead bool      `json:"connection_summary_read" jsonschema:"Whether the connection-count summary can be read"`
+	DBUsageRead     bool            `json:"db_usage_read" jsonschema:"Whether the cached database usage can be read"`
+	DashboardRead   bool            `json:"dashboard_read" jsonschema:"Whether the top-accessed-files ranking can be read"`
+	ActivationRead  bool            `json:"activation_read" jsonschema:"Whether the package activation state can be read"`
 }

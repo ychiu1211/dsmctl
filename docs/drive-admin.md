@@ -65,8 +65,34 @@ dsmctl drive admin log list --nas office --username alice --keyword report --fro
   rendered message, so entries surface the structured fields: time, username,
   client type, IP address, event code, path, and team folder.
 
+Observability reads round out the overview page (WI-052):
+
+```console
+dsmctl drive admin summary --nas office
+dsmctl drive admin db-usage --nas office
+dsmctl drive admin top-files --nas office --ranking-by download --period-days 7 --limit 20
+dsmctl drive admin activation --nas office
+```
+
+- `summary` counts active connections by client family (desktop, mobile,
+  ShareSync) via `SYNO.SynologyDrive.Connection` `summary` v2.
+- `db-usage` reports Drive's cached storage breakdown (version repository,
+  database, Synology Office documents, all bytes) and when the cache was
+  calculated (`SYNO.SynologyDrive.DBUsage` `get`); triggering a recalculation
+  is deferred.
+- `top-files` ranks the most accessed files from Drive's access log
+  (`SYNO.SynologyDrive.Dashboard` `top_access_files`), optionally by preview
+  or download activity only.
+- `activation` reports whether the package completed its online activation
+  (registration against the NAS serial). An unactivated Drive still serves
+  clients — verified live — so this is informational; performing the
+  activation requires the Admin Console's online activation-code exchange and
+  stays deferred.
+
 MCP tools: `get_drive_admin_status`, `get_drive_admin_connections`,
-`get_drive_admin_team_folders`, `get_drive_admin_logs`.
+`get_drive_admin_team_folders`, `get_drive_admin_logs`,
+`get_drive_connection_summary`, `get_drive_db_usage`, `get_drive_top_files`,
+`get_drive_activation`.
 
 ## Team folders (guarded write)
 

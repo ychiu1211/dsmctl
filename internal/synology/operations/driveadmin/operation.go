@@ -30,12 +30,19 @@ const (
 	ConnectionAPIName = "SYNO.SynologyDrive.Connection"
 	ShareAPIName      = "SYNO.SynologyDrive.Share"
 	LogAPIName        = "SYNO.SynologyDrive.Log"
+	DBUsageAPIName    = "SYNO.SynologyDrive.DBUsage"
+	DashboardAPIName  = "SYNO.SynologyDrive.Dashboard"
+	ActivationAPIName = "SYNO.SynologyDrive.Activation"
 
-	StatusCapabilityName         = "drive.admin.status.read"
-	ConnectionsCapabilityName    = "drive.admin.connections.read"
-	TeamFoldersCapabilityName    = "drive.admin.teamfolders.read"
-	LogCapabilityName            = "drive.admin.log.read"
-	TeamFoldersSetCapabilityName = "drive.admin.teamfolders.set"
+	StatusCapabilityName            = "drive.admin.status.read"
+	ConnectionsCapabilityName       = "drive.admin.connections.read"
+	TeamFoldersCapabilityName       = "drive.admin.teamfolders.read"
+	LogCapabilityName               = "drive.admin.log.read"
+	TeamFoldersSetCapabilityName    = "drive.admin.teamfolders.set"
+	ConnectionSummaryCapabilityName = "drive.admin.connections.summary.read"
+	DBUsageCapabilityName           = "drive.admin.dbusage.read"
+	DashboardCapabilityName         = "drive.admin.dashboard.read"
+	ActivationCapabilityName        = "drive.admin.activation.read"
 )
 
 // baselinePackage gates every variant on the verified Drive 3+/4 Admin Console
@@ -223,10 +230,88 @@ var teamFoldersSetOperation = compatibility.Operation[TeamFolderSetInput, TeamFo
 	},
 }
 
+// connectionSummaryOperation reads the Admin Console overview counters. The
+// summary method exists only at Connection v2 (verified live: v1 answers 103).
+var connectionSummaryOperation = compatibility.Operation[Input, driveadmin.ConnectionSummary]{
+	Name: ConnectionSummaryCapabilityName,
+	Variants: []compatibility.Variant[Input, driveadmin.ConnectionSummary]{
+		{
+			Name: "drive-connection-v2", API: ConnectionAPIName, Version: 2, Priority: 10,
+			Match: compatibility.All(compatibility.APIVersion(ConnectionAPIName, 2), baselinePackage),
+			Execute: func(ctx context.Context, executor compatibility.Executor, _ Input) (driveadmin.ConnectionSummary, error) {
+				data, err := executor.Execute(ctx, compatibility.Request{API: ConnectionAPIName, Version: 2, Method: "summary"})
+				if err != nil {
+					return driveadmin.ConnectionSummary{}, fmt.Errorf("call %s.summary v2: %w", ConnectionAPIName, err)
+				}
+				return decodeConnectionSummary(data)
+			},
+		},
+	},
+}
+
+var dbUsageOperation = compatibility.Operation[Input, driveadmin.DBUsage]{
+	Name: DBUsageCapabilityName,
+	Variants: []compatibility.Variant[Input, driveadmin.DBUsage]{
+		{
+			Name: "drive-dbusage-v1", API: DBUsageAPIName, Version: 1, Priority: 10,
+			Match: compatibility.All(compatibility.APIVersion(DBUsageAPIName, 1), baselinePackage),
+			Execute: func(ctx context.Context, executor compatibility.Executor, _ Input) (driveadmin.DBUsage, error) {
+				data, err := executor.Execute(ctx, compatibility.Request{API: DBUsageAPIName, Version: 1, Method: "get"})
+				if err != nil {
+					return driveadmin.DBUsage{}, fmt.Errorf("call %s.get v1: %w", DBUsageAPIName, err)
+				}
+				return decodeDBUsage(data)
+			},
+		},
+	},
+}
+
+var dashboardOperation = compatibility.Operation[driveadmin.TopAccessQuery, driveadmin.TopAccessFiles]{
+	Name: DashboardCapabilityName,
+	Variants: []compatibility.Variant[driveadmin.TopAccessQuery, driveadmin.TopAccessFiles]{
+		{
+			Name: "drive-dashboard-v1", API: DashboardAPIName, Version: 1, Priority: 10,
+			Match: compatibility.All(compatibility.APIVersion(DashboardAPIName, 1), baselinePackage),
+			Execute: func(ctx context.Context, executor compatibility.Executor, query driveadmin.TopAccessQuery) (driveadmin.TopAccessFiles, error) {
+				data, err := executor.Execute(ctx, compatibility.Request{
+					API: DashboardAPIName, Version: 1, Method: "top_access_files",
+					JSONParameters: map[string]any{
+						"ranking_by":  query.RankingBy,
+						"period_days": query.PeriodDays,
+						"limit":       query.Limit,
+						"offset":      query.Offset,
+					},
+				})
+				if err != nil {
+					return driveadmin.TopAccessFiles{}, fmt.Errorf("call %s.top_access_files v1: %w", DashboardAPIName, err)
+				}
+				return decodeTopAccessFiles(data)
+			},
+		},
+	},
+}
+
+var activationOperation = compatibility.Operation[Input, driveadmin.Activation]{
+	Name: ActivationCapabilityName,
+	Variants: []compatibility.Variant[Input, driveadmin.Activation]{
+		{
+			Name: "drive-activation-v1", API: ActivationAPIName, Version: 1, Priority: 10,
+			Match: compatibility.All(compatibility.APIVersion(ActivationAPIName, 1), baselinePackage),
+			Execute: func(ctx context.Context, executor compatibility.Executor, _ Input) (driveadmin.Activation, error) {
+				data, err := executor.Execute(ctx, compatibility.Request{API: ActivationAPIName, Version: 1, Method: "get"})
+				if err != nil {
+					return driveadmin.Activation{}, fmt.Errorf("call %s.get v1: %w", ActivationAPIName, err)
+				}
+				return decodeActivation(data)
+			},
+		},
+	},
+}
+
 // APINames lists every DSM API this module may use, so the facade can discover
 // them in one call before selecting variants.
 func APINames() []string {
-	return []string{StatusAPIName, ConnectionAPIName, ShareAPIName, LogAPIName, ConfigAPIName}
+	return []string{StatusAPIName, ConnectionAPIName, ShareAPIName, LogAPIName, ConfigAPIName, DBUsageAPIName, DashboardAPIName, ActivationAPIName}
 }
 
 func SelectStatus(target compatibility.Target) (compatibility.Selection, error) {
@@ -293,4 +378,40 @@ func ExecuteTeamFoldersSet(ctx context.Context, target compatibility.Target, exe
 		result.Backend, result.API, result.Version, result.Method = selection.Backend, selection.API, selection.Version, "set"
 	}
 	return result, selection, err
+}
+
+func SelectConnectionSummary(target compatibility.Target) (compatibility.Selection, error) {
+	_, selection, err := connectionSummaryOperation.Select(target)
+	return selection, err
+}
+
+func SelectDBUsage(target compatibility.Target) (compatibility.Selection, error) {
+	_, selection, err := dbUsageOperation.Select(target)
+	return selection, err
+}
+
+func SelectDashboard(target compatibility.Target) (compatibility.Selection, error) {
+	_, selection, err := dashboardOperation.Select(target)
+	return selection, err
+}
+
+func SelectActivation(target compatibility.Target) (compatibility.Selection, error) {
+	_, selection, err := activationOperation.Select(target)
+	return selection, err
+}
+
+func ExecuteConnectionSummary(ctx context.Context, target compatibility.Target, executor compatibility.Executor) (driveadmin.ConnectionSummary, compatibility.Selection, error) {
+	return connectionSummaryOperation.Run(ctx, target, executor, Input{})
+}
+
+func ExecuteDBUsage(ctx context.Context, target compatibility.Target, executor compatibility.Executor) (driveadmin.DBUsage, compatibility.Selection, error) {
+	return dbUsageOperation.Run(ctx, target, executor, Input{})
+}
+
+func ExecuteDashboard(ctx context.Context, target compatibility.Target, executor compatibility.Executor, query driveadmin.TopAccessQuery) (driveadmin.TopAccessFiles, compatibility.Selection, error) {
+	return dashboardOperation.Run(ctx, target, executor, query)
+}
+
+func ExecuteActivation(ctx context.Context, target compatibility.Target, executor compatibility.Executor) (driveadmin.Activation, compatibility.Selection, error) {
+	return activationOperation.Run(ctx, target, executor, Input{})
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/application"
 	"github.com/ychiu1211/dsmctl/internal/domain/driveadmin"
 	"github.com/ychiu1211/dsmctl/internal/domain/syslog"
+	"github.com/ychiu1211/dsmctl/internal/synology"
 )
 
 func newDriveCommand(opts *options) *cobra.Command {
@@ -135,7 +136,150 @@ func newDriveAdminCommand(opts *options) *cobra.Command {
 		newDriveAdminConnectionsCommand(opts),
 		newDriveAdminTeamFoldersCommand(opts),
 		newDriveAdminLogCommand(opts),
+		newDriveAdminSummaryCommand(opts),
+		newDriveAdminDBUsageCommand(opts),
+		newDriveAdminTopFilesCommand(opts),
+		newDriveAdminActivationCommand(opts),
 	)
+	return command
+}
+
+func newDriveAdminSummaryCommand(opts *options) *cobra.Command {
+	var jsonOutput bool
+	command := &cobra.Command{
+		Use:   "summary",
+		Short: "Show active Drive connection counts by client family",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			service, err := loadService(opts.configPath)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.GetDriveConnectionSummary(cmd.Context(), opts.nas)
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				return encodeIndentedJSON(cmd.OutOrStdout(), result)
+			}
+			writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+			fmt.Fprintf(writer, "NAS:\t%s\n", result.NAS)
+			fmt.Fprintf(writer, "Desktop:\t%d\n", result.Summary.Desktop)
+			fmt.Fprintf(writer, "Mobile:\t%d\n", result.Summary.Mobile)
+			fmt.Fprintf(writer, "ShareSync:\t%d\n", result.Summary.ShareSync)
+			fmt.Fprintf(writer, "Total:\t%d\n", result.Summary.Total)
+			return writer.Flush()
+		},
+	}
+	command.Flags().BoolVar(&jsonOutput, "json", false, "output structured JSON")
+	return command
+}
+
+func newDriveAdminDBUsageCommand(opts *options) *cobra.Command {
+	var jsonOutput bool
+	command := &cobra.Command{
+		Use:   "db-usage",
+		Short: "Show Drive's cached database usage breakdown",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			service, err := loadService(opts.configPath)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.GetDriveDBUsage(cmd.Context(), opts.nas)
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				return encodeIndentedJSON(cmd.OutOrStdout(), result)
+			}
+			writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+			fmt.Fprintf(writer, "NAS:\t%s\n", result.NAS)
+			fmt.Fprintf(writer, "Version repository:\t%d bytes\n", result.Usage.RepositorySize)
+			fmt.Fprintf(writer, "Database:\t%d bytes\n", result.Usage.DatabaseSize)
+			fmt.Fprintf(writer, "Office documents:\t%d bytes\n", result.Usage.OfficeSize)
+			fmt.Fprintf(writer, "Calculated:\t%s\n", formatUnixTime(result.Usage.UpdatedUnix))
+			return writer.Flush()
+		},
+	}
+	command.Flags().BoolVar(&jsonOutput, "json", false, "output structured JSON")
+	return command
+}
+
+func newDriveAdminTopFilesCommand(opts *options) *cobra.Command {
+	var jsonOutput bool
+	var rankingBy string
+	var periodDays, limit, offset int
+	command := &cobra.Command{
+		Use:   "top-files",
+		Short: "Show the most accessed files ranked from Drive's access log",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			service, err := loadService(opts.configPath)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.GetDriveTopAccessFiles(cmd.Context(), opts.nas, synology.DriveTopAccessQuery{
+				RankingBy: rankingBy, PeriodDays: periodDays, Limit: limit, Offset: offset,
+			})
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				return encodeIndentedJSON(cmd.OutOrStdout(), result)
+			}
+			writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+			fmt.Fprintf(writer, "NAS:\t%s\n", result.NAS)
+			if len(result.Files.Files) == 0 {
+				fmt.Fprintln(writer, "No accessed files in the ranked period.")
+				return writer.Flush()
+			}
+			fmt.Fprintln(writer, "\nACCESS\tNAME\tPATH")
+			for _, file := range result.Files.Files {
+				fmt.Fprintf(writer, "%d\t%s\t%s\n", file.AccessCount, valueOrDash(file.Name), valueOrDash(file.Path))
+			}
+			return writer.Flush()
+		},
+	}
+	command.Flags().BoolVar(&jsonOutput, "json", false, "output structured JSON")
+	command.Flags().StringVar(&rankingBy, "ranking-by", "both", "ranking source: both, preview, or download")
+	command.Flags().IntVar(&periodDays, "period-days", 1, "days of history to rank")
+	command.Flags().IntVar(&limit, "limit", 50, "maximum files to return")
+	command.Flags().IntVar(&offset, "offset", 0, "entries to skip for pagination")
+	return command
+}
+
+func newDriveAdminActivationCommand(opts *options) *cobra.Command {
+	var jsonOutput bool
+	command := &cobra.Command{
+		Use:   "activation",
+		Short: "Show the Drive package activation state",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			service, err := loadService(opts.configPath)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.GetDriveActivation(cmd.Context(), opts.nas)
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				return encodeIndentedJSON(cmd.OutOrStdout(), result)
+			}
+			writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+			fmt.Fprintf(writer, "NAS:\t%s\n", result.NAS)
+			fmt.Fprintf(writer, "Activated:\t%s\n", yesNo(result.Activation.Activated))
+			fmt.Fprintf(writer, "Serial number:\t%s\n", valueOrDash(result.Activation.SerialNumber))
+			fmt.Fprintf(writer, "Activated at:\t%s\n", formatUnixTime(result.Activation.ActivationUnix))
+			return writer.Flush()
+		},
+	}
+	command.Flags().BoolVar(&jsonOutput, "json", false, "output structured JSON")
 	return command
 }
 
@@ -384,6 +528,10 @@ func writeDriveAdminCapabilities(cmd *cobra.Command, result application.DriveAdm
 	fmt.Fprintf(writer, "team folders read\t%s\n", yesNo(result.Capabilities.TeamFoldersRead))
 	fmt.Fprintf(writer, "log read\t%s\n", yesNo(result.Capabilities.LogRead))
 	fmt.Fprintf(writer, "team folders set\t%s\n", yesNo(result.Capabilities.TeamFoldersSet))
+	fmt.Fprintf(writer, "connection summary read\t%s\n", yesNo(result.Capabilities.ConnectionSummaryRead))
+	fmt.Fprintf(writer, "db usage read\t%s\n", yesNo(result.Capabilities.DBUsageRead))
+	fmt.Fprintf(writer, "dashboard read\t%s\n", yesNo(result.Capabilities.DashboardRead))
+	fmt.Fprintf(writer, "activation read\t%s\n", yesNo(result.Capabilities.ActivationRead))
 	fmt.Fprintln(writer, "\nOPERATION\tSUPPORTED\tBACKEND\tAPI\tVERSION")
 	for _, operation := range result.Report.Operations {
 		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\tv%d\n", operation.Operation, yesNo(operation.Supported), valueOrDash(operation.Backend), valueOrDash(operation.API), operation.Version)

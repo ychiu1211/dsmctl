@@ -21,6 +21,11 @@ type DriveServerConfigChange = driveadmin.ServerConfigChange
 type DriveConfigMutationResult = driveops.ConfigMutationResult
 type DriveTeamFolderChange = driveadmin.TeamFolderChange
 type DriveTeamFolderMutationResult = driveops.TeamFolderMutationResult
+type DriveConnectionSummary = driveadmin.ConnectionSummary
+type DriveDBUsage = driveadmin.DBUsage
+type DriveTopAccessQuery = driveadmin.TopAccessQuery
+type DriveTopAccessFiles = driveadmin.TopAccessFiles
+type DriveActivation = driveadmin.Activation
 
 // driveAdminEvidenceLocked reports the installed SynologyDrive package as
 // observed by the catalog refresh that ran in preparePackageScopedTargetLocked.
@@ -109,6 +114,70 @@ func (c *Client) DriveAdminLog(ctx context.Context, query DriveAdminLogQuery) (D
 	}
 	c.target.AddCapability(driveops.LogCapabilityName)
 	return log, nil
+}
+
+// DriveConnectionSummary reads the Admin Console overview connection counters.
+func (c *Client) DriveConnectionSummary(ctx context.Context) (DriveConnectionSummary, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.preparePackageScopedTargetLocked(ctx, driveops.APINames()...); err != nil {
+		return DriveConnectionSummary{}, fmt.Errorf("prepare Drive Admin target: %w", err)
+	}
+	summary, _, err := driveops.ExecuteConnectionSummary(ctx, c.target, lockedExecutor{client: c})
+	if err != nil {
+		return DriveConnectionSummary{}, driveAdminReadError("connection summary", c.driveAdminEvidenceLocked(), err)
+	}
+	c.target.AddCapability(driveops.ConnectionSummaryCapabilityName)
+	return summary, nil
+}
+
+// DriveDBUsage reads Drive's cached database usage breakdown.
+func (c *Client) DriveDBUsage(ctx context.Context) (DriveDBUsage, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.preparePackageScopedTargetLocked(ctx, driveops.APINames()...); err != nil {
+		return DriveDBUsage{}, fmt.Errorf("prepare Drive Admin target: %w", err)
+	}
+	usage, _, err := driveops.ExecuteDBUsage(ctx, c.target, lockedExecutor{client: c})
+	if err != nil {
+		return DriveDBUsage{}, driveAdminReadError("database usage", c.driveAdminEvidenceLocked(), err)
+	}
+	c.target.AddCapability(driveops.DBUsageCapabilityName)
+	return usage, nil
+}
+
+// DriveTopAccessFiles reads the Admin Console top-accessed-files ranking.
+func (c *Client) DriveTopAccessFiles(ctx context.Context, query DriveTopAccessQuery) (DriveTopAccessFiles, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.preparePackageScopedTargetLocked(ctx, driveops.APINames()...); err != nil {
+		return DriveTopAccessFiles{}, fmt.Errorf("prepare Drive Admin target: %w", err)
+	}
+	files, _, err := driveops.ExecuteDashboard(ctx, c.target, lockedExecutor{client: c}, query)
+	if err != nil {
+		return DriveTopAccessFiles{}, driveAdminReadError("top access files", c.driveAdminEvidenceLocked(), err)
+	}
+	c.target.AddCapability(driveops.DashboardCapabilityName)
+	return files, nil
+}
+
+// DriveActivation reads the Drive package activation state.
+func (c *Client) DriveActivation(ctx context.Context) (DriveActivation, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.preparePackageScopedTargetLocked(ctx, driveops.APINames()...); err != nil {
+		return DriveActivation{}, fmt.Errorf("prepare Drive Admin target: %w", err)
+	}
+	activation, _, err := driveops.ExecuteActivation(ctx, c.target, lockedExecutor{client: c})
+	if err != nil {
+		return DriveActivation{}, driveAdminReadError("activation", c.driveAdminEvidenceLocked(), err)
+	}
+	c.target.AddCapability(driveops.ActivationCapabilityName)
+	return activation, nil
 }
 
 // DriveServerConfig reads the Drive server database configuration.
@@ -237,6 +306,30 @@ func (c *Client) DriveAdminCapabilities(ctx context.Context) (DriveAdminCapabili
 		c.target.AddCapability(driveops.ConfigSetCapabilityName)
 	}
 	selections = append(selections, configRead, configSet)
+
+	// Observability reads (WI-052) are likewise selected after the stable
+	// Admin Console order.
+	extendedSelectors := []struct {
+		selectOperation func(compatibility.Target) (compatibility.Selection, error)
+		capability      string
+		supported       *bool
+	}{
+		{driveops.SelectConnectionSummary, driveops.ConnectionSummaryCapabilityName, &capabilities.ConnectionSummaryRead},
+		{driveops.SelectDBUsage, driveops.DBUsageCapabilityName, &capabilities.DBUsageRead},
+		{driveops.SelectDashboard, driveops.DashboardCapabilityName, &capabilities.DashboardRead},
+		{driveops.SelectActivation, driveops.ActivationCapabilityName, &capabilities.ActivationRead},
+	}
+	for _, extended := range extendedSelectors {
+		selection, err := extended.selectOperation(c.target)
+		if err != nil && !compatibility.IsUnsupported(err) {
+			return DriveAdminCapabilities{}, CompatibilityReport{}, fmt.Errorf("select %s backend: %w", extended.capability, err)
+		}
+		*extended.supported = selection.Supported
+		if selection.Supported {
+			c.target.AddCapability(extended.capability)
+		}
+		selections = append(selections, selection)
+	}
 	return capabilities, c.target.Report(selections...), nil
 }
 

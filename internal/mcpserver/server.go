@@ -1043,6 +1043,34 @@ type applyDriveConfigPlanOutput struct {
 	Result application.DriveConfigApplyResult `json:"result" jsonschema:"Drive config mutation result after stale-state and postcondition checks"`
 }
 
+type getDriveTopFilesInput struct {
+	NAS        string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	RankingBy  string `json:"ranking_by,omitempty" jsonschema:"Ranking source: both (default), preview, or download"`
+	PeriodDays int    `json:"period_days,omitempty" jsonschema:"Days of history to rank; defaults to 1"`
+	Limit      int    `json:"limit,omitempty" jsonschema:"Maximum files to return; defaults to 50, maximum 1000"`
+	Offset     int    `json:"offset,omitempty" jsonschema:"Entries to skip for pagination"`
+}
+
+type getDriveConnectionSummaryOutput struct {
+	NAS     string                          `json:"nas" jsonschema:"NAS profile used for the request"`
+	Summary synology.DriveConnectionSummary `json:"summary" jsonschema:"Active Drive connection counts by client family"`
+}
+
+type getDriveDBUsageOutput struct {
+	NAS   string                `json:"nas" jsonschema:"NAS profile used for the request"`
+	Usage synology.DriveDBUsage `json:"usage" jsonschema:"Cached Drive database usage in bytes"`
+}
+
+type getDriveTopFilesOutput struct {
+	NAS   string                       `json:"nas" jsonschema:"NAS profile used for the request"`
+	Files synology.DriveTopAccessFiles `json:"files" jsonschema:"Top accessed files, most accessed first"`
+}
+
+type getDriveActivationOutput struct {
+	NAS        string                   `json:"nas" jsonschema:"NAS profile used for the request"`
+	Activation synology.DriveActivation `json:"activation" jsonschema:"Drive package activation state"`
+}
+
 type planDriveTeamFolderChangeInput struct {
 	NAS     string                      `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
 	Request driveadmin.TeamFolderChange `json:"request" jsonschema:"Team-folder intent: enable, disable, or set_versioning for one shared folder"`
@@ -2757,6 +2785,60 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, applyDriveConfigPlanOutput{}, err
 		}
 		return nil, applyDriveConfigPlanOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_drive_connection_summary",
+		Title:       "Get Drive connection summary",
+		Description: "Read the Synology Drive Admin Console overview counters: active desktop sync clients, mobile clients, ShareSync server connections, and the total. This tool never changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDriveAdminInput) (*mcp.CallToolResult, getDriveConnectionSummaryOutput, error) {
+		result, err := service.GetDriveConnectionSummary(ctx, input.NAS)
+		if err != nil {
+			return nil, getDriveConnectionSummaryOutput{}, err
+		}
+		return nil, getDriveConnectionSummaryOutput{NAS: result.NAS, Summary: result.Summary}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_drive_db_usage",
+		Title:       "Get Drive database usage",
+		Description: "Read Synology Drive's cached storage breakdown: version repository size, database size, Synology Office document size (bytes), and when the cache was calculated. This tool never recalculates or changes anything.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDriveAdminInput) (*mcp.CallToolResult, getDriveDBUsageOutput, error) {
+		result, err := service.GetDriveDBUsage(ctx, input.NAS)
+		if err != nil {
+			return nil, getDriveDBUsageOutput{}, err
+		}
+		return nil, getDriveDBUsageOutput{NAS: result.NAS, Usage: result.Usage}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_drive_top_files",
+		Title:       "Get Drive top accessed files",
+		Description: "Read the Synology Drive Admin Console ranking of most accessed files over a recent period, optionally ranked by preview or download activity only. This tool never changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDriveTopFilesInput) (*mcp.CallToolResult, getDriveTopFilesOutput, error) {
+		result, err := service.GetDriveTopAccessFiles(ctx, input.NAS, synology.DriveTopAccessQuery{
+			RankingBy: input.RankingBy, PeriodDays: input.PeriodDays, Limit: input.Limit, Offset: input.Offset,
+		})
+		if err != nil {
+			return nil, getDriveTopFilesOutput{}, err
+		}
+		return nil, getDriveTopFilesOutput{NAS: result.NAS, Files: result.Files}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_drive_activation",
+		Title:       "Get Drive activation state",
+		Description: "Read whether the Synology Drive package has completed its online activation (registration against the NAS serial number), and when. An unactivated Drive still serves clients; activating requires the Admin Console's online activation-code exchange, which dsmctl does not perform. This tool never changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDriveAdminInput) (*mcp.CallToolResult, getDriveActivationOutput, error) {
+		result, err := service.GetDriveActivation(ctx, input.NAS)
+		if err != nil {
+			return nil, getDriveActivationOutput{}, err
+		}
+		return nil, getDriveActivationOutput{NAS: result.NAS, Activation: result.Activation}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

@@ -44,6 +44,22 @@ func (c *fakeDriveAdminClient) DriveServerConfig(context.Context) (synology.Driv
 	return synology.DriveServerConfig{}, nil
 }
 
+func (c *fakeDriveAdminClient) DriveConnectionSummary(context.Context) (synology.DriveConnectionSummary, error) {
+	return synology.DriveConnectionSummary{}, nil
+}
+
+func (c *fakeDriveAdminClient) DriveDBUsage(context.Context) (synology.DriveDBUsage, error) {
+	return synology.DriveDBUsage{}, nil
+}
+
+func (c *fakeDriveAdminClient) DriveTopAccessFiles(context.Context, synology.DriveTopAccessQuery) (synology.DriveTopAccessFiles, error) {
+	return synology.DriveTopAccessFiles{}, nil
+}
+
+func (c *fakeDriveAdminClient) DriveActivation(context.Context) (synology.DriveActivation, error) {
+	return synology.DriveActivation{}, nil
+}
+
 func (c *fakeDriveAdminClient) ApplyDriveServerConfigChange(context.Context, driveadmin.ServerConfigChange) (synology.DriveConfigMutationResult, error) {
 	return synology.DriveConfigMutationResult{}, nil
 }

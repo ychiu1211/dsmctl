@@ -289,6 +289,76 @@ func TestExecuteTeamFoldersRequiresName(t *testing.T) {
 	}
 }
 
+func TestExecuteObservabilityReads(t *testing.T) {
+	// Response shapes captured live from Drive 4.0.3 (WI-052).
+	executor := &capturingExecutor{response: json.RawMessage(`{"summary":{"desktop":2,"mobile":1,"sharesync":0,"total":3}}`)}
+	summary, selection, err := ExecuteConnectionSummary(context.Background(), driveTarget("4.0.3-27892", true), executor)
+	if err != nil {
+		t.Fatalf("ExecuteConnectionSummary() error = %v", err)
+	}
+	// The summary method exists only at Connection v2 (v1 answers 103).
+	if executor.request.API != ConnectionAPIName || executor.request.Version != 2 || executor.request.Method != "summary" {
+		t.Fatalf("request = %#v", executor.request)
+	}
+	if summary.Desktop != 2 || summary.Mobile != 1 || summary.Total != 3 || selection.Backend != "drive-connection-v2" {
+		t.Fatalf("summary = %#v selection = %#v", summary, selection)
+	}
+
+	executor = &capturingExecutor{response: json.RawMessage(`{"database_size":2243510,"office_size":26701800,"repo_size":857164,"update_time":1784495605}`)}
+	usage, _, err := ExecuteDBUsage(context.Background(), driveTarget("4.0.3-27892", true), executor)
+	if err != nil {
+		t.Fatalf("ExecuteDBUsage() error = %v", err)
+	}
+	if executor.request.API != DBUsageAPIName || executor.request.Method != "get" {
+		t.Fatalf("request = %#v", executor.request)
+	}
+	if usage.RepositorySize != 857164 || usage.DatabaseSize != 2243510 || usage.OfficeSize != 26701800 || usage.UpdatedUnix != 1784495605 {
+		t.Fatalf("usage = %#v", usage)
+	}
+
+	executor = &capturingExecutor{response: json.RawMessage(`{"files":[{"path":"/projects/spec.md","name":"spec.md","access_count":12}]}`)}
+	files, _, err := ExecuteDashboard(context.Background(), driveTarget("4.0.3-27892", true), executor,
+		driveadmin.TopAccessQuery{RankingBy: "both", PeriodDays: 7, Limit: 5})
+	if err != nil {
+		t.Fatalf("ExecuteDashboard() error = %v", err)
+	}
+	parameters := executor.request.JSONParameters
+	if executor.request.Method != "top_access_files" || parameters["ranking_by"] != "both" || parameters["period_days"] != 7 || parameters["limit"] != 5 {
+		t.Fatalf("request = %#v", executor.request)
+	}
+	if len(files.Files) != 1 || files.Files[0].Path != "/projects/spec.md" || files.Files[0].AccessCount != 12 {
+		t.Fatalf("files = %#v", files)
+	}
+
+	executor = &capturingExecutor{response: json.RawMessage(`{"activated":false,"activation_time":0,"serial_number":"1790PXN037200"}`)}
+	activation, _, err := ExecuteActivation(context.Background(), driveTarget("4.0.3-27892", true), executor)
+	if err != nil {
+		t.Fatalf("ExecuteActivation() error = %v", err)
+	}
+	if executor.request.API != ActivationAPIName || executor.request.Method != "get" {
+		t.Fatalf("request = %#v", executor.request)
+	}
+	if activation.Activated || activation.SerialNumber != "1790PXN037200" || activation.ActivationUnix != 0 {
+		t.Fatalf("activation = %#v", activation)
+	}
+}
+
+func TestObservabilityDecodersRejectUnknownShapes(t *testing.T) {
+	target := driveTarget("4.0.3-27892", true)
+	if _, _, err := ExecuteConnectionSummary(context.Background(), target, &capturingExecutor{response: json.RawMessage(`{"counts":{}}`)}); err == nil || !strings.Contains(err.Error(), "no summary object") {
+		t.Fatalf("summary error = %v", err)
+	}
+	if _, _, err := ExecuteDBUsage(context.Background(), target, &capturingExecutor{response: json.RawMessage(`{"sizes":{}}`)}); err == nil || !strings.Contains(err.Error(), "no repo_size field") {
+		t.Fatalf("db usage error = %v", err)
+	}
+	if _, _, err := ExecuteDashboard(context.Background(), target, &capturingExecutor{response: json.RawMessage(`{"ranking":1}`)}, driveadmin.TopAccessQuery{RankingBy: "both", PeriodDays: 1, Limit: 5}); err == nil || !strings.Contains(err.Error(), "no file array") {
+		t.Fatalf("dashboard error = %v", err)
+	}
+	if _, _, err := ExecuteActivation(context.Background(), target, &capturingExecutor{response: json.RawMessage(`{"enabled":true}`)}); err == nil || !strings.Contains(err.Error(), "activated") {
+		t.Fatalf("activation error = %v", err)
+	}
+}
+
 func TestExecuteLogSendsFiltersAndDecodes(t *testing.T) {
 	// Response shape captured live from Drive 4.0.3 (WI-022): entries carry a
 	// numeric event type plus substitution slots instead of rendered text.

@@ -51,6 +51,111 @@ type driveAdminClient interface {
 	DriveServerConfig(context.Context) (synology.DriveServerConfig, error)
 	ApplyDriveServerConfigChange(context.Context, driveadmin.ServerConfigChange) (synology.DriveConfigMutationResult, error)
 	ApplyDriveTeamFolderChange(context.Context, driveadmin.TeamFolderChange) (synology.DriveTeamFolderMutationResult, error)
+	DriveConnectionSummary(context.Context) (synology.DriveConnectionSummary, error)
+	DriveDBUsage(context.Context) (synology.DriveDBUsage, error)
+	DriveTopAccessFiles(context.Context, synology.DriveTopAccessQuery) (synology.DriveTopAccessFiles, error)
+	DriveActivation(context.Context) (synology.DriveActivation, error)
+}
+
+type DriveConnectionSummaryResult struct {
+	NAS     string                          `json:"nas" jsonschema:"NAS profile used for the request"`
+	Summary synology.DriveConnectionSummary `json:"summary" jsonschema:"Active connection counts by client family"`
+}
+
+type DriveDBUsageResult struct {
+	NAS   string               `json:"nas" jsonschema:"NAS profile used for the request"`
+	Usage synology.DriveDBUsage `json:"usage" jsonschema:"Cached Drive database usage in bytes"`
+}
+
+type DriveTopAccessFilesResult struct {
+	NAS   string                        `json:"nas" jsonschema:"NAS profile used for the request"`
+	Files synology.DriveTopAccessFiles  `json:"files" jsonschema:"Top accessed files, most accessed first"`
+	Query synology.DriveTopAccessQuery  `json:"query" jsonschema:"Ranking query after defaults were applied"`
+}
+
+type DriveActivationResult struct {
+	NAS        string                   `json:"nas" jsonschema:"NAS profile used for the request"`
+	Activation synology.DriveActivation `json:"activation" jsonschema:"Drive package activation state"`
+}
+
+func (s *Service) GetDriveConnectionSummary(ctx context.Context, requestedNAS string) (DriveConnectionSummaryResult, error) {
+	name, client, err := s.driveAdminClient(ctx, requestedNAS)
+	if err != nil {
+		return DriveConnectionSummaryResult{}, err
+	}
+	summary, err := client.DriveConnectionSummary(ctx)
+	if err != nil {
+		return DriveConnectionSummaryResult{}, authenticationError(name, err)
+	}
+	return DriveConnectionSummaryResult{NAS: name, Summary: summary}, nil
+}
+
+func (s *Service) GetDriveDBUsage(ctx context.Context, requestedNAS string) (DriveDBUsageResult, error) {
+	name, client, err := s.driveAdminClient(ctx, requestedNAS)
+	if err != nil {
+		return DriveDBUsageResult{}, err
+	}
+	usage, err := client.DriveDBUsage(ctx)
+	if err != nil {
+		return DriveDBUsageResult{}, authenticationError(name, err)
+	}
+	return DriveDBUsageResult{NAS: name, Usage: usage}, nil
+}
+
+const (
+	driveTopAccessDefaultLimit = 50
+	driveTopAccessMaxLimit     = 1000
+	driveTopAccessDefaultDays  = 1
+)
+
+func (s *Service) GetDriveTopAccessFiles(ctx context.Context, requestedNAS string, query synology.DriveTopAccessQuery) (DriveTopAccessFilesResult, error) {
+	if err := validateDriveTopAccessQuery(&query); err != nil {
+		return DriveTopAccessFilesResult{}, err
+	}
+	name, client, err := s.driveAdminClient(ctx, requestedNAS)
+	if err != nil {
+		return DriveTopAccessFilesResult{}, err
+	}
+	files, err := client.DriveTopAccessFiles(ctx, query)
+	if err != nil {
+		return DriveTopAccessFilesResult{}, authenticationError(name, err)
+	}
+	return DriveTopAccessFilesResult{NAS: name, Files: files, Query: query}, nil
+}
+
+func validateDriveTopAccessQuery(query *synology.DriveTopAccessQuery) error {
+	switch query.RankingBy {
+	case "":
+		query.RankingBy = "both"
+	case "both", "preview", "download":
+	default:
+		return fmt.Errorf("ranking_by must be both, preview, or download")
+	}
+	if query.PeriodDays < 0 || query.Limit < 0 || query.Offset < 0 {
+		return fmt.Errorf("top-access query values cannot be negative")
+	}
+	if query.PeriodDays == 0 {
+		query.PeriodDays = driveTopAccessDefaultDays
+	}
+	if query.Limit == 0 {
+		query.Limit = driveTopAccessDefaultLimit
+	}
+	if query.Limit > driveTopAccessMaxLimit {
+		return fmt.Errorf("top-access limit %d exceeds the maximum %d", query.Limit, driveTopAccessMaxLimit)
+	}
+	return nil
+}
+
+func (s *Service) GetDriveActivation(ctx context.Context, requestedNAS string) (DriveActivationResult, error) {
+	name, client, err := s.driveAdminClient(ctx, requestedNAS)
+	if err != nil {
+		return DriveActivationResult{}, err
+	}
+	activation, err := client.DriveActivation(ctx)
+	if err != nil {
+		return DriveActivationResult{}, authenticationError(name, err)
+	}
+	return DriveActivationResult{NAS: name, Activation: activation}, nil
 }
 
 func (s *Service) GetDriveAdminCapabilities(ctx context.Context, requestedNAS string) (DriveAdminCapabilitiesResult, error) {
