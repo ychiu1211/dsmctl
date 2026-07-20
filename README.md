@@ -72,7 +72,18 @@ Authenticate interactively:
 dsmctl auth login --nas office
 ```
 
-`auth login` opens the NAS's own sign-in page in your web browser; the password — and any two-factor, passkey, or approve-sign-in step — is entered only there and never passes through dsmctl. The resulting DSM session (SID, SynoToken, and its renewal keys) is stored per profile in the operating system's credential store, not in `config.json`, and is reused by later CLI and MCP processes.
+`auth login` first performs normal system-CA, hostname, and validity
+verification. If that verification fails, dsmctl shows every warning together
+with the certificate identity, validity, and observed SHA-256 fingerprint, then
+asks whether to trust and pin that exact certificate before opening a browser.
+This allows an explicitly approved LAN IP even when it is absent from the
+certificate SAN. A missing/unparseable certificate or TLS protocol,
+cryptographic-handshake, or network failure cannot be pinned. The NAS's own sign-in page then opens in
+your web browser; the password — and any two-factor, passkey, or
+approve-sign-in step — is entered only there and never passes through dsmctl.
+The resulting DSM session (SID, SynoToken, and its renewal keys) is stored per
+profile in the operating system's credential store, not in `config.json`, and
+is reused by later CLI and MCP processes.
 
 Inspect or remove the stored session without revealing any secret value:
 
@@ -225,7 +236,11 @@ $env:DSMCTL_PASSWORD_OFFICE = "your-password"
 
 Two-factor authentication needs no special handling: the challenge is completed in the browser during `dsmctl auth login`, and the stored session is what later processes reuse.
 
-Use `--insecure-skip-tls-verify` only for a test NAS with a certificate that cannot be trusted. TLS verification is enabled by default.
+TLS verification is automatic. Unknown-issuer certificates are offered for an
+explicit observed-fingerprint pin during `auth login`; a changed pin fails
+closed and must be confirmed again. The legacy
+`--insecure-skip-tls-verify` profile option is only for an explicitly isolated
+test NAS and bypasses this protection entirely.
 
 ## MCP server
 
@@ -329,6 +344,12 @@ go test ./integration -run TestMCPGetSystemInfoLive -v
 - OTP values are short-lived and never persisted.
 - Web-login sessions (SID, SynoToken, and renewal keys) use Windows Credential Manager, macOS Keychain, or Linux Secret Service; dsmctl adds no encryption layer of its own because the OS store already provides at-rest encryption, and on hosts without a store (headless Linux) it fails closed instead of writing secrets to disk.
 - Passwords are never stored by dsmctl: web login keeps them in the browser, and the optional automation fallback reads an environment variable at login time.
+- Web login sends no password, OTP, session, or one-time login code until the
+  NAS passes system-CA verification or the user confirms the freshly observed
+  leaf-certificate fingerprint after reviewing its warnings. A pin
+  authenticates that exact leaf for the profile in place of CA, hostname, and
+  validity checks; certificate rotation or a different certificate fails
+  closed and requires another explicit confirmation.
 - Credential status reports booleans, metadata, and the environment variable name only; session IDs, tokens, keys, and password values are never displayed.
 - `auth logout` and `nas remove` revoke the DSM session server-side (best-effort, with a bounded wait) before deleting the stored copy, so a signed-out session cannot be replayed; when the NAS is unreachable the local copy is still removed and the session lapses on its own expiry.
 - Closing a process never invalidates the stored web-login session; only an explicit sign-out does.

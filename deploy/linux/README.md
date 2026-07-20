@@ -70,7 +70,11 @@ NAS credentials unrecoverable.
 
 For a NAS managed by this gateway, do not enter `localhost`: inside the
 container it means the gateway container. Use the NAS LAN DNS name/address,
-prefer a valid system CA, or explicitly confirm a SHA-256 TLS pin. The NAS
+and let the Gateway perform normal certificate verification automatically. If
+CA, hostname, or validity verification fails, review every warning and
+explicitly confirm the SHA-256 fingerprint observed by the Gateway. This also
+supports a LAN IP absent from the certificate SAN; there is no up-front
+TLS-mode choice. The NAS
 hosting Docker receives no special access and must also be explicitly added
 and authenticated through its own DSM Web Login. A single gateway supports up
 to 32 profiles; MCP tokens can be limited by scope and NAS allowlist, and

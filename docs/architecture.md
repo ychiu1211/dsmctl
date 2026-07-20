@@ -111,6 +111,15 @@ See [`docs/compatibility.md`](compatibility.md) for rules and extension examples
 ## Authentication flow
 
 ```text
+System CA + hostname + validity TLS preflight
+       | trusted                 | CA / hostname / validity warning
+       |                         v
+       |             show observed certificate + fingerprint
+       |                         |
+       |                 explicit trust -> persist exact pin
+       +-------------------------+
+                       |
+                       v
 dsmctl auth login opens the DSM sign-in page in the user's browser
         (password / 2FA / passkey stay in the browser, against the NAS)
                        |
@@ -126,6 +135,13 @@ dsmctl auth login opens the DSM sign-in page in the user's browser
                        v
    Stored per profile in the OS credential store
 ```
+
+No password, OTP, stored session, or one-time code is sent before the TLS
+preflight passes. After a person reviews every warning, a pin authenticates the
+exact observed leaf for that profile in place of CA, hostname, and validity
+checks. This supports LAN IP-only access when the address is absent from the
+certificate SAN. Pin mismatch and certificate rotation fail closed and require
+a new human confirmation; MCP has no tool that can grant certificate trust.
 
 Later CLI and MCP processes seed their DSM client from the stored session
 instead of logging in; closing such a client drops only the in-memory copy,

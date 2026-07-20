@@ -4,7 +4,7 @@ title: Ship generic Linux and Synology x86_64 distributions
 status: in_progress
 priority: P1
 owner: "synology-distribution"
-depends_on: [WI-014, WI-015, WI-016, WI-032, WI-033, WI-035, WI-037, WI-038]
+depends_on: [WI-014, WI-015, WI-016, WI-032, WI-033, WI-035, WI-037, WI-038, WI-081]
 parallel_group: G
 touches:
   - deploy/container
@@ -131,7 +131,8 @@ overlap WI-010 reliability/release hardening if that item is later specified.
 WI-032 supersedes this item's DSM platform-authentication design. WI-037 has
 completed the final tokenized MCP Server presentation and validated the shared
 `linux/amd64` image locally. WI-038 adds the guided approval, token-lifecycle,
-and enrollment flows; certify the administration UI only after it lands. Real
+and enrollment flows. WI-081 replaces manual TLS-mode selection with verified
+trust enrollment; certify the administration UI only after it lands. Real
 Synology hardware certification remains before the distribution item can
 complete.
 

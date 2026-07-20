@@ -10,6 +10,17 @@ time. Passwords are never stored by this release. This guide covers
 inspecting and removing stored sessions. No command in this guide ever
 prints a secret value.
 
+Before the browser opens, dsmctl verifies the NAS with the system CA store,
+hostname, and certificate validity period. If any of those checks fail, dsmctl
+shows every warning with the observed SHA-256 fingerprint and pins that exact
+certificate only after interactive confirmation. This includes an explicitly
+approved LAN IP absent from the certificate SAN. A stored-pin mismatch still
+fails closed until the newly observed certificate is confirmed; a missing or
+unparseable certificate and TLS handshake/network failures cannot be pinned.
+No login code or credential is sent before this decision.
+The operating-system browser may still show its own warning for a self-signed
+DSM page because its trust store is separate from dsmctl's stored pin.
+
 ## Where sessions are stored, and why there is no extra encryption
 
 Sessions live in the operating system's credential store: Windows Credential

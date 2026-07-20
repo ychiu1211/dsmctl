@@ -54,7 +54,10 @@ NAS profiles. Every NAS, including the NAS hosting the SPK, must be explicitly
 added with its reachable LAN DNS name/address and authenticated through that
 profile's own DSM Web Login. Container `localhost` points back to the container
 and is never a Host NAS shortcut. Prefer a trusted certificate or explicitly
-confirm and pin its SHA-256 fingerprint.
+confirm the SHA-256 fingerprint after reviewing every CA, hostname, and
+validity warning reported by the Gateway. This permits an explicitly approved
+LAN IP that is absent from the certificate SAN. The Gateway observes the
+fingerprint itself; it does not ask for manual entry or an up-front TLS mode.
 
 ## Lifecycle, recovery, and logs
 

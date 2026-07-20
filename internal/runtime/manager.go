@@ -519,14 +519,16 @@ func httpClient(profile config.Profile) *http.Client {
 	if profile.TLSMode == "pinned_fingerprint" {
 		expected, err := hex.DecodeString(strings.ReplaceAll(profile.CertificateFingerprint, ":", ""))
 		if err == nil && len(expected) == sha256.Size {
-			// Pin mode authenticates the exact leaf certificate. Standard chain
-			// verification is intentionally replaced by the explicit admin pin.
+			// Pin mode authenticates the exact leaf certificate explicitly bound
+			// to this profile. It intentionally replaces CA, hostname, and validity
+			// policy so LAN IP-only NAS endpoints remain usable after confirmation.
 			tlsConfig.InsecureSkipVerify = true //nolint:gosec
 			tlsConfig.VerifyConnection = func(state tls.ConnectionState) error {
 				if len(state.PeerCertificates) == 0 {
 					return errors.New("TLS peer did not provide a certificate")
 				}
-				actual := sha256.Sum256(state.PeerCertificates[0].Raw)
+				leaf := state.PeerCertificates[0]
+				actual := sha256.Sum256(leaf.Raw)
 				if subtle.ConstantTimeCompare(actual[:], expected) != 1 {
 					return errors.New("TLS server certificate does not match the pinned SHA-256 fingerprint")
 				}

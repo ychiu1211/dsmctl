@@ -153,7 +153,16 @@ A profile contains at least:
 }
 ```
 
-Allowed TLS modes are `system_ca` and `pinned_fingerprint`. An insecure mode
+Stored TLS modes are `system_ca` and `pinned_fingerprint`; they are connection
+state, not an up-front administrator choice. Enrollment always attempts system
+CA, hostname, and validity verification first. CA, hostname, and validity
+failures produce a structured challenge containing their warnings and the
+server-observed fingerprint; an administrator may explicitly pin that exact
+leaf, including for a LAN IP absent from the certificate SAN. Confirmation is
+bound to the current profile revision and a fresh server-side observation
+before `pinned_fingerprint` is persisted. Pin mismatch and certificate rotation
+fail closed. Missing/unparseable certificates, TLS protocol or cryptographic
+handshake failures, and network failures cannot be pinned. An insecure mode
 may exist only behind an explicit development build/runtime flag and is never
 enabled by the Synology package.
 
@@ -207,7 +216,7 @@ Administration is separate from MCP authorization.
 - The admin API supports profile CRUD, connection testing, web-login session
   enrollment (the administrator signs in at the NAS's own page, the browser
   relays the one-time code, and the gateway performs the code exchange and
-  stores the session), password/OTP enrollment, TLS fingerprint confirmation,
+  stores the session), password/OTP enrollment, observed TLS fingerprint confirmation,
   credential removal/rotation, token lifecycle, approvals, audit queries, and
   safe backup status.
 - Password and OTP submissions are accepted only by authenticated admin

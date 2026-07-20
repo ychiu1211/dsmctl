@@ -1,7 +1,12 @@
 package cli
 
 import (
+	"bufio"
+	"context"
+	"errors"
 	"fmt"
+	"io"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -11,6 +16,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/config"
 	"github.com/ychiu1211/dsmctl/internal/credentials"
 	"github.com/ychiu1211/dsmctl/internal/runtime"
+	"github.com/ychiu1211/dsmctl/internal/tlstrust"
 	"github.com/ychiu1211/dsmctl/internal/weblogin"
 )
 
@@ -35,11 +41,16 @@ func newAuthLoginCommand(opts *options) *cobra.Command {
 			"reused by later commands.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			cfg, err := config.NewStore(opts.configPath).Load()
+			store := config.NewStore(opts.configPath)
+			cfg, err := store.Load()
 			if err != nil {
 				return err
 			}
 			name, profile, err := cfg.Resolve(opts.nas)
+			if err != nil {
+				return err
+			}
+			profile, err = prepareWebLoginTLS(cmd.Context(), cmd.InOrStdin(), cmd.ErrOrStderr(), store, cfg, name, profile)
 			if err != nil {
 				return err
 			}
@@ -69,6 +80,80 @@ func newAuthLoginCommand(opts *options) *cobra.Command {
 			return nil
 		},
 	}
+}
+
+func prepareWebLoginTLS(ctx context.Context, input io.Reader, output io.Writer, store *config.Store, cfg *config.Config, name string, profile config.Profile) (config.Profile, error) {
+	if profile.InsecureSkipTLSVerify {
+		return profile, nil
+	}
+	pin := ""
+	if profile.TLSMode == "pinned_fingerprint" {
+		pin = profile.CertificateFingerprint
+	}
+	err := tlstrust.Probe(ctx, profile.URL, pin)
+	if err == nil {
+		return profile, nil
+	}
+	var trustErr *tlstrust.TrustError
+	if !errors.As(err, &trustErr) {
+		return config.Profile{}, fmt.Errorf("verify TLS certificate for NAS %q before web login: %w", name, err)
+	}
+	certificate := trustErr.Certificate
+	fmt.Fprintf(output, "NAS %q presented a certificate that requires explicit trust.\n", name)
+	if trustErr.Code == tlstrust.CodePinMismatch {
+		fmt.Fprintf(output, "The certificate changed and no longer matches the stored pin.\nPreviously pinned: %s\n", displayFingerprint(trustErr.ExpectedFingerprint))
+	} else {
+		fmt.Fprintln(output, "The certificate did not pass normal verification.")
+	}
+	if len(trustErr.ValidationWarnings) != 0 {
+		fmt.Fprintln(output, "Verification warnings:")
+		for _, warning := range trustErr.ValidationWarnings {
+			fmt.Fprintf(output, "- %s\n", terminalSafe(warning))
+		}
+	}
+	fmt.Fprintf(output,
+		"Subject: %s\nIssuer: %s\nValid: %s to %s\nSHA-256: %s\n",
+		terminalSafe(certificate.Subject), terminalSafe(certificate.Issuer),
+		certificate.NotBefore.Local().Format(time.RFC3339), certificate.NotAfter.Local().Format(time.RFC3339),
+		displayFingerprint(certificate.Fingerprint),
+	)
+	fmt.Fprint(output, "Trust this observed certificate and pin it for this NAS? [y/N]: ")
+	answer, readErr := bufio.NewReader(input).ReadString('\n')
+	answer = strings.ToLower(strings.TrimSpace(answer))
+	if readErr != nil && answer == "" {
+		return config.Profile{}, fmt.Errorf("certificate for NAS %q was not trusted; web login did not start: %w", name, readErr)
+	}
+	if answer != "y" && answer != "yes" {
+		return config.Profile{}, fmt.Errorf("certificate for NAS %q was not trusted; web login did not start", name)
+	}
+	profile.InsecureSkipTLSVerify = false
+	profile.TLSMode = "pinned_fingerprint"
+	profile.CertificateFingerprint = certificate.Fingerprint
+	cfg.NAS[name] = profile
+	if err := store.Save(cfg); err != nil {
+		return config.Profile{}, fmt.Errorf("save pinned certificate for NAS %q: %w", name, err)
+	}
+	fmt.Fprintln(output, "Pinned the observed certificate. Your browser may still show its own warning for a self-signed DSM page.")
+	return profile, nil
+}
+
+func displayFingerprint(value string) string {
+	value = strings.ToUpper(strings.ReplaceAll(value, ":", ""))
+	parts := make([]string, 0, len(value)/2)
+	for len(value) >= 2 {
+		parts = append(parts, value[:2])
+		value = value[2:]
+	}
+	return strings.Join(parts, ":")
+}
+
+func terminalSafe(value string) string {
+	return strings.Map(func(character rune) rune {
+		if character < 0x20 || character == 0x7f {
+			return ' '
+		}
+		return character
+	}, value)
 }
 
 func newAuthStatusCommand(opts *options) *cobra.Command {

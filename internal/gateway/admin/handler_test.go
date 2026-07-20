@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -452,7 +454,7 @@ func TestMutatingAdminRequestFailsBeforeMutationWhenAuditUnavailable(t *testing.
 }
 
 func TestPinnedFingerprintRequiresExplicitConfirmation(t *testing.T) {
-	handler, _, manager, adminSession := newTestHandler(t)
+	handler, repository, manager, adminSession := newTestHandler(t)
 	defer manager.Close(context.Background())
 	pin := strings.Repeat("a", 64)
 	unconfirmed := performJSON(handler, http.MethodPost, "/admin/api/profiles", `{"name":"pinned","url":"https://pinned.example:5001","tls_mode":"pinned_fingerprint","certificate_fingerprint":"`+pin+`"}`, adminSession)
@@ -462,6 +464,85 @@ func TestPinnedFingerprintRequiresExplicitConfirmation(t *testing.T) {
 	confirmed := performJSON(handler, http.MethodPost, "/admin/api/profiles", `{"name":"pinned","url":"https://pinned.example:5001","tls_mode":"pinned_fingerprint","certificate_fingerprint":"`+pin+`","confirm_certificate_fingerprint":true}`, adminSession)
 	if confirmed.Code != http.StatusCreated {
 		t.Fatalf("confirmed pin status = %d, body=%s", confirmed.Code, confirmed.Body.String())
+	}
+	profile, err := repository.Profile(context.Background(), "pinned")
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedURL := performJSON(handler, http.MethodPut, "/admin/api/profiles/pinned", fmt.Sprintf(`{"expected_revision":%d,"url":"https://replacement.example:5001","tls_mode":"pinned_fingerprint","certificate_fingerprint":%q,"confirm_certificate_fingerprint":true}`, profile.Revision, pin), adminSession)
+	if changedURL.Code != http.StatusOK {
+		t.Fatalf("changed URL status = %d, body=%s", changedURL.Code, changedURL.Body.String())
+	}
+	if body := changedURL.Body.String(); !strings.Contains(body, `"tls_mode":"system_ca"`) || strings.Contains(body, `"certificate_fingerprint"`) {
+		t.Fatalf("URL change carried the old pin: %s", body)
+	}
+}
+
+func TestObservedCertificateTrustPrecedesGatewayEnrollment(t *testing.T) {
+	var httpRequests atomic.Int64
+	dsm := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		httpRequests.Add(1)
+	}))
+	defer dsm.Close()
+	handler, repository, manager, adminSession := newTestHandler(t)
+	defer manager.Close(context.Background())
+	profile, err := repository.CreateProfile(context.Background(), state.ProfileInput{Name: "tofu", URL: dsm.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	started := performJSON(handler, http.MethodPost, "/admin/api/profiles/tofu/weblogin/start", `{}`, adminSession)
+	if started.Code != http.StatusConflict {
+		t.Fatalf("untrusted start status = %d, body=%s", started.Code, started.Body.String())
+	}
+	var challenge struct {
+		Code               string   `json:"code"`
+		ProfileRevision    uint64   `json:"profile_revision"`
+		ValidationWarnings []string `json:"validation_warnings"`
+		Certificate        struct {
+			Fingerprint string `json:"fingerprint"`
+			Subject     string `json:"subject"`
+		} `json:"certificate"`
+	}
+	if err := json.Unmarshal(started.Body.Bytes(), &challenge); err != nil {
+		t.Fatal(err)
+	}
+	if challenge.Code != "certificate_trust_required" || challenge.ProfileRevision != profile.Revision || len(challenge.Certificate.Fingerprint) != 64 || challenge.Certificate.Subject == "" || len(challenge.ValidationWarnings) == 0 {
+		t.Fatalf("challenge = %#v", challenge)
+	}
+	if httpRequests.Load() != 0 {
+		t.Fatalf("HTTP request reached DSM before certificate trust: %d", httpRequests.Load())
+	}
+	passwordBody := fmt.Sprintf(`{"account":"operator","expected_revision":%d,"password":"must-not-leave-gateway"}`, profile.Revision)
+	passwordAttempt := performJSON(handler, http.MethodPost, "/admin/api/profiles/tofu/credentials/password", passwordBody, adminSession)
+	if passwordAttempt.Code != http.StatusConflict || strings.Contains(passwordAttempt.Body.String(), "must-not-leave-gateway") || httpRequests.Load() != 0 {
+		t.Fatalf("password preflight = %d %s, requests=%d", passwordAttempt.Code, passwordAttempt.Body.String(), httpRequests.Load())
+	}
+
+	trustBody := fmt.Sprintf(`{"expected_revision":%d,"fingerprint":%q}`, challenge.ProfileRevision, challenge.Certificate.Fingerprint)
+	trusted := performJSON(handler, http.MethodPut, "/admin/api/profiles/tofu/tls/trust", trustBody, adminSession)
+	if trusted.Code != http.StatusOK {
+		t.Fatalf("trust status = %d, body=%s", trusted.Code, trusted.Body.String())
+	}
+	profile, err = repository.Profile(context.Background(), "tofu")
+	if err != nil || profile.TLSMode != state.TLSPinnedFingerprint || profile.CertificateFingerprint != challenge.Certificate.Fingerprint {
+		t.Fatalf("trusted profile = %#v, %v", profile, err)
+	}
+	started = performJSON(handler, http.MethodPost, "/admin/api/profiles/tofu/weblogin/start", `{}`, adminSession)
+	if started.Code != http.StatusCreated || httpRequests.Load() != 0 {
+		t.Fatalf("trusted start = %d %s, requests=%d", started.Code, started.Body.String(), httpRequests.Load())
+	}
+
+	wrongPin := strings.Repeat("ab", 32)
+	profile, err = repository.UpdateProfile(context.Background(), "tofu", profile.Revision, state.ProfileInput{
+		URL: dsm.URL, TLSMode: state.TLSPinnedFingerprint, CertificateFingerprint: wrongPin,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mismatch := performJSON(handler, http.MethodPost, "/admin/api/profiles/tofu/tls", `{}`, adminSession)
+	if mismatch.Code != http.StatusConflict || !strings.Contains(mismatch.Body.String(), `"code":"certificate_pin_mismatch"`) || !strings.Contains(mismatch.Body.String(), `"expected_fingerprint":"`+wrongPin+`"`) {
+		t.Fatalf("pin mismatch = %d %s", mismatch.Code, mismatch.Body.String())
 	}
 }
 
@@ -477,7 +558,7 @@ func TestAdminUIHasNoEmbeddedCredential(t *testing.T) {
 	if recorder.Header().Get("Content-Security-Policy") == "" {
 		t.Fatal("UI response has no content security policy")
 	}
-	for _, forbidden := range []string{"sessionStorage", "admin_token", "platform assertion", "bootstrap token", "--blue:", "--navy:", "window.prompt", "prompt(", `value="nas.admin"`, `onclick="setDefault`, `id="profileNextStep"`, `id="tokenNAS"`, `show(JSON.stringify(await api`, `async function copyText(value){`, `<div class="table-wrap"><table><thead><tr><th data-i18n="name">Name</th><th data-i18n="address"`, `id="profileDialog"`, `function openProfileEdit(`, `data-i18n="connectClient"`, `data-i18n="createConnection"`, `data-i18n="connectionCreated"`} {
+	for _, forbidden := range []string{"sessionStorage", "admin_token", "platform assertion", "bootstrap token", "--blue:", "--navy:", "window.prompt", "prompt(", `value="nas.admin"`, `onclick="setDefault`, `id="profileNextStep"`, `id="tokenNAS"`, `show(JSON.stringify(await api`, `async function copyText(value){`, `<div class="table-wrap"><table><thead><tr><th data-i18n="name">Name</th><th data-i18n="address"`, `id="profileDialog"`, `function openProfileEdit(`, `data-i18n="connectClient"`, `data-i18n="createConnection"`, `data-i18n="connectionCreated"`, `id="tls"`, `id="fingerprint"`, `function toggleFingerprint`, `confirmWizardTrust`} {
 		if strings.Contains(recorder.Body.String(), forbidden) {
 			t.Fatalf("UI contains superseded administrator mechanism %q", forbidden)
 		}
@@ -497,6 +578,7 @@ func TestAdminUIHasNoEmbeddedCredential(t *testing.T) {
 		`.profile-subline`, `id="nasSourceStep"`, `id="nasConnectionStep" hidden`, `id="nasSignInStep" hidden`, `id="nasStepThree"`,
 		`id="discoverLANButton"`, `id="discoveredNAS"`, `id="nasSourceAddress"`, `onclick="discoverLAN()"`, `onclick="useManualNAS()"`, `api('/discovery'`,
 		`id="nasConnectionSubmit"`, `id="wizardConnectionURL"`, `id="wizardConnectionTLS"`, `function tlsModeLabel(mode)`, `function persistWizardConnection(input)`,
+		`data-i18n="automaticTLS"`, `function isTLSChallenge(error)`, `function resolveTLSChallenge(profile,error)`, `certificate_trust_required`, `certificate_pin_mismatch`, `api('/profiles/'+encodeURIComponent(profile.name)+'/tls'`,
 		`summary.setAttribute('aria-haspopup','menu')`, `menu.setAttribute('role','menu')`, `document.querySelectorAll('.row-menu[open]')`,
 		`id="messageText"`, `id="messageClose"`, `data-i18n-aria="dismissMessage"`, `setTimeout(hideMessage,4000)`,
 		`class="field field-span-2"><label class="required" for="currentPassword"`, `Mindestens 8 Zeichen`,
@@ -660,8 +742,8 @@ func TestAdminWebLoginEnrollmentStoresRenewableVaultSession(t *testing.T) {
 }
 
 func TestWebLoginExchangeFailureIsLoggedServerSideAndRedacted(t *testing.T) {
-	dsm := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		t.Error("DSM must not be reachable through a mismatched TLS pin")
+	dsm := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "fixture rejected exchange", http.StatusBadGateway)
 	}))
 	defer dsm.Close()
 	_, repository, manager, adminSession := newTestHandler(t)
@@ -671,9 +753,10 @@ func TestWebLoginExchangeFailureIsLoggedServerSideAndRedacted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	fingerprint := sha256.Sum256(dsm.Certificate().Raw)
 	if _, err := repository.CreateProfile(context.Background(), state.ProfileInput{
 		Name: "pinned-web", URL: dsm.URL,
-		TLSMode: state.TLSPinnedFingerprint, CertificateFingerprint: strings.Repeat("ab", 32),
+		TLSMode: state.TLSPinnedFingerprint, CertificateFingerprint: hex.EncodeToString(fingerprint[:]),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -711,7 +794,7 @@ func TestWebLoginExchangeFailureIsLoggedServerSideAndRedacted(t *testing.T) {
 		t.Fatalf("web-login failure response must stay redacted: %s", body)
 	}
 	logText := logs.String()
-	if !strings.Contains(logText, "pinned SHA-256 fingerprint") || !strings.Contains(logText, `"nas":"pinned-web"`) || !strings.Contains(logText, `"request_id":"weblogin-request-1"`) {
+	if !strings.Contains(logText, "DSM web-login exchange failed") || !strings.Contains(logText, `"nas":"pinned-web"`) || !strings.Contains(logText, `"request_id":"weblogin-request-1"`) {
 		t.Fatalf("web-login failure cause missing from server log: %s", logText)
 	}
 	for _, secret := range []string{oneTimeCode, serverKey, start.State} {

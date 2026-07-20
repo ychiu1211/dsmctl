@@ -24,6 +24,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/remotepolicy"
 	"github.com/ychiu1211/dsmctl/internal/runtime"
 	"github.com/ychiu1211/dsmctl/internal/synology"
+	"github.com/ychiu1211/dsmctl/internal/tlstrust"
 	"github.com/ychiu1211/dsmctl/internal/webassets"
 	"github.com/ychiu1211/dsmctl/internal/weblogin"
 )
@@ -442,6 +443,10 @@ func (h *Handler) profile(w http.ResponseWriter, req *http.Request) {
 		h.profileRecord(w, req, name)
 	case "test":
 		h.testProfile(w, req, name)
+	case "tls":
+		h.probeProfileTLS(w, req, name)
+	case "tls/trust":
+		h.trustProfileCertificate(w, req, name)
 	case "credentials/status":
 		h.credentialStatus(w, req, name)
 	case "credentials/password":
@@ -754,6 +759,14 @@ func (h *Handler) profileRecord(w http.ResponseWriter, req *http.Request, name s
 			writeRepositoryError(w, err)
 			return
 		}
+		if strings.TrimRight(strings.TrimSpace(input.URL), "/") != current.URL {
+			// A pin identifies one observed certificate at one endpoint. Moving a
+			// profile to another URL always starts again with system trust; the
+			// administrator may pin only what the Gateway observes there.
+			input.TLSMode = state.TLSSystemCA
+			input.CertificateFingerprint = ""
+			input.ConfirmCertificateFingerprint = false
+		}
 		input.Username = current.Username
 		var updated state.Profile
 		err = h.manager.MutateProfile(req.Context(), name, func() error {
@@ -849,6 +862,14 @@ func (h *Handler) testProfile(w http.ResponseWriter, req *http.Request, name str
 	}
 	_ = connection.Close()
 	stages = append(stages, testStage{Name: "tcp", Passed: true})
+	if err := probeTLS(ctx, profile); err != nil {
+		stages = append(stages, failedStage("tls_http", err))
+		if h.writeTLSProbeError(w, profile, err, map[string]any{"nas": name, "stages": stages}) {
+			return
+		}
+		writeJSON(w, http.StatusBadGateway, map[string]any{"nas": name, "stages": stages})
+		return
+	}
 	cfg, _ := h.repository.Snapshot(ctx)
 	runtimeProfile := cfg.NAS[name]
 	httpRequest, _ := http.NewRequestWithContext(ctx, http.MethodGet, profile.URL+"/webapi/query.cgi?api=SYNO.API.Info&version=1&method=query&query=SYNO.API.Auth", nil)
@@ -915,6 +936,9 @@ func (h *Handler) passwordEnrollment(w http.ResponseWriter, req *http.Request, n
 	}
 	if req.Method != http.MethodPost {
 		methodNotAllowed(w, http.MethodPost, http.MethodDelete)
+		return
+	}
+	if _, ok := h.requireProfileTLS(w, req, name); !ok {
 		return
 	}
 	var input struct {
@@ -1079,9 +1103,8 @@ func (h *Handler) startWebLogin(w http.ResponseWriter, req *http.Request, name s
 		methodNotAllowed(w, http.MethodPost)
 		return
 	}
-	profile, err := h.repository.Profile(req.Context(), name)
-	if err != nil {
-		writeRepositoryError(w, err)
+	profile, ok := h.requireProfileTLS(w, req, name)
+	if !ok {
 		return
 	}
 	cfg, _ := h.repository.Snapshot(req.Context())
@@ -1174,6 +1197,130 @@ func (h *Handler) prunePendingLocked(now time.Time) {
 			delete(h.pending, id)
 		}
 	}
+}
+
+func (h *Handler) probeProfileTLS(w http.ResponseWriter, req *http.Request, name string) {
+	if req.Method != http.MethodPost {
+		methodNotAllowed(w, http.MethodPost)
+		return
+	}
+	profile, ok := h.requireProfileTLS(w, req, name)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"nas": name, "profile_revision": profile.Revision, "verified": true, "tls_mode": profile.TLSMode})
+}
+
+func (h *Handler) trustProfileCertificate(w http.ResponseWriter, req *http.Request, name string) {
+	if req.Method != http.MethodPut {
+		methodNotAllowed(w, http.MethodPut)
+		return
+	}
+	var input struct {
+		ExpectedRevision uint64 `json:"expected_revision"`
+		Fingerprint      string `json:"fingerprint"`
+	}
+	if err := decodeJSON(req, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	confirmed, err := tlstrust.NormalizeFingerprint(input.Fingerprint)
+	if err != nil || confirmed == "" || input.ExpectedRevision == 0 {
+		writeError(w, http.StatusBadRequest, "expected_revision and a SHA-256 fingerprint are required")
+		return
+	}
+	profile, err := h.repository.Profile(req.Context(), name)
+	if err != nil {
+		writeRepositoryError(w, err)
+		return
+	}
+	if profile.Revision != input.ExpectedRevision {
+		writeRepositoryError(w, fmt.Errorf("%w: expected %d, current %d", state.ErrRevisionConflict, input.ExpectedRevision, profile.Revision))
+		return
+	}
+	probeCtx, cancel := context.WithTimeout(req.Context(), networkTimeout)
+	defer cancel()
+	probeErr := probeTLS(probeCtx, profile)
+	var trustErr *tlstrust.TrustError
+	if probeErr == nil || !errors.As(probeErr, &trustErr) {
+		if probeErr == nil {
+			writeError(w, http.StatusConflict, "the current TLS certificate does not require trust confirmation")
+		} else {
+			writeError(w, http.StatusBadGateway, probeErr.Error())
+		}
+		return
+	}
+	if confirmed != trustErr.Certificate.Fingerprint {
+		writeError(w, http.StatusConflict, "the observed TLS certificate changed before confirmation")
+		return
+	}
+	var updated state.Profile
+	err = h.manager.MutateProfile(req.Context(), name, func() error {
+		var updateErr error
+		updated, updateErr = h.repository.UpdateProfile(req.Context(), name, input.ExpectedRevision, state.ProfileInput{
+			URL:                    profile.URL,
+			Username:               profile.Username,
+			TLSMode:                state.TLSPinnedFingerprint,
+			CertificateFingerprint: confirmed,
+			TimeoutSeconds:         profile.TimeoutSeconds,
+		})
+		return updateErr
+	})
+	if err != nil {
+		writeRepositoryError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, updated)
+}
+
+func (h *Handler) requireProfileTLS(w http.ResponseWriter, req *http.Request, name string) (state.Profile, bool) {
+	profile, err := h.repository.Profile(req.Context(), name)
+	if err != nil {
+		writeRepositoryError(w, err)
+		return state.Profile{}, false
+	}
+	ctx, cancel := context.WithTimeout(req.Context(), networkTimeout)
+	defer cancel()
+	if err := probeTLS(ctx, profile); err != nil {
+		if !h.writeTLSProbeError(w, profile, err, nil) {
+			writeError(w, http.StatusBadGateway, err.Error())
+		}
+		return state.Profile{}, false
+	}
+	return profile, true
+}
+
+func probeTLS(ctx context.Context, profile state.Profile) error {
+	pin := ""
+	if profile.TLSMode == state.TLSPinnedFingerprint {
+		pin = profile.CertificateFingerprint
+	}
+	return tlstrust.Probe(ctx, profile.URL, pin)
+}
+
+func (h *Handler) writeTLSProbeError(w http.ResponseWriter, profile state.Profile, err error, extra map[string]any) bool {
+	var trustErr *tlstrust.TrustError
+	if !errors.As(err, &trustErr) {
+		return false
+	}
+	response := map[string]any{
+		"error":            trustErr.Error(),
+		"code":             trustErr.Code,
+		"nas":              profile.Name,
+		"profile_revision": profile.Revision,
+		"certificate":      trustErr.Certificate,
+	}
+	if trustErr.ExpectedFingerprint != "" {
+		response["expected_fingerprint"] = trustErr.ExpectedFingerprint
+	}
+	if len(trustErr.ValidationWarnings) != 0 {
+		response["validation_warnings"] = trustErr.ValidationWarnings
+	}
+	for key, value := range extra {
+		response[key] = value
+	}
+	writeJSON(w, http.StatusConflict, response)
+	return true
 }
 
 func failedStage(name string, err error) testStage {

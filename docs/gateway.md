@@ -89,19 +89,30 @@ a reliable custom DSM port. Editing and incomplete setup reuse the connection
 step; signing in again reuses the authentication step and can navigate back to
 the same connection fields.
 
-Each profile has one of two TLS policies: `system_ca` (the page default) for
-CA-issued certificates, or `pinned_fingerprint` with an explicitly confirmed
-SHA-256 leaf-certificate fingerprint, which works for any HTTPS DSM including
-self-signed certificates.
-A pin authenticates exactly one leaf certificate, so any certificate change —
-including automatic Let's Encrypt renewals — fails the connection closed until
-the fingerprint is updated; CA-issued certificates should therefore use
-`system_ca`, which keeps validating across renewals. The DSM account is deliberately not guessed during profile
-creation. Password/OTP enrollment collects the account together with masked
+The page does not ask the administrator to choose a TLS mode or type a
+fingerprint. Every profile starts with system-CA, hostname, and validity
+verification. Immediately before Web Login, password/OTP enrollment, or
+connection diagnostics, the Gateway performs a credential-free TLS handshake.
+If normal verification fails because of CA, hostname, or validity policy, the
+page shows every warning plus the identity, validity period, and SHA-256
+fingerprint actually observed by the Gateway, then asks whether to trust and
+pin that exact certificate. This deliberately supports a NAS reached only by a
+LAN IP missing from its certificate SAN, but only after explicit administrator
+consent. A missing/unparseable certificate or TLS protocol, cryptographic
+handshake, or network failure cannot be pinned. A pin authenticates exactly
+one observed leaf certificate in place of CA, hostname, and validity checks, so certificate
+rotation fails closed and shows the old and newly observed fingerprints before
+an administrator may replace it. CA-issued certificates stay on system trust
+and continue validating across ordinary renewals. Changing a profile URL clears
+an old endpoint's pin and starts system verification again. These policies
+remain stored internally as `system_ca` and `pinned_fingerprint`.
+
+The DSM account is deliberately not guessed during profile creation.
+Password/OTP enrollment collects the account together with masked
 credentials and commits the verified account and encrypted credentials in one
 revision-checked transaction. Web Login likewise records the account that DSM
-actually signed in. Profiles can later edit URL, TLS policy/fingerprint, and
-timeout, but not their name. A profile without credentials exposes a primary
+actually signed in. Profiles can later edit URL and timeout, but not their name
+or a manually selected TLS policy. A profile without credentials exposes a primary
 **Complete setup** action; after credentials are stored, reauthentication
 becomes a deliberate row-menu action. A stored credential is not presented as
 a live health result. **Connection diagnostics** reports DNS, TCP, TLS/HTTP,
@@ -111,6 +122,11 @@ through the NAS's own DSM page (the gateway stores the resulting SID,
 SynoToken, and Noise resume keys), or use the bounded password/OTP enrollment
 for an automation account. Web sessions resume headlessly and survive gateway
 restarts. The container never reads the host's desktop OS keyring.
+
+The stored Gateway pin protects Gateway-to-NAS traffic. Because the Web Login
+popup connects the administrator's browser directly to DSM, that browser may
+still display its own self-signed-certificate warning unless its trust store
+also trusts the certificate.
 
 The relay is tested against the DSM protocol locally. If a particular DSM
 release refuses a non-loopback `opener` origin, use password/OTP enrollment for
