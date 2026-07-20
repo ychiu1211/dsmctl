@@ -1,0 +1,1 @@
+{"PkgMgr_OpFail_DependPkgs":{"level":"error","title":"Package installation failed","msg":"Failed to install %PKG_NAME% on %HOSTNAME%.<br>Check Package Center."},"StgMgrMountSSDROCacheFail":{"level":"warn","title":"SSD cache mount failed","msg":"Failed to mount the SSD cache on %VOLUME_NAME%."}}

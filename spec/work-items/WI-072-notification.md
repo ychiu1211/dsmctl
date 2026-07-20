@@ -1,9 +1,9 @@
 ---
 id: WI-072
 title: Notification settings module
-status: proposed
+status: in_progress
 priority: P2
-owner: ""
+owner: "claude (dsm-notification-setup worktree)"
 depends_on: [WI-006]
 parallel_group: C
 touches:
@@ -15,7 +15,7 @@ touches:
   - internal/cli/notification.go
   - internal/mcpserver/server.go
   - internal/mcpserver/read_only.go
-  - docs/control-panel.md
+  - docs/notification.md
 ---
 
 # WI-072 — Notification settings module
@@ -32,14 +32,80 @@ a channel. This is a focused Control Panel module in the sense of
 area with stable semantic field names, never a generic `notification set
 key=value` or raw-API proxy.
 
-The API map, versions, live-read shapes, and set fields below are the author's
-best current knowledge and **must be live-verified at implementation time**: per
-standing policy the WebAPI conf / mobile-client field names are frequently stale
-(see [[dsm-webapi-live-verify-fields]]), so confirm every API family, version,
-method, and field against the lab with a throwaway `DSMCTL_DUMP` probe before
-trusting it. The most likely source of truth on codesearch is `webapi-Core`'s
-notification handlers plus the DSM Admin Center `NotificationApp` JS; the likely
-API family is `SYNO.Core.Notification.*`.
+**Scope addition (2026-07-20, product request):** besides the settings surface,
+the module must read the **notification history** — the per-user DSM desktop
+notification feed (the bell) — so an operator or MCP agent can ask "does this
+system have problems?" and get the actual delivered notifications (storage
+failures, package errors, security events) with level/date filters. The history
+and the per-app desktop-notification toggles are additional independent read
+areas alongside the WI-006-style settings channels.
+
+## Live-verified wire map (DSM 7.3-81168 lab, 2026-07-20)
+
+Every read below was probed against the lab with a throwaway authenticated
+probe (per [[dsm-webapi-live-verify-fields]]); write methods were confirmed
+from the DSM 7.3 `NotificationVueBundle.js` / `DSMNotify*.js` sources served by
+the NAS itself and remain WIRE-UNVERIFIED until Slice B runs a reverted
+round-trip.
+
+Read (live-verified response shapes):
+
+- `SYNO.Core.Notification.Mail.Conf` v2 `get` → `{enable_mail, enable_oauth,
+  in_use[], profiles[], send_welcome_mail, sender_mail, sender_name,
+  smtp_auth{enable,user}, smtp_info{port,server,ssl,verifyCert},
+  subject_prefix}`. **No password field in the response.** v1 differs only in
+  `mail[]` instead of `profiles[]`.
+- `SYNO.Core.Notification.Push.Mail` v2 `get` → `{enable_mail, mail[],
+  subject_prefix, template_id}` (Synology-relay email mode).
+- `SYNO.Core.Notification.Push.Conf` v1 `get` → `{mobile_enable, msn_*,
+  skype_*}` (msn/skype are dead legacy fields; only `mobile_enable` is
+  meaningful).
+- `SYNO.Core.Notification.Push.Mobile` v2 `list` → `{count, list[]}` (paired
+  devices; UI distinguishes device vs browser by `app_version` presence).
+- `SYNO.Core.Notification.Push.Webhook.Provider` v2 `list` → `{count, list[]}`.
+- `SYNO.Core.Notification.SMS.Conf` v2 `get` → `{api_id, enable_sms,
+  msg_interval, phone_info[{code,num,prefix}], provider_name, sender, user}`
+  (no password field). `SYNO.Core.Notification.SMS.Provider` v2 `list` →
+  `provider_info[{provider_id, provider_name, req_method, param_used{...},
+  template, ...}]`; the `template` URL may embed user credentials on custom
+  providers and is never decoded. Note: DSM 7.3's Notification UI no longer
+  offers SMS, but the API family is still served.
+- `SYNO.Core.Notification.CMS.Conf` v2 `get` → `{available_templates[],
+  cms_enable, join_dsm_cms, template_id}` (read deferred; CMS is out of the
+  first slice).
+- `SYNO.Core.Notification.Advance.FilterSettings` v2 (and v1) `list` →
+  `{<profile>: [{appid, format, group, level, name, source, tag, title,
+  warnPercent}]}`; default profile key is `All` (257 events on the lab).
+  `level` ∈ NOTIFICATION_INFO/WARN/ERROR. Passing `format=<channel>` does not
+  change the entry count on the lab; per-channel enablement semantics are a
+  Slice B question. `SYNO.Core.Notification.Advance.Variables` v1 `get` →
+  `{company_name, http_url}`; `.Advance.CustomizedData` v1 `get` →
+  `{subject, content, default_subject, default_content}`.
+- **History (desktop bell):** `SYNO.Core.DSMNotify` v1, single method `notify`
+  multiplexed by `action`:
+  - `action=load` with optional `offset`, `limit`, `level`
+    (NOTIFICATION_ERROR etc.), `dateFrom`, `dateTo` (epoch seconds), `sortBy`
+    (`time`), `sortDir` (`ASC`/`DESC`) → `{items[], total, newestMsgTime}`.
+    Item: `{notifyId, time (epoch), level, title (string key such as
+    StgMgrMountSSDROCacheFail), msg [JSON-encoded map of %VAR% → value],
+    className (source app id), tag, hasMail, mailType, isEncoded, ...}`.
+  - `action=loadHaveNtAppList` → `{items[{app, appids[], category,
+    category_enu, dsmnotify: "on"|"off"}], total}` — the per-category desktop
+    notification toggles.
+  - `SYNO.Core.DSMNotify.Strings` v1 `get` `{pkgName:"", lang}` → map keyed by
+    notification key: `{<key>: {level, title, msg}}` with `%VAR%` placeholder
+    templates (~110 KB for enu). History rendering = template + item var map;
+    nested `table:section:key` indirections stay unresolved.
+
+Write methods confirmed in the DSM 7.3 UI source (Slice B, WIRE-UNVERIFIED):
+`Mail.Conf set`, `Mail send_test` / `refresh_token` (OAuth), `Mail.Profile.Conf
+create/set/delete (profile_id)`, `Push send_test {target_id_list}`,
+`Push.Mobile set {settings[]} / unpair {target_id_list}`,
+`Push.Webhook.Provider create/set/delete/send_test (profile_id)`,
+`Advance.WarningPercentage set {warn_type, warn_percent}`, and history
+mutation `DSMNotify notify action=delete_by_ids {notifyIds[]} /
+action=apply {clean:"all"}`. LINE pairing (`Notification.Line get_bot_info`)
+is deferred with the webhook wizard.
 
 ## Scope
 
@@ -47,32 +113,45 @@ Sliced read-first, then guarded write, so the read slice can ship independently.
 
 ### Slice A — read-only
 
-Each channel is a separate compatibility boundary with its own decoder and
-capability entry. Likely APIs (all to-be-live-verified):
+Each area is a separate compatibility boundary with its own decoder and
+capability entry (APIs and shapes per the live-verified wire map above):
 
-- **Email (SMTP):** `SYNO.Core.Notification.Mail` (or `.Mail.Conf`) `get` →
-  normalized `{enabled, smtp_server, smtp_port, security (none/ssl/tls),
-  auth_enabled, username, from_address, from_name, primary_recipient,
-  secondary_recipient/cc, subject_prefix}`. The SMTP `passwd` is **never**
-  decoded into the state model.
-- **SMS:** `SYNO.Core.Notification.SMS` (or `.SMS.Conf`) `get` →
-  `{enabled, provider, phone_primary, phone_secondary, message_limit_enabled,
-  daily_limit}`; provider catalog via `SYNO.Core.Notification.SMS.ServiceProvider`
-  `list`. Provider auth material (account id, API token, or credentials embedded
-  in the send URL template) is never decoded.
-- **Push:** `SYNO.Core.Notification.Push` (or `.Push.Conf`) `get` →
-  `{mobile_enabled, dsm_desktop_enabled, relay_enabled}`; paired mobile devices
-  via `SYNO.Core.Notification.Push.Mobile` `list` → `{name, model, last_seen}`.
-  Per-device push tokens are identity material and are never surfaced (treated
-  like SIDs).
-- **Webhook:** `SYNO.Core.Notification.Webhook` (or `.Webhook.Provider`) `list`
-  → configured custom providers `{id, name, url_host, method, enabled}` (the URL
-  is surfaced host-only or redacted; any bearer/signing secret is never
-  decoded). Newer-DSM-only tab; absent on older releases.
-- **Rule matrix:** `SYNO.Core.Notification.Rule` / `.Event` `list` → the
-  per-event × per-channel enable grid `{event_key, category, mail, sms, push,
-  webhook}` for the events DSM exposes (storage/SMART, security/login, package,
-  system, etc.).
+- **Email (SMTP):** `SYNO.Core.Notification.Mail.Conf` `get` (v2 preferred,
+  v1 fallback), normalized to `{enabled, oauth_enabled, sender_name,
+  sender_mail, subject_prefix, welcome_mail_enabled, smtp {server, port, ssl,
+  verify_cert, auth_enabled, auth_user}, recipients}`; enriched with the
+  Synology-relay mode from `SYNO.Core.Notification.Push.Mail` `get`
+  `{relay_enabled, relay_recipients, relay_subject_prefix}` when available.
+  The SMTP password is **never** decoded (and DSM's `get` does not return it).
+- **SMS:** `SYNO.Core.Notification.SMS.Conf` `get` → `{enabled, provider,
+  phones, interval}` (the provider account id / api user are auth material and
+  are not decoded, per the original non-goal); provider catalog from
+  `SYNO.Core.Notification.SMS.Provider` `list` reduced to `{id, name, method,
+  required params}` — the credential-bearing `template` URL is never decoded.
+- **Push:** `SYNO.Core.Notification.Push.Conf` `get` → `{mobile_enabled}`
+  (legacy msn/skype fields ignored); paired devices via
+  `SYNO.Core.Notification.Push.Mobile` `list`, decoded tolerantly (the lab has
+  no paired device). Per-device push tokens are never surfaced.
+- **Webhook:** `SYNO.Core.Notification.Push.Webhook.Provider` `list` →
+  configured providers, decoded tolerantly (lab list is empty); any
+  token/secret-bearing field is never decoded.
+- **Rule matrix:** `SYNO.Core.Notification.Advance.FilterSettings` `list`
+  (v2/v1) → per-profile event catalog `{name, tag, title, group, level,
+  source, app id, warn percent}` with the profile name (`All` by default)
+  preserved. Per-channel enablement semantics stay a Slice B question; the
+  read reports the event catalog DSM actually serves.
+- **Desktop notification settings:** `SYNO.Core.DSMNotify` `notify`
+  `action=loadHaveNtAppList` → per-category desktop toggles
+  `{category, app ids, enabled}`.
+- **History (the user-visible notification feed):** `SYNO.Core.DSMNotify`
+  `notify` `action=load` with `{offset, limit, level, from, to}` filters →
+  `{total, newest_time, entries[]}`; each entry carries the raw key, source
+  app, level, time, and a **rendered title/message** produced by substituting
+  the item's `%VAR%` map into the `SYNO.Core.DSMNotify.Strings` templates
+  (requested per query language, default `enu`). Unresolvable nested
+  `table:section:key` references are left as-is rather than guessed.
+- **CMS notification relay** (`SYNO.Core.Notification.CMS.Conf`) is deferred:
+  it only matters on CMS-managed fleets and needs one to verify.
 
 ### Slice B — guarded write (plan/apply, hash-bound) + test send
 
@@ -155,19 +234,34 @@ read-only gateway.
 
 ## Acceptance criteria
 
-- [ ] Slice A: `notification capabilities|mail|sms|push|webhook|rules` (CLI) and
-      the matching `get_*` MCP tools return normalized state with semantic field
-      names; a decode fails (rather than returning empty success) on a malformed
-      shape.
-- [ ] No secret leak: unit tests assert the decoded state never carries the SMTP
+- [x] Slice A: `notification capabilities|mail|sms|push|webhook|rules|desktop|history`
+      (CLI) and the matching `get_notification_*` MCP tools return normalized
+      state with semantic field names; a decode fails (rather than returning
+      empty success) on a malformed shape. **Done** (decoder tests reject
+      missing `enable_mail`/`total`/profileless rules).
+- [x] History: `notification history` supports offset/limit paging plus level
+      and date-range filters applied by DSM, and renders human-readable
+      title/message text from the DSM string templates alongside the raw
+      notification key, so an agent can answer "does this system currently have
+      problems?" from the same feed the DSM desktop bell shows. **Live-verified
+      2026-07-21** on the lab: `--level error` narrowed Total 128 → 6 and
+      `--from 2026-07-18` narrowed Total → 2 server-side; offset paging and
+      `--lang cht` rendering confirmed.
+- [x] No secret leak: unit tests assert the decoded state never carries the SMTP
       password, SMS auth token, webhook secret, or push device tokens; a live
-      `--json` grep confirms their absence.
-- [ ] Independent gating: each channel selects its own backend and is reported
+      `--json` grep confirms their absence (only the SMS provider catalog's
+      *parameter names* `api_id`/`api_key` appear, by design; no values, URLs,
+      or `@@` templates).
+- [x] Independent gating: each channel selects its own backend and is reported
       `(not supported)` when its API/version is absent (webhook on older DSM,
-      etc.) without disabling the other channels.
-- [ ] Slice A live verification on the DSM 7.3 lab: read every present channel
-      and the rule matrix with no secret leak; unconfigured channels report a
-      clean disabled/empty state.
+      etc.) without disabling the other channels (unit-tested with a
+      DSMNotify-only target: history/desktop supported, mail unsupported).
+- [x] Slice A live verification on the DSM 7.3 lab (7.3-81168, 2026-07-21):
+      all seven areas supported and read; unconfigured channels (mail, push,
+      webhook, SMS) report clean disabled/empty state; rules serve profile
+      `All` with 257 events; history surfaces the lab's real problems
+      (Surveillance Station dependency install failures, SSD read-only cache
+      mount failures).
 - [ ] Slice B (first write): `mail` SMTP config via guarded hash-bound
       plan/apply, with a request-capture test proving `credential_ref` resolution
       (the password appears only on the wire, never in plan/hash/logs) and a
@@ -183,6 +277,25 @@ read-only gateway.
       a mail config field round-trip through plan/apply with postcondition proof;
       remaining scopes (sms/push/webhook/rules) documented as pending if their
       throwaway resources are unavailable.
+
+## Progress
+
+- **Slice A (read-only, all seven areas + history) shipped and live-verified
+  2026-07-21** on the DSM 7.3-81168 lab. `go test ./... -count=1` and
+  `go vet ./...` clean; 15 decoder/request-capture unit tests in
+  `internal/synology/operations/notification`. CLI `dsmctl notification
+  capabilities|mail|push|webhook|sms|rules|desktop|history`, MCP
+  `get_notification_*` (8 tools, read-only annotations, prefix-scoped
+  `nas.read`, included in the read-only gateway). User docs in
+  `docs/notification.md`.
+- Known rendering limitation (documented): variable values that are
+  themselves DSM string-table references (`dsm:volume:volume`,
+  `pkgmgr:fail_op_install_pkg`) are substituted verbatim, not resolved
+  through the UIString tables.
+- **Slice B (writes + test send) not started.** The wire map above records
+  the UI-source method names; every write remains WIRE-UNVERIFIED until a
+  reverted live round-trip. No temporary lab resources were left behind by
+  Slice A (read-only probes; the throwaway probe session logged out).
 
 ## Verification
 

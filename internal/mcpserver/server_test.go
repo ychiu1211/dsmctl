@@ -62,8 +62,8 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools() error = %v", err)
 	}
-	if len(tools.Tools) != 153 {
-		t.Fatalf("ListTools() returned %d tools, want 153", len(tools.Tools))
+	if len(tools.Tools) != 161 {
+		t.Fatalf("ListTools() returned %d tools, want 161", len(tools.Tools))
 	}
 	for _, tool := range tools.Tools {
 		if scope, ok := ToolScope(tool.Name); !ok || scope == "" {

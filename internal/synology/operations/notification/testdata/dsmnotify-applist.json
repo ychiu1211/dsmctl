@@ -1,0 +1,1 @@
+{"items":[{"app":"SYNO.SDS.AdminCenter.Application","appids":["SYNO.SDS.AdminCenter.Application","SYNO.SDS.App.FileStation3.Instance"],"category":"System","category_enu":"System","dsmnotify":"on"},{"app":"SYNO.SDS.PkgManApp.Instance","appids":["SYNO.SDS.PkgManApp.Instance"],"category":"Package Center","category_enu":"Package Center","dsmnotify":"off"}],"total":2}

@@ -21,6 +21,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/domain/ftpservices"
 	"github.com/ychiu1211/dsmctl/internal/domain/identity"
 	"github.com/ychiu1211/dsmctl/internal/domain/nfsexport"
+	"github.com/ychiu1211/dsmctl/internal/domain/notification"
 	"github.com/ychiu1211/dsmctl/internal/domain/office"
 	"github.com/ychiu1211/dsmctl/internal/domain/packagecenter"
 	"github.com/ychiu1211/dsmctl/internal/domain/photos"
@@ -871,6 +872,61 @@ type getLogsInput struct {
 	LogType string `json:"log_type,omitempty" jsonschema:"DSM log category; defaults to system. Also: connection, package, or fileTransfer"`
 	From    string `json:"from,omitempty" jsonschema:"Inclusive lower time bound: a local timestamp (2006-01-02 or 2006-01-02 15:04:05) or Unix seconds"`
 	To      string `json:"to,omitempty" jsonschema:"Inclusive upper time bound (requires from): a local timestamp or Unix seconds"`
+}
+
+type getNotificationInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getNotificationHistoryInput struct {
+	NAS    string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Limit  int    `json:"limit,omitempty" jsonschema:"Maximum number of notifications to return; defaults to a bounded page size"`
+	Offset int    `json:"offset,omitempty" jsonschema:"Number of newest notifications to skip for pagination"`
+	Level  string `json:"level,omitempty" jsonschema:"Severity filter applied by DSM: info, warn, or error"`
+	From   string `json:"from,omitempty" jsonschema:"Inclusive lower time bound: a local timestamp (2006-01-02 or 2006-01-02 15:04:05) or Unix seconds"`
+	To     string `json:"to,omitempty" jsonschema:"Inclusive upper time bound: a local timestamp or Unix seconds"`
+	Lang   string `json:"lang,omitempty" jsonschema:"DSM string-table language for rendered titles/messages, such as enu (default) or cht"`
+}
+
+type getNotificationCapabilitiesOutput struct {
+	NAS          string                            `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.NotificationCapabilities `json:"capabilities" jsonschema:"Notification read areas currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport      `json:"report" jsonschema:"Discovered APIs and selected notification compatibility backends"`
+}
+
+type getNotificationMailOutput struct {
+	NAS  string                         `json:"nas" jsonschema:"NAS profile used for the request"`
+	Mail synology.NotificationMailState `json:"mail" jsonschema:"Normalized email notification channel without any password material"`
+}
+
+type getNotificationPushOutput struct {
+	NAS  string                         `json:"nas" jsonschema:"NAS profile used for the request"`
+	Push synology.NotificationPushState `json:"push" jsonschema:"Normalized push notification channel without any device tokens"`
+}
+
+type getNotificationWebhookOutput struct {
+	NAS     string                            `json:"nas" jsonschema:"NAS profile used for the request"`
+	Webhook synology.NotificationWebhookState `json:"webhook" jsonschema:"Configured webhook providers without URLs or secrets"`
+}
+
+type getNotificationSMSOutput struct {
+	NAS string                        `json:"nas" jsonschema:"NAS profile used for the request"`
+	SMS synology.NotificationSMSState `json:"sms" jsonschema:"Normalized SMS notification channel without provider auth material"`
+}
+
+type getNotificationRulesOutput struct {
+	NAS   string                          `json:"nas" jsonschema:"NAS profile used for the request"`
+	Rules synology.NotificationRulesState `json:"rules" jsonschema:"Notification event rule catalog per profile"`
+}
+
+type getNotificationDesktopOutput struct {
+	NAS     string                            `json:"nas" jsonschema:"NAS profile used for the request"`
+	Desktop synology.NotificationDesktopState `json:"desktop" jsonschema:"Per-category desktop notification toggles of the signed-in user"`
+}
+
+type getNotificationHistoryOutput struct {
+	NAS     string                            `json:"nas" jsonschema:"NAS profile used for the request"`
+	History synology.NotificationHistoryState `json:"history" jsonschema:"One page of the DSM notification history, newest first"`
 }
 
 type getLogsOutput struct {
@@ -2673,6 +2729,121 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getLogsOutput{}, err
 		}
 		return nil, getLogsOutput{NAS: result.NAS, Logs: result.Logs}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_notification_capabilities",
+		Title:       "Get notification capabilities",
+		Description: "Report which DSM notification read areas (email, push, webhook, SMS, rule catalog, desktop toggles, history) are available for a NAS and the DSM API backend selected for each. Each area is independent.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getNotificationInput) (*mcp.CallToolResult, getNotificationCapabilitiesOutput, error) {
+		result, err := service.GetNotificationCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getNotificationCapabilitiesOutput{}, err
+		}
+		return nil, getNotificationCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_notification_mail",
+		Title:       "Get email notification settings",
+		Description: "Read the DSM email notification channel: whether it is enabled, the SMTP server/port/TLS/auth-user configuration, sender, subject prefix, recipients, and the Synology-relay email mode. The SMTP password is never returned. This tool never changes notification settings.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getNotificationInput) (*mcp.CallToolResult, getNotificationMailOutput, error) {
+		result, err := service.GetNotificationMail(ctx, input.NAS)
+		if err != nil {
+			return nil, getNotificationMailOutput{}, err
+		}
+		return nil, getNotificationMailOutput{NAS: result.NAS, Mail: result.Mail}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_notification_push",
+		Title:       "Get push notification settings",
+		Description: "Read the DSM push notification channel: whether mobile push is enabled and which mobile devices or browsers are paired. Device push tokens are never returned. This tool never changes notification settings.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getNotificationInput) (*mcp.CallToolResult, getNotificationPushOutput, error) {
+		result, err := service.GetNotificationPush(ctx, input.NAS)
+		if err != nil {
+			return nil, getNotificationPushOutput{}, err
+		}
+		return nil, getNotificationPushOutput{NAS: result.NAS, Push: result.Push}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_notification_webhook",
+		Title:       "Get webhook notification providers",
+		Description: "Read the configured DSM webhook notification providers (id, name, kind, enabled). Webhook URLs and secrets are never returned. This tool never changes notification settings.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getNotificationInput) (*mcp.CallToolResult, getNotificationWebhookOutput, error) {
+		result, err := service.GetNotificationWebhook(ctx, input.NAS)
+		if err != nil {
+			return nil, getNotificationWebhookOutput{}, err
+		}
+		return nil, getNotificationWebhookOutput{NAS: result.NAS, Webhook: result.Webhook}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_notification_sms",
+		Title:       "Get SMS notification settings",
+		Description: "Read the DSM SMS notification channel: whether it is enabled, the selected provider, recipient phone numbers, and the provider catalog. Provider credentials and send-URL templates are never returned. This tool never changes notification settings.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getNotificationInput) (*mcp.CallToolResult, getNotificationSMSOutput, error) {
+		result, err := service.GetNotificationSMS(ctx, input.NAS)
+		if err != nil {
+			return nil, getNotificationSMSOutput{}, err
+		}
+		return nil, getNotificationSMSOutput{NAS: result.NAS, SMS: result.SMS}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_notification_rules",
+		Title:       "Get notification event rule catalog",
+		Description: "Read the DSM notification event catalog per profile: every event key with its group, severity, title, source application, and warning threshold. Useful to check which events DSM can notify about. This tool never changes notification rules.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getNotificationInput) (*mcp.CallToolResult, getNotificationRulesOutput, error) {
+		result, err := service.GetNotificationRules(ctx, input.NAS)
+		if err != nil {
+			return nil, getNotificationRulesOutput{}, err
+		}
+		return nil, getNotificationRulesOutput{NAS: result.NAS, Rules: result.Rules}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_notification_desktop",
+		Title:       "Get desktop notification settings",
+		Description: "Read the per-category DSM desktop notification toggles of the signed-in user (which categories show desktop notifications in DSM). This tool never changes notification settings.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getNotificationInput) (*mcp.CallToolResult, getNotificationDesktopOutput, error) {
+		result, err := service.GetNotificationDesktop(ctx, input.NAS)
+		if err != nil {
+			return nil, getNotificationDesktopOutput{}, err
+		}
+		return nil, getNotificationDesktopOutput{NAS: result.NAS, Desktop: result.Desktop}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_notification_history",
+		Title:       "Get notification history",
+		Description: "Read delivered DSM notifications (the desktop bell feed), newest first, with optional severity, time-range, and paging filters applied by DSM. Each entry carries the raw event key plus a rendered human-readable title and message, so recent storage, package, security, and system problems are directly visible. This tool never deletes or marks notifications.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getNotificationHistoryInput) (*mcp.CallToolResult, getNotificationHistoryOutput, error) {
+		fromTime, err := syslog.ParseTime(input.From)
+		if err != nil {
+			return nil, getNotificationHistoryOutput{}, err
+		}
+		toTime, err := syslog.ParseTime(input.To)
+		if err != nil {
+			return nil, getNotificationHistoryOutput{}, err
+		}
+		result, err := service.GetNotificationHistory(ctx, input.NAS, notification.HistoryQuery{
+			Limit: input.Limit, Offset: input.Offset, Level: input.Level,
+			From: fromTime, To: toTime, Lang: input.Lang,
+		})
+		if err != nil {
+			return nil, getNotificationHistoryOutput{}, err
+		}
+		return nil, getNotificationHistoryOutput{NAS: result.NAS, History: result.History}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

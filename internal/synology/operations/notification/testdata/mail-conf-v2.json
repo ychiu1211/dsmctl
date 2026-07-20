@@ -1,0 +1,1 @@
+{"enable_mail":true,"enable_oauth":false,"in_use":[],"profiles":[{"mail":"admin@example.com","name":"Admins"},"ops@example.com"],"send_welcome_mail":true,"sender_mail":"nas@example.com","sender_name":"Lab NAS","smtp_auth":{"enable":true,"user":"smtp-user"},"smtp_info":{"port":587,"server":"smtp.example.com","ssl":true,"verifyCert":true},"subject_prefix":"[NAS]"}

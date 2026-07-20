@@ -124,6 +124,10 @@ dsmctl log list --nas office
 dsmctl log list --nas office --type connection --limit 50
 dsmctl log list --nas office --from "2026-07-01" --to "2026-07-08"
 dsmctl log list --nas office --keyword cache --level error --json
+dsmctl notification capabilities --nas office
+dsmctl notification mail --nas office --json
+dsmctl notification history --nas office --level error --limit 20
+dsmctl notification history --nas office --from "2026-07-01" --json
 dsmctl package capabilities --nas office
 dsmctl package inventory --nas office --json
 dsmctl package settings --nas office --json
