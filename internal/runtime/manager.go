@@ -240,6 +240,32 @@ func (m *Manager) Client(ctx context.Context, requested string) (string, Client,
 			})
 		}
 	}
+	// Persist the session this password login establishes so later dsmctl
+	// invocations reuse its session ID (through sessionClient) instead of logging
+	// in again. The stored session carries no Noise resume material, so when DSM
+	// evicts it after its idle timeout the seeded client recovers with a fresh
+	// password login rather than a browserless resume — which is why a password
+	// login is safe to persist. This makes a provisioned NAS (password in the
+	// keyring, no web-login session) efficient across separate commands, not just
+	// within one process.
+	var saveSession func(ctx context.Context, sid, synoToken string) error
+	if m.sessions != nil {
+		saveSession = func(ctx context.Context, sid, synoToken string) error {
+			stored, err := m.sessions.Session(ctx, name)
+			if err != nil {
+				stored = credentials.SessionCredential{}
+			}
+			stored.SID = sid
+			stored.SynoToken = synoToken
+			stored.Account = profile.Username
+			now := time.Now()
+			if stored.IssuedAt.IsZero() {
+				stored.IssuedAt = now
+			}
+			stored.LastVerified = now
+			return m.sessions.SaveSession(ctx, name, stored)
+		}
+	}
 	client, err := synology.NewClient(synology.Options{
 		BaseURL:      profile.URL,
 		Username:     profile.Username,
@@ -247,6 +273,7 @@ func (m *Manager) Client(ctx context.Context, requested string) (string, Client,
 		DeviceName:   device.Name,
 		DeviceID:     device.ID,
 		SaveDeviceID: saveDeviceID,
+		SaveSession:  saveSession,
 		HTTPClient:   httpClient(profile),
 		Logger:       m.logger,
 	})
