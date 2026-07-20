@@ -1099,6 +1099,26 @@ type getCertificateCapabilitiesOutput struct {
 	Report       synology.CompatibilityReport     `json:"report" jsonschema:"Discovered APIs and selected certificate backend"`
 }
 
+type getTerminalSNMPInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getTerminalStateOutput struct {
+	NAS      string                 `json:"nas" jsonschema:"NAS profile used for the request"`
+	Terminal synology.TerminalState `json:"terminal" jsonschema:"Normalized Terminal (SSH/Telnet) state"`
+}
+
+type getSNMPStateOutput struct {
+	NAS  string             `json:"nas" jsonschema:"NAS profile used for the request"`
+	SNMP synology.SNMPState `json:"snmp" jsonschema:"Normalized SNMP state; carries no community string or SNMPv3 passwords"`
+}
+
+type getTerminalSNMPCapabilitiesOutput struct {
+	NAS          string                            `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.TerminalSNMPCapabilities `json:"capabilities" jsonschema:"Terminal and SNMP reads currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport      `json:"report" jsonschema:"Discovered APIs and selected Terminal/SNMP backends"`
+}
+
 type planCertificateChangeInput struct {
 	NAS     string                    `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
 	Request certificate.ChangeRequest `json:"request" jsonschema:"Certificate import, set_default, bind_service, or delete intent. The private key is referenced by env:NAME and resolved only at apply time"`
@@ -3022,6 +3042,45 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getCertificatesOutput{}, err
 		}
 		return nil, getCertificatesOutput{NAS: result.NAS, Certificates: result.Certificates}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_terminal_snmp_capabilities",
+		Title:       "Get Terminal and SNMP capabilities",
+		Description: "Report whether the Terminal (SSH/Telnet) and SNMP reads are supported on the selected NAS and the DSM backend for each. Terminal and SNMP are independent: one may be unsupported without disabling the other. This slice is read-only; guarded Terminal/SNMP writes are deferred.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getTerminalSNMPInput) (*mcp.CallToolResult, getTerminalSNMPCapabilitiesOutput, error) {
+		result, err := service.GetTerminalSNMPCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getTerminalSNMPCapabilitiesOutput{}, err
+		}
+		return nil, getTerminalSNMPCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_terminal_state",
+		Title:       "Get Terminal (SSH/Telnet) state",
+		Description: "Read the Control Panel > Terminal & SNMP > Terminal tab: whether SSH and Telnet are enabled, on which TCP port SSH listens, and whether local console access is forbidden. Telnet is unauthenticated cleartext and deprecated. This tool never changes the NAS.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getTerminalSNMPInput) (*mcp.CallToolResult, getTerminalStateOutput, error) {
+		result, err := service.GetTerminalState(ctx, input.NAS)
+		if err != nil {
+			return nil, getTerminalStateOutput{}, err
+		}
+		return nil, getTerminalStateOutput{NAS: result.NAS, Terminal: result.Terminal}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_snmp_state",
+		Title:       "Get SNMP state",
+		Description: "Read the Control Panel > Terminal & SNMP > SNMP tab: whether the SNMP service is enabled, which protocol versions (v1/v2c, v3) are on, the device location and contact, the SNMPv3 username, and whether a read community and a trap target are configured. Returns non-secret configuration only — the community string, the SNMPv3 auth/privacy passwords, and any trap community are never read or returned. This tool never changes the NAS.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getTerminalSNMPInput) (*mcp.CallToolResult, getSNMPStateOutput, error) {
+		result, err := service.GetSNMPState(ctx, input.NAS)
+		if err != nil {
+			return nil, getSNMPStateOutput{}, err
+		}
+		return nil, getSNMPStateOutput{NAS: result.NAS, SNMP: result.SNMP}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

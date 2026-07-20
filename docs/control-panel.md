@@ -424,6 +424,53 @@ unverified field cannot corrupt state. Reaching a NAS *by* its QuickConnect ID i
 a separate connection-layer concern in
 [WI-042](../spec/work-items/WI-042-quickconnect-transport.md).
 
+## Terminal and SNMP (read-only)
+
+DSM's Control Panel → Terminal & SNMP page carries two independent DSM API
+families with independent failure boundaries: the Terminal tab (SSH/Telnet) is
+`SYNO.Core.Terminal` and the SNMP tab is `SYNO.Core.SNMP`. One being absent
+reports `(not supported)` without disabling the other, and each fails closed
+(no silent empty-success decode) when its API is missing.
+
+```console
+dsmctl control-panel terminal-snmp capabilities --nas office
+dsmctl control-panel terminal-snmp terminal --nas office --json
+dsmctl control-panel terminal-snmp snmp --nas office --json
+```
+
+- **Terminal** reads `SYNO.Core.Terminal` (`get`, v3→v2→v1): whether SSH and
+  Telnet are enabled, the SSH listening port, and whether local console access
+  is forbidden. dsmctl drives DSM over the WebAPI session, not SSH, so these
+  describe the human remote-shell exposure only. (The cipher/kex/mac algorithm
+  menus DSM returns are ignored.)
+- **SNMP** reads `SYNO.Core.SNMP` (`get`, v1): whether the service is enabled,
+  which protocol versions (v1/v2c, v3) are on, the device location and contact,
+  the SNMPv3 username, and whether a read community and a trap target are
+  configured.
+
+**Secret suppression is mandatory on read.** The SNMP `get` echoes the v1/v2c
+community string (`rocommunity`), and — when configured — the SNMPv3 auth and
+privacy passwords and any trap community, in cleartext. The decoder **never
+reads these values into the model**: it surfaces only presence flags
+(`community_configured`, `trap_configured`, `trap_host_present`) and the
+non-secret SNMPv3 username. A unit test injects a canary into every secret
+field and asserts the re-encoded model carries no trace of it. The community
+string and passwords are never returned by any read, CLI output, or MCP result.
+
+MCP exposes the same reads through `get_terminal_snmp_capabilities`,
+`get_terminal_state`, and `get_snmp_state`. All are read-only and never change
+the Terminal or SNMP configuration.
+
+Verified live on DSM 7.3: `SYNO.Core.Terminal` v1–v3 (`enable_ssh`,
+`enable_telnet`, `ssh_port`, `forbid_console`) and `SYNO.Core.SNMP` v1
+(`enable_snmp`, `enable_snmp_v1v2`, `enable_snmp_v3`, `location`, `contact`,
+`rocommunity`, `rouser`). The trap-field names are the author's best knowledge
+and are decoded tolerantly, pending a live sample with SNMP and a trap
+configured. Guarded writes (SSH enable / port / Telnet, SNMP enable / versions /
+device info, and the community and SNMPv3 credentials via a credential
+reference) are a deferred follow-on and, like the other guarded modules, will be
+excluded from the read-only gateway.
+
 ## Adding another module
 
 Add a dedicated type under `internal/domain/controlpanel`, an operation package
