@@ -1253,6 +1253,36 @@ type getAccountProtectionCapabilitiesOutput struct {
 	Report       synology.CompatibilityReport           `json:"report" jsonschema:"Discovered APIs and selected account-protection backends"`
 }
 
+type firewallInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type firewallRulesInput struct {
+	NAS     string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Profile string `json:"profile,omitempty" jsonschema:"Limit to a single firewall profile by name; omit to read every profile"`
+}
+
+type getFirewallStatusOutput struct {
+	NAS    string                  `json:"nas" jsonschema:"NAS profile used for the request"`
+	Status synology.FirewallStatus `json:"status" jsonschema:"Global firewall enable flag, active profile, and network adapters"`
+}
+
+type getFirewallProfilesOutput struct {
+	NAS      string                     `json:"nas" jsonschema:"NAS profile used for the request"`
+	Profiles []synology.FirewallProfile `json:"profiles" jsonschema:"Firewall profiles, with the active one marked"`
+}
+
+type getFirewallRulesOutput struct {
+	NAS     string                   `json:"nas" jsonschema:"NAS profile used for the request"`
+	RuleSet synology.FirewallRuleSet `json:"rule_set" jsonschema:"Per-adapter default policy and ordered rules for the requested profile(s)"`
+}
+
+type getFirewallCapabilitiesOutput struct {
+	NAS          string                        `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.FirewallCapabilities `json:"capabilities" jsonschema:"Firewall reads currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport  `json:"report" jsonschema:"Discovered APIs and selected firewall backends"`
+}
+
 type getDriveAdminCapabilitiesOutput struct {
 	NAS          string                          `json:"nas" jsonschema:"NAS profile used for the request"`
 	Capabilities synology.DriveAdminCapabilities `json:"capabilities" jsonschema:"Drive Admin operations currently exposed by dsmctl, with installed-package evidence"`
@@ -3445,6 +3475,58 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getEnforceTwoFactorOutput{}, err
 		}
 		return nil, getEnforceTwoFactorOutput{NAS: result.NAS, Policy: result.Policy}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_firewall_capabilities",
+		Title:       "Get firewall capabilities",
+		Description: "Report which Control Panel > Security > Firewall reads dsmctl supports on the selected NAS (the global enable flag and active profile, the profile list, the network adapters, and each profile's per-adapter policy and ordered rules) and the backend for each. Each area is an independent boundary: one being absent leaves the others usable. Note: the per-rule field decoding is wire-unverified because the DSM-shipped profiles carry no rules by default. This slice is read-only; guarded writes are a deferred follow-on.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input firewallInput) (*mcp.CallToolResult, getFirewallCapabilitiesOutput, error) {
+		result, err := service.GetFirewallCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getFirewallCapabilitiesOutput{}, err
+		}
+		return nil, getFirewallCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_firewall_status",
+		Title:       "Get firewall status",
+		Description: "Read the global DSM firewall state (Control Panel > Security > Firewall): whether the firewall is enabled, which firewall profile is currently active, and the network adapters (interfaces) the firewall knows about. This tool never changes settings.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input firewallInput) (*mcp.CallToolResult, getFirewallStatusOutput, error) {
+		result, err := service.GetFirewallStatus(ctx, input.NAS)
+		if err != nil {
+			return nil, getFirewallStatusOutput{}, err
+		}
+		return nil, getFirewallStatusOutput{NAS: result.NAS, Status: result.Status}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_firewall_profiles",
+		Title:       "Get firewall profiles",
+		Description: "Read the DSM firewall profile list (each profile is a named rule group), marking which profile is currently active. This tool never changes settings.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input firewallInput) (*mcp.CallToolResult, getFirewallProfilesOutput, error) {
+		result, err := service.GetFirewallProfiles(ctx, input.NAS)
+		if err != nil {
+			return nil, getFirewallProfilesOutput{}, err
+		}
+		return nil, getFirewallProfilesOutput{NAS: result.NAS, Profiles: result.Profiles}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_firewall_rules",
+		Title:       "Get firewall rules",
+		Description: "Read the DSM firewall rule view: for each profile (or the one named by the profile argument), the per-adapter default (no-match) policy and the ordered rule list in DSM first-match evaluation order. Per-rule fields (action, protocol, source, ports) are wire-unverified because the DSM-shipped profiles carry no rules by default. This tool never changes settings.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input firewallRulesInput) (*mcp.CallToolResult, getFirewallRulesOutput, error) {
+		result, err := service.GetFirewallRules(ctx, input.NAS, input.Profile)
+		if err != nil {
+			return nil, getFirewallRulesOutput{}, err
+		}
+		return nil, getFirewallRulesOutput{NAS: result.NAS, RuleSet: result.RuleSet}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
