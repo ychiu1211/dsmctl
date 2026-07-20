@@ -680,6 +680,77 @@ func TestPasswordOTPEnrollmentStoresTrustedDeviceWithoutReturningSecrets(t *test
 	}
 }
 
+func TestAdministratorPasswordRevealIsExplicitAuditedAndVaultOnly(t *testing.T) {
+	handler, repository, manager, adminSession := newTestHandler(t)
+	defer manager.Close(context.Background())
+	if _, err := repository.CreateProfile(context.Background(), state.ProfileInput{Name: "office", URL: "https://office.example:5001", Username: "operator"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DSMCTL_PASSWORD_OFFICE", "environment-password-never-revealed")
+
+	missing := performJSON(handler, http.MethodPost, "/admin/api/profiles/office/credentials/reveal", `{}`, adminSession)
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("reveal without stored password status = %d body=%s", missing.Code, missing.Body.String())
+	}
+	if strings.Contains(missing.Body.String(), "environment-password-never-revealed") {
+		t.Fatalf("reveal fell back to the environment: %s", missing.Body.String())
+	}
+
+	secret := "vault-only-reveal-secret"
+	if _, err := repository.SavePassword(context.Background(), "office", secret); err != nil {
+		t.Fatal(err)
+	}
+	if unauthorized := performJSON(handler, http.MethodPost, "/admin/api/profiles/office/credentials/reveal", `{}`, ""); unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated reveal status = %d", unauthorized.Code)
+	}
+	if wrongMethod := performJSON(handler, http.MethodGet, "/admin/api/profiles/office/credentials/reveal", "", adminSession); wrongMethod.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET reveal status = %d", wrongMethod.Code)
+	}
+
+	revealed := performJSON(handler, http.MethodPost, "/admin/api/profiles/office/credentials/reveal", `{}`, adminSession)
+	if revealed.Code != http.StatusOK {
+		t.Fatalf("reveal status = %d body=%s", revealed.Code, revealed.Body.String())
+	}
+	var payload struct {
+		NAS      string `json:"nas"`
+		Account  string `json:"account"`
+		Password string `json:"password"`
+	}
+	if err := json.Unmarshal(revealed.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.NAS != "office" || payload.Account != "operator" || payload.Password != secret {
+		t.Fatalf("reveal payload = %#v", payload)
+	}
+	if cacheControl := revealed.Header().Get("Cache-Control"); cacheControl != "no-store" {
+		t.Fatalf("reveal Cache-Control = %q", cacheControl)
+	}
+
+	listed := performJSON(handler, http.MethodGet, "/admin/api/profiles", "", adminSession)
+	if listed.Code != http.StatusOK || strings.Contains(listed.Body.String(), secret) {
+		t.Fatalf("profile list leaked the revealed secret: status=%d body=%s", listed.Code, listed.Body.String())
+	}
+
+	events, err := repository.AuditEvents(context.Background(), state.AuditQuery{Action: "credential.reveal"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcomes := make(map[string]int)
+	for _, event := range events {
+		outcomes[event.Outcome]++
+	}
+	if outcomes["denied"] == 0 || outcomes["started"] < 2 || outcomes["failure"] == 0 || outcomes["success"] == 0 {
+		t.Fatalf("reveal audit outcomes = %#v", outcomes)
+	}
+	auditJSON, err := json.Marshal(events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(auditJSON), secret) || strings.Contains(string(auditJSON), "environment-password-never-revealed") {
+		t.Fatalf("audit output leaked a secret: %s", auditJSON)
+	}
+}
+
 func TestAdminWebLoginEnrollmentStoresRenewableVaultSession(t *testing.T) {
 	dsm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		_ = req.ParseForm()

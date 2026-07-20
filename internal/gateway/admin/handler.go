@@ -451,6 +451,8 @@ func (h *Handler) profile(w http.ResponseWriter, req *http.Request) {
 		h.credentialStatus(w, req, name)
 	case "credentials/password":
 		h.passwordEnrollment(w, req, name)
+	case "credentials/reveal":
+		h.revealPassword(w, req, name)
 	case "credentials/session":
 		h.removeSession(w, req, name)
 	case "credentials/trusted-device":
@@ -1008,6 +1010,36 @@ func (h *Handler) passwordEnrollment(w http.ResponseWriter, req *http.Request, n
 	writeJSON(w, http.StatusOK, map[string]any{"nas": name, "account": strings.TrimSpace(input.Account), "password_stored": true, "trusted_device_stored": device.ID != ""})
 }
 
+// revealPassword is the one deliberate plaintext exception in the admin API:
+// an explicit, audited administrator action that copies the enrolled DSM
+// credential back out of the vault. It is POST-only so the browser-mutation
+// boundary applies, returns only the Admin-UI-enrolled secret (never the
+// environment fallback, never web-login session material), and is unreachable
+// from /mcp because administrator cookies and MCP bearer tokens are disjoint.
+func (h *Handler) revealPassword(w http.ResponseWriter, req *http.Request, name string) {
+	if req.Method != http.MethodPost {
+		methodNotAllowed(w, http.MethodPost)
+		return
+	}
+	profile, err := h.repository.Profile(req.Context(), name)
+	if err != nil {
+		writeRepositoryError(w, err)
+		return
+	}
+	password, err := h.repository.StoredPassword(req.Context(), name)
+	if errors.Is(err, state.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "no stored DSM password for this NAS profile")
+		return
+	}
+	if err != nil {
+		h.logger.ErrorContext(req.Context(), "reveal stored DSM password failed",
+			"request_id", correlationID(req), "nas", name, "error", err)
+		writeError(w, http.StatusInternalServerError, "read stored DSM password")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"nas": profile.Name, "account": profile.Username, "password": password})
+}
+
 func (h *Handler) removeSession(w http.ResponseWriter, req *http.Request, name string) {
 	if req.Method != http.MethodDelete {
 		methodNotAllowed(w, http.MethodDelete)
@@ -1424,6 +1456,8 @@ func adminAuditAction(req *http.Request) string {
 		return "approval.lifecycle"
 	case strings.HasPrefix(path, "/admin/api/audit"):
 		return "audit.query"
+	case strings.HasSuffix(path, "/credentials/reveal"):
+		return "credential.reveal"
 	case strings.Contains(path, "/credentials/") || strings.Contains(path, "/weblogin/"):
 		return "credential.manage"
 	case strings.Contains(path, "/secrets") || strings.HasPrefix(path, "/admin/api/orphan-secrets"):

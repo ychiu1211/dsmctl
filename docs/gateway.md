@@ -276,6 +276,16 @@ plan hashing see only the reference. Removing a NAS deletes its credentials by
 default. With explicit credential retention, the API lists orphan metadata so
 the administrator can later delete it.
 
+One admin endpoint deliberately returns plaintext:
+`POST /admin/api/profiles/{name}/credentials/reveal` gives the signed-in
+administrator browser session the profile's DSM account and its vault-enrolled
+password (the NAS list's Copy account / Copy password actions). It answers 404
+when no password is enrolled, never consults the `DSMCTL_PASSWORD_*`
+environment fallback, never returns web-login session material or apply
+secrets, and is audited as its own `credential.reveal` action. MCP bearer
+tokens cannot call any `/admin/api/` route, so no secret is reachable over
+`/mcp`.
+
 ## Container security and portability
 
 The image is built with `CGO_ENABLED=0` for `linux/amd64`, contains a single
