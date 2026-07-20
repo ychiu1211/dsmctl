@@ -44,10 +44,12 @@ type CertificateMutationResult = certificate.MutationResult
 // The key never appears in a URL, query, header, log line, or the returned
 // result. On success DSM returns the new/updated certificate id.
 //
-// WIRE-UNVERIFIED (WI-065): the field names (key/cert/inter_cert), the CRT
-// `import` method, and the endpoint (entry.cgi vs a dedicated cgi) are the spec
-// author's best knowledge; confirm with a throwaway DSMCTL_DUMP probe before
-// trusting this against a real NAS.
+// LIVE-VERIFIED (WI-065, DSM 7.3): the multipart part names (key/cert/inter_cert),
+// the `import` method, the entry.cgi endpoint, and the id/desc/_sid form fields
+// are confirmed by a successful live import — with the api set to the PARENT
+// SYNO.Core.Certificate (CRTImportAPIName), NOT SYNO.Core.Certificate.CRT (which
+// rejects import with code 103). The one still-unverified detail is `as_default`;
+// see doCertificateImport.
 func (c *Client) ImportCertificate(ctx context.Context, request CertificateImportRequest) (CertificateMutationResult, error) {
 	c.mu.Lock()
 	prep, err := c.prepareCertificateImportLocked(ctx)
@@ -81,14 +83,23 @@ func doCertificateImport(ctx context.Context, prep transferPrep, request Certifi
 	if err := writer.SetBoundary(boundary); err != nil {
 		return CertificateMutationResult{}, err
 	}
+	// LIVE-VERIFIED (DSM 7.3): import is a method on the PARENT api
+	// SYNO.Core.Certificate, not on CRT (CRT/import is code 103).
 	fields := [][2]string{
-		{"api", certops.CRTAPIName},
+		{"api", certops.CRTImportAPIName},
 		{"version", strconv.Itoa(prep.version)},
 		{"method", certops.CRTImportMethod},
 		{certops.ImportFieldID, request.ReplaceID},
 		{certops.ImportFieldDesc, request.Description},
-		{certops.ImportFieldAsDefault, strconv.FormatBool(request.AsDefault)},
 		{"_sid", prep.sid},
+	}
+	// WIRE-UNVERIFIED (as_default): re-confirm live. DSM parsed the multipart
+	// `as_default` form field as truthy for ANY non-empty value, so sending
+	// "false" marked the newly-imported cert default despite the caller asking
+	// not to. Send the part ONLY when the caller wants this cert to become the
+	// default; omitting it entirely leaves the existing default cert in place.
+	if request.AsDefault {
+		fields = append(fields, [2]string{certops.ImportFieldAsDefault, "true"})
 	}
 	if prep.synoToken != "" {
 		fields = append(fields, [2]string{"SynoToken", prep.synoToken})
@@ -148,7 +159,7 @@ func doCertificateImport(ctx context.Context, prep transferPrep, request Certifi
 		if envelopeResult.Error != nil {
 			code = envelopeResult.Error.Code
 		}
-		return CertificateMutationResult{}, &APIError{API: certops.CRTAPIName, Method: certops.CRTImportMethod, Code: code}
+		return CertificateMutationResult{}, &APIError{API: certops.CRTImportAPIName, Method: certops.CRTImportMethod, Code: code}
 	}
 	result := CertificateMutationResult{Action: certificate.ActionImport, Description: request.Description, AsDefault: request.AsDefault}
 	result.CertID = decodeImportedCertID(envelopeResult.Data, request.ReplaceID)
@@ -242,7 +253,9 @@ func (c *Client) DeleteCertificate(ctx context.Context, id string) (CertificateM
 	if !certops.SupportsCRTWrites(c.target) {
 		return CertificateMutationResult{}, fmt.Errorf("%s is not supported on this NAS", certops.CRTAPIName)
 	}
-	// WIRE-UNVERIFIED (WI-065): CRT delete takes a JSON `ids` array.
+	// WIRE-UNVERIFIED (delete id-vs-ids): re-confirm live. The shipped
+	// `{"id":[...]}` array reached the DSM delete handler and returned a domain
+	// error (not a missing-arg error), so the `id` array param is likely correct.
 	params := map[string]any{certops.DeleteFieldID: []string{id}}
 	_, err := lockedExecutor{client: c}.Execute(ctx, compatibilityRequest(certops.CRTAPIName, certops.CRTDeleteMethod, params))
 	if err != nil {

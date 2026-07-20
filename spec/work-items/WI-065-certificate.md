@@ -301,12 +301,15 @@ module.
   `docs/certificate.md`.
 - **WIRE-UNVERIFIED (must confirm with a throwaway `DSMCTL_DUMP` probe before any
   live write is trusted), all isolated in
-  `operations/certificate/mutation.go`:** the CRT `import`/`set`/`delete`/
-  `export` method names; the import multipart field names `key`/`cert`/
-  `inter_cert` (+ `id`/`desc`/`as_default`); whether import posts to `entry.cgi`
-  or a dedicated cgi; the CRT `delete` `ids` array shape and `set` `as_default`
-  keying; and the `SYNO.Core.Certificate.Service` `set` method + `settings`
-  array `{service,id}` shape.
+  `operations/certificate/mutation.go`.** A partial live pass has since verified
+  the import wire shape — see **Live wire-verification — Slice B** below; the
+  import api (parent `SYNO.Core.Certificate`), `method=import`, the `entry.cgi`
+  endpoint, and the `key`/`cert`/`inter_cert` + `id`/`desc`/`_sid` fields are now
+  LIVE-VERIFIED. Still WIRE-UNVERIFIED: the import `as_default` encoding (fixed,
+  one live re-check pending); the CRT `set`/`delete`/`export` param shapes (the
+  `delete` `id`-vs-`ids` array and `set` `as_default` keying); and the
+  `SYNO.Core.Certificate.Service` `set` method + `settings` array `{service,id}`
+  shape.
 - **Remaining before this can be trusted:** (1) live wire-verification of the
   names above; (2) a throwaway self-issued cert live plan→apply→revert NOT bound
   to any DSM service, then a scoped current-session test only with explicit
@@ -380,3 +383,42 @@ unchanged and no live NAS mutation was performed.
   key would **skip the acknowledgement + SAN-coverage checks**. Confirm the actual
   DSM-desktop service key(s) with a `DSMCTL_DUMP` probe during live verification
   and extend the whitelist if needed.
+
+## Live wire-verification — Slice B (partial, DSM 7.3)
+
+A live wire-verification pass against the real DSM 7.3 lab corrected the
+certificate mutation wire shape. This was applied as a **code-only** change (no
+clean import→confirm→delete re-verify cycle has been run), so the Slice B
+live-verification acceptance box above stays **UNCHECKED**.
+
+- **IMPORT api corrected to the parent (fixed + live-verified).** The multipart
+  import posted `api=SYNO.Core.Certificate.CRT`, which DSM rejects with **code
+  103** (method does not exist). Re-posting the identical multipart with **only**
+  the api form field changed to the PARENT **`SYNO.Core.Certificate`** (present on
+  the NAS, `entry.cgi`, version 1) **SUCCEEDED live**. So `method=import`, the
+  `entry.cgi` endpoint, the file-part names `key`/`cert`/`inter_cert`, and the form
+  fields `id`/`desc`/`_sid` are now **LIVE-VERIFIED**; `list`/`set`/`delete` stay
+  on `SYNO.Core.Certificate.CRT` (`list` live-verified; `set`/`delete` methods
+  confirmed to exist). Encoded as the new `CRTImportAPIName` constant in
+  `operations/certificate/mutation.go`; only `import` uses it, and
+  `doCertificateImport` now posts the parent api.
+- **`as_default=false` not honored (fixed, pending one live re-check).** Despite
+  sending `as_default=false`, DSM marked the newly-imported cert
+  `is_default=true` — the multipart `as_default` form field is truthy for any
+  non-empty value. Fix: `doCertificateImport` now sends the `as_default` part
+  **only** when the caller wants the cert to become default and omits it entirely
+  otherwise, so an import with as_default=false leaves the existing default cert in
+  place. Marked `WIRE-UNVERIFIED (as_default): re-confirm live` — the corrected
+  behavior still needs one live re-check (the lab is temporarily unavailable for
+  writes).
+- **Delete param (unchanged, pending live re-check).** The shipped `{"id":[...]}`
+  array reached the DSM delete handler and returned a domain error (not a
+  missing-arg error), so the `id` array param is likely correct. Left as-is with a
+  `WIRE-UNVERIFIED (delete id-vs-ids): re-confirm live` note.
+
+**Still required before WI-065 can be marked done:** a clean live
+import→confirm→delete re-verify against a throwaway self-issued certificate not
+bound to any DSM service, confirming (1) as_default=false preserves the existing
+default and (2) the delete `id` param removes the certificate — plus the remaining
+live checks recorded in the Handoff section. No NAS was mutated in this code-only
+pass.
