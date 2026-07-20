@@ -182,6 +182,12 @@ dsmctl package install --spk ./mypackage.spk --volume /volume1 --nas office
 dsmctl package install --spk ./mypackage.spk --volume /volume1 --nas office --approve <hash-from-plan>
 ```
 
+> **Windows (Git Bash / MSYS) note:** MSYS path conversion rewrites a leading
+> `/volume1` into a Windows path (e.g. `C:/Program Files/Git/volume1`), and that
+> mangled value would be baked into the plan's approval hash and install to the
+> wrong volume. Prefix the command with `MSYS_NO_PATHCONV=1` (or pass the volume
+> as `//volume1`) so `--volume /volume1` reaches DSM intact.
+
 Unlike the online plan, the local plan is **bound to the exact file content**
 (byte size + SHA-256) rather than a catalog entry, so apply refuses a `.spk`
 that changed since planning. Apply uploads the file

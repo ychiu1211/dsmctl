@@ -1,7 +1,7 @@
 ---
 id: WI-082
 title: Local (offline) package .spk install
-status: in_progress
+status: done
 owner: ""
 priority: P2
 depends_on: [WI-019, WI-029]
@@ -70,9 +70,11 @@ online catalog — complementing the online install/update path shipped in
 - [x] The local-install `plan_`/`apply_` MCP tools are stripped from the
       read-only gateway alongside the other package plan/apply tools (guarded by
       `TestNewReadOnlyOmitsPlanAndApplyTools`).
-- [ ] Live-verified on the DSM lab (install of a throwaway `.spk` with a revert).
-      **Deferred**: a live install runs package code on the NAS and requires
-      explicit user authorization, so it is not performed here — see Handoff.
+- [x] Live-verified on the DSM lab (DS3018xs, DSM 7.3-81168): a throwaway Text
+      Editor `.spk` (arch-matched from the NAS's own catalog) installed
+      end-to-end via `upload` → `install`, confirmed in inventory, then
+      uninstalled — the lab was returned to its exact baseline (25 packages, zero
+      diff). The reverse-engineered wire shape matched reality with no correction.
 
 ## Verification
 
@@ -84,8 +86,9 @@ online catalog — complementing the online install/update path shipped in
   (`TestUploadCleanupContract`), the upload response decode
   (`TestDecodeUploadResult`), and the hash-bound plan/apply file binding
   (`TestPackageLocalInstallPlanApplyBindsFileContent`).
-- Still pending: live install of a throwaway `.spk` on the DSM lab with a revert
-  (requires explicit authorization).
+- Live-verified on the DSM lab (DS3018xs / DSM 7.3-81168): a Text Editor `.spk`
+  installed via `upload` → `install`, confirmed, and uninstalled back to baseline;
+  the wire shape needed no correction.
 
 ## Coordination
 
@@ -106,8 +109,17 @@ WI-049 streaming transport (`doMultipartUpload`). `awaitPackageInstalledLocked`
 was generalized with an `expectVersion` parameter so the online and local paths
 share one poll-and-confirm loop.
 
-**Remaining before this can be marked done:** a live install of a throwaway
-`.spk` on the DSM lab, with a revert. That runs package code on the NAS and is a
-guarded mutation, so it needs explicit user authorization and was intentionally
-not performed. Everything else (build/vet/test, unit + request-capture coverage,
-read-only gateway stripping) is complete.
+**Live-verified and merged.** A throwaway Text Editor `.spk` was installed on the
+DSM 7.3 lab via `upload` → `install`, confirmed, and uninstalled back to the exact
+baseline; the reverse-engineered wire shape needed no correction. Two non-blocking
+follow-ups were noted during live-verify:
+
+- The multipart `Installation.upload` call bypasses the structured request logger
+  (the streaming `doMultipartUpload` transport instruments no `--log-level`
+  record), so `upload` is invisible in the debug log while `install`/`status`/
+  `list` are logged. The same gap applies to the FileStation upload transport;
+  giving the multipart path its own log hook is a small observability follow-on
+  (relates to [WI-061](WI-061-core-observability-logging-redaction.md)).
+- On Windows Git Bash, `--volume /volume1` is mangled by MSYS path conversion to a
+  Windows path and would bake into the approval hash; run with `MSYS_NO_PATHCONV=1`
+  (now noted in `docs/package-center.md`).
