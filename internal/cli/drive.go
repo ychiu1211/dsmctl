@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"text/tabwriter"
 	"time"
 
@@ -715,7 +716,53 @@ func newDriveAdminLogCommand(opts *options) *cobra.Command {
 		Use:   "log",
 		Short: "Inspect Drive server logs",
 	}
-	command.AddCommand(newDriveAdminLogListCommand(opts))
+	command.AddCommand(newDriveAdminLogListCommand(opts), newDriveAdminLogExportCommand(opts))
+	return command
+}
+
+func newDriveAdminLogExportCommand(opts *options) *cobra.Command {
+	var outputPath, keyword, username, teamFolder, from, to string
+	command := &cobra.Command{
+		Use:   "export",
+		Short: "Export Drive server logs to a local CSV file",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			fromTime, err := syslog.ParseTime(from)
+			if err != nil {
+				return err
+			}
+			toTime, err := syslog.ParseTime(to)
+			if err != nil {
+				return err
+			}
+			service, err := loadService(opts.configPath)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.ExportDriveLog(cmd.Context(), opts.nas, synology.DriveLogExportQuery{
+				TeamFolder: teamFolder, Keyword: keyword, Username: username, From: fromTime, To: toTime,
+			})
+			if err != nil {
+				return err
+			}
+			if outputPath == "" || outputPath == "-" {
+				_, err = cmd.OutOrStdout().Write(result.CSV)
+				return err
+			}
+			if err := os.WriteFile(outputPath, result.CSV, 0o600); err != nil {
+				return fmt.Errorf("write %s: %w", outputPath, err)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Wrote %d bytes to %s\n", result.Bytes, outputPath)
+			return nil
+		},
+	}
+	command.Flags().StringVarP(&outputPath, "output", "o", "", "local CSV file to write (default: stdout)")
+	command.Flags().StringVar(&keyword, "keyword", "", "substring filter applied by Drive")
+	command.Flags().StringVar(&username, "username", "", "filter to one account name")
+	command.Flags().StringVar(&teamFolder, "team-folder", "", "filter to one Drive team folder by shared-folder name")
+	command.Flags().StringVar(&from, "from", "", "inclusive lower time bound: Unix seconds or \"2006-01-02 15:04:05\"")
+	command.Flags().StringVar(&to, "to", "", "inclusive upper time bound: Unix seconds or \"2006-01-02 15:04:05\"")
 	return command
 }
 
@@ -789,6 +836,7 @@ func writeDriveAdminCapabilities(cmd *cobra.Command, result application.DriveAdm
 	fmt.Fprintf(writer, "connections read\t%s\n", yesNo(result.Capabilities.ConnectionsRead))
 	fmt.Fprintf(writer, "team folders read\t%s\n", yesNo(result.Capabilities.TeamFoldersRead))
 	fmt.Fprintf(writer, "log read\t%s\n", yesNo(result.Capabilities.LogRead))
+	fmt.Fprintf(writer, "log export\t%s\n", yesNo(result.Capabilities.LogExport))
 	fmt.Fprintf(writer, "team folders set\t%s\n", yesNo(result.Capabilities.TeamFoldersSet))
 	fmt.Fprintf(writer, "connection summary read\t%s\n", yesNo(result.Capabilities.ConnectionSummaryRead))
 	fmt.Fprintf(writer, "db usage read\t%s\n", yesNo(result.Capabilities.DBUsageRead))

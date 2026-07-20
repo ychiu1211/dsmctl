@@ -65,6 +65,13 @@ dsmctl drive admin log list --nas office --username alice --keyword report --fro
   (kept versions, rotation policy `fifo`/`smart`, retention days). Drive
   reports versioning fields as `"-"` on disabled folders; they surface as
   absent. Drive's home entry appears as `homes/mydrive_home`.
+- `log export` writes the Drive server log to a **CSV file** (`-o <file>`, or
+  stdout) with the same keyword/username/team-folder/time-range filters as
+  `log list`. Unlike the read, the export is rendered human-readable (headers
+  `Date Time, Operator, Action, Related Path, …`), so it is the format for
+  compliance and handover. MCP: `get_drive_log_export` (returns CSV text;
+  excluded from the read-only gateway as a bulk content transfer). Clearing
+  the log (`Log.delete`) stays out of scope.
 - `log list` reads Drive server logs. Keyword, username, team-folder scope,
   offset, and the Unix-seconds/`"2006-01-02 15:04:05"` time range are applied
   by Drive; the page size is bounded (default 100, maximum 1000). Drive stores

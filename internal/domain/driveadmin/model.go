@@ -335,4 +335,5 @@ type Capabilities struct {
 	NodesRead       bool            `json:"nodes_read" jsonschema:"Whether Drive views (team folders and My Drive, including removed entries) can be browsed"`
 	NodeVersionsRead bool           `json:"node_versions_read" jsonschema:"Whether a node's stored version history can be listed"`
 	NodeRestore     bool            `json:"node_restore" jsonschema:"Whether a guarded restore of removed nodes is available"`
+	LogExport       bool            `json:"log_export" jsonschema:"Whether the Drive server log can be exported to a file"`
 }

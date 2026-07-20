@@ -94,6 +94,7 @@ high risk: it touches every user home). MCP: `plan_drive_team_folder_change`
 | Kick a stale client | `drive admin connections kick --session <id>` + `apply` | `plan_drive_connection_kick` / `apply_drive_connection_kick_plan` |
 | Who may use Drive | `drive admin users` (+ account module to change) | `get_drive_users`, `plan_account_change` |
 | Audit activity | `drive admin log list --username … --team-folder …` | `get_drive_admin_logs` |
+| Export the audit log | `drive admin log export -o drive.csv` | `get_drive_log_export` |
 | Hot files | `drive admin top-files --period-days 7` | `get_drive_top_files` |
 | Find & recover deleted files | `drive admin files` (incl. removed) → `drive admin restore plan/apply` | `get_drive_files`, `plan_drive_restore` / `apply_drive_restore_plan` |
 | Versioning changes | `drive admin team-folders plan/apply` | `plan_drive_team_folder_change` |

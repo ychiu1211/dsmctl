@@ -35,6 +35,10 @@ func (c *fakeDriveAdminClient) DriveAdminLog(context.Context, synology.DriveAdmi
 	return synology.DriveAdminLog{}, nil
 }
 
+func (c *fakeDriveAdminClient) DriveLogExport(context.Context, synology.DriveLogExportQuery) ([]byte, error) {
+	return []byte("time,user,event\n"), nil
+}
+
 func (c *fakeDriveAdminClient) DriveAdminCapabilities(context.Context) (synology.DriveAdminCapabilities, synology.CompatibilityReport, error) {
 	return c.caps, synology.CompatibilityReport{}, nil
 }
@@ -491,6 +495,16 @@ func TestDriveNodeRestorePlanApply(t *testing.T) {
 	skip.silentSkip = true
 	if _, err := applyDriveNodeRestorePlanWithClient(context.Background(), skip, skipPlan); err == nil || !strings.Contains(err.Error(), "still removed") {
 		t.Fatalf("silent skip error = %v", err)
+	}
+}
+
+func TestExportDriveLogValidatesTimeBounds(t *testing.T) {
+	s := &Service{}
+	if _, err := s.ExportDriveLog(context.Background(), "lab", synology.DriveLogExportQuery{From: -1}); err == nil || !strings.Contains(err.Error(), "Unix seconds") {
+		t.Fatalf("negative from error = %v", err)
+	}
+	if _, err := s.ExportDriveLog(context.Background(), "lab", synology.DriveLogExportQuery{From: 200, To: 100}); err == nil || !strings.Contains(err.Error(), "before the lower bound") {
+		t.Fatalf("inverted range error = %v", err)
 	}
 }
 

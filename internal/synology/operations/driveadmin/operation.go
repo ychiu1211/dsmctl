@@ -41,6 +41,7 @@ const (
 	ConnectionsCapabilityName       = "drive.admin.connections.read"
 	TeamFoldersCapabilityName       = "drive.admin.teamfolders.read"
 	LogCapabilityName               = "drive.admin.log.read"
+	LogExportCapabilityName         = "drive.admin.log.export"
 	TeamFoldersSetCapabilityName    = "drive.admin.teamfolders.set"
 	ConnectionSummaryCapabilityName = "drive.admin.connections.summary.read"
 	ConnectionKickCapabilityName    = "drive.admin.connections.kick"
@@ -650,6 +651,27 @@ func ExecuteTeamFoldersSet(ctx context.Context, target compatibility.Target, exe
 		result.Backend, result.API, result.Version, result.Method = selection.Backend, selection.API, selection.Version, "set"
 	}
 	return result, selection, err
+}
+
+// logExportOperation gates the Drive log export. It shares the Log API v1
+// backend with the log read; the export itself uses the raw file transport in
+// the facade because it answers a file rather than the JSON envelope.
+var logExportOperation = compatibility.Operation[Input, struct{}]{
+	Name: LogExportCapabilityName,
+	Variants: []compatibility.Variant[Input, struct{}]{
+		{
+			Name: "drive-log-v1", API: LogAPIName, Version: 1, Priority: 10,
+			Match: compatibility.All(compatibility.APIVersion(LogAPIName, 1), baselinePackage),
+			Execute: func(context.Context, compatibility.Executor, Input) (struct{}, error) {
+				return struct{}{}, nil
+			},
+		},
+	},
+}
+
+func SelectLogExport(target compatibility.Target) (compatibility.Selection, error) {
+	_, selection, err := logExportOperation.Select(target)
+	return selection, err
 }
 
 func SelectConnectionSummary(target compatibility.Target) (compatibility.Selection, error) {

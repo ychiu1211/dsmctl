@@ -1,7 +1,7 @@
 ---
 id: WI-059
 title: Drive log export to a local file
-status: ready
+status: done
 priority: P3
 owner: ""
 depends_on: [WI-022]
@@ -31,20 +31,33 @@ likely `csv` and/or `html`, must be confirmed live), optional `target`
 (`@`-prefixed team folder), and the `log list` filters (`keyword`,
 `username`, `username_include_system`, `ip_address`, date bounds).
 
-## Design constraints
+## Implemented
 
-- The response is raw file bytes, not the JSON envelope: reuse the streaming
-  byte transport the FileStation module added (`executeScriptLocked` /
-  the download path) rather than the JSON executor.
-- CLI writes to a caller-named local file. MCP is read-only in nature but
-  returns bulk content; decide between a size-bounded base64 tool and
-  CLI-only (the FileStation content-transfer precedent strips such tools
-  from the read-only gateway).
-- `Log.delete` (clearing the audit trail) stays fail-closed/deferred.
+- Confirmed live: `type=csv` is the only supported format (the handler
+  comment says "currently we only supports csv" and the writer factory
+  rejects others). The export renders human-readable rows (headers `Date
+  Time, Operator, Action, Related Path, Related User, Related Share, Device
+  Name, Client Type, IP Address, Additional`) — unlike the numeric-coded
+  `log list` read.
+- Transport: `export` is POST and answers raw file bytes with
+  `SetOutputJsonError(false)`, so `executeScriptLocked` (which is GET) does
+  not fit. Added `requestFileLocked` — a form-encoded POST that returns raw
+  bytes and surfaces a JSON error envelope as an APIError. The facade
+  `DriveLogExport` builds the params (the handler prepends `@` to `target`,
+  so the bare team-folder name is sent) and gates on a `log.export`
+  capability that shares the Log API v1 backend.
+- CLI `drive admin log export [-o file] [--keyword/--username/--team-folder/
+  --from/--to]` (stdout when no `-o`). MCP `get_drive_log_export` returns the
+  CSV as text and is stripped from the read-only gateway (bulk content
+  transfer, like `get_filestation_file_content`).
+- `Log.delete` (clearing the audit trail) stays deferred/fail-closed.
 
 ## Acceptance criteria
 
-- [ ] Export operation with the live-confirmed `type` vocabulary and filter
-      pass-through, using the byte transport.
-- [ ] CLI `drive admin log export --output <file>` with filters.
-- [ ] Live verification: export the lab Drive log and inspect the file.
+- [x] Export uses `type=csv` (live-confirmed sole format) with filter
+      pass-through over the raw file POST transport.
+- [x] CLI `drive admin log export` (file or stdout) with filters; MCP tool
+      excluded from the read-only gateway.
+- [x] Live verification on Drive 4.0.3-27892 (2026-07-20): exported the lab
+      Drive log to CSV (4911 bytes, valid headers), and confirmed the
+      `--username` filter drops system rows.

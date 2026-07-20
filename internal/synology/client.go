@@ -498,6 +498,57 @@ func (c *Client) requestScriptLocked(ctx context.Context, apiPath string, params
 	return body, nil
 }
 
+// requestFileLocked POSTs form-encoded params and returns the raw response
+// body. It is for WebAPI methods that answer a file download (DSM's
+// RESPONSE_FILE) rather than the JSON envelope. When the body is a JSON error
+// envelope (some handlers still emit one), it is surfaced as an APIError.
+func (c *Client) requestFileLocked(ctx context.Context, apiPath string, params url.Values, api, method string) ([]byte, error) {
+	endpoint := *c.baseURL
+	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/webapi/" + strings.TrimLeft(apiPath, "/")
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), bytes.NewBufferString(params.Encode()))
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("User-Agent", "dsmctl/0.1")
+	if c.sid != "" {
+		request.AddCookie(&http.Cookie{Name: "id", Value: c.sid})
+	}
+	if c.synoToken != "" {
+		request.Header.Set("X-SYNO-TOKEN", c.synoToken)
+	}
+
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("request %s: %w", endpoint.Redacted(), err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
+		return nil, fmt.Errorf("request %s returned HTTP %s", endpoint.Redacted(), response.Status)
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxBodySize+1))
+	if err != nil {
+		return nil, fmt.Errorf("read %s file response: %w", api, err)
+	}
+	if len(body) > maxBodySize {
+		return nil, fmt.Errorf("%s file response exceeds %d bytes", api, maxBodySize)
+	}
+	// A JSON error envelope means the download did not happen.
+	if trimmed := bytes.TrimSpace(body); len(trimmed) > 0 && trimmed[0] == '{' {
+		var result envelope
+		if json.Unmarshal(trimmed, &result) == nil && !result.Success {
+			code := 0
+			if result.Error != nil {
+				code = result.Error.Code
+			}
+			return nil, &APIError{API: api, Method: method, Code: code}
+		}
+	}
+	return body, nil
+}
+
 func (c *Client) requestLocked(ctx context.Context, apiPath string, params url.Values, api, method string) (json.RawMessage, error) {
 	endpoint := *c.baseURL
 	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/webapi/" + strings.TrimLeft(apiPath, "/")

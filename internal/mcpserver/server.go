@@ -1113,6 +1113,21 @@ type getDriveFileVersionsOutput struct {
 	Versions synology.DriveNodeVersions `json:"versions" jsonschema:"Stored version history for the node"`
 }
 
+type getDriveLogExportInput struct {
+	NAS        string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	TeamFolder string `json:"team_folder,omitempty" jsonschema:"Filter to one Drive team folder by shared-folder name"`
+	Keyword    string `json:"keyword,omitempty" jsonschema:"Substring filter applied by Drive"`
+	Username   string `json:"username,omitempty" jsonschema:"Filter to one account name"`
+	From       int64  `json:"from,omitempty" jsonschema:"Inclusive lower bound as a Unix time in seconds"`
+	To         int64  `json:"to,omitempty" jsonschema:"Inclusive upper bound as a Unix time in seconds"`
+}
+
+type getDriveLogExportOutput struct {
+	NAS   string `json:"nas" jsonschema:"NAS profile used for the request"`
+	CSV   string `json:"csv" jsonschema:"Exported Drive server log as CSV text"`
+	Bytes int    `json:"bytes" jsonschema:"Size of the exported CSV in bytes"`
+}
+
 type planDriveRestoreInput struct {
 	NAS     string                        `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
 	Request application.NodeRestoreChange `json:"request" jsonschema:"Node restore intent: team folder, node paths from get_drive_files, and options"`
@@ -2759,6 +2774,21 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getDriveAdminLogsOutput{}, err
 		}
 		return nil, getDriveAdminLogsOutput{NAS: result.NAS, Log: result.Log}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_drive_log_export",
+		Title:       "Export Drive server logs as CSV",
+		Description: "Export the Synology Drive server log as CSV text, with the same optional keyword, username, team-folder, and Unix-seconds time-range filters as the log list. Returns the whole matching log as one document (for compliance or handover); this tool never clears logs.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDriveLogExportInput) (*mcp.CallToolResult, getDriveLogExportOutput, error) {
+		result, err := service.ExportDriveLog(ctx, input.NAS, synology.DriveLogExportQuery{
+			TeamFolder: input.TeamFolder, Keyword: input.Keyword, Username: input.Username, From: input.From, To: input.To,
+		})
+		if err != nil {
+			return nil, getDriveLogExportOutput{}, err
+		}
+		return nil, getDriveLogExportOutput{NAS: result.NAS, CSV: string(result.CSV), Bytes: result.Bytes}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

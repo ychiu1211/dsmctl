@@ -3,6 +3,8 @@ package synology
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/ychiu1211/dsmctl/internal/domain/driveadmin"
@@ -144,6 +146,67 @@ func (c *Client) DriveAdminLog(ctx context.Context, query DriveAdminLogQuery) (D
 	}
 	c.target.AddCapability(driveops.LogCapabilityName)
 	return log, nil
+}
+
+// DriveLogExportQuery selects and filters the Drive server log for export.
+// The filters mirror the log list read; the export always produces CSV (the
+// only format the Drive log writer supports, per handlers/log/export.cpp).
+type DriveLogExportQuery struct {
+	TeamFolder string
+	Keyword    string
+	Username   string
+	From       int64
+	To         int64
+}
+
+// DriveLogExport downloads the Drive server log as CSV bytes. The export API
+// answers a file (DSM RESPONSE_FILE), so it uses the raw file transport rather
+// than the JSON executor. Verified against handlers/log/export.cpp: the
+// handler prepends "@" to the target, so the bare team-folder name is sent.
+func (c *Client) DriveLogExport(ctx context.Context, query DriveLogExportQuery) ([]byte, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.preparePackageScopedTargetLocked(ctx, driveops.APINames()...); err != nil {
+		return nil, fmt.Errorf("prepare Drive Admin target: %w", err)
+	}
+	info, ok := c.target.API(driveops.LogAPIName)
+	if !ok {
+		return nil, driveAdminReadError("log export", c.driveAdminEvidenceLocked(), fmt.Errorf("API %s is not advertised", driveops.LogAPIName))
+	}
+	if err := c.loginLocked(ctx); err != nil {
+		return nil, err
+	}
+	params := url.Values{}
+	params.Set("api", driveops.LogAPIName)
+	params.Set("version", "1")
+	params.Set("method", "export")
+	params.Set("type", "csv")
+	params.Set("_sid", c.sid)
+	if c.synoToken != "" {
+		params.Set("SynoToken", c.synoToken)
+	}
+	if query.TeamFolder != "" {
+		params.Set("target", query.TeamFolder)
+	}
+	if query.Keyword != "" {
+		params.Set("keyword", query.Keyword)
+	}
+	if query.Username != "" {
+		params.Set("username", query.Username)
+	}
+	if query.From > 0 {
+		params.Set("datefrom", strconv.FormatInt(query.From, 10))
+	}
+	if query.To > 0 {
+		params.Set("dateto", strconv.FormatInt(query.To, 10))
+	}
+	body, err := c.requestFileLocked(ctx, info.Path, params, driveops.LogAPIName, "export")
+	if err != nil {
+		return nil, driveAdminReadError("log export", c.driveAdminEvidenceLocked(), err)
+	}
+	c.target.AddCapability(driveops.LogExportCapabilityName)
+	return body, nil
 }
 
 // DriveNodes browses one Drive view (My Drive or a team folder), including
@@ -489,6 +552,7 @@ func (c *Client) DriveAdminCapabilities(ctx context.Context) (DriveAdminCapabili
 		{driveops.SelectNodes, driveops.NodesReadCapabilityName, &capabilities.NodesRead},
 		{driveops.SelectNodeVersions, driveops.NodeVersionsReadCapabilityName, &capabilities.NodeVersionsRead},
 		{driveops.SelectNodeRestore, driveops.NodeRestoreCapabilityName, &capabilities.NodeRestore},
+		{driveops.SelectLogExport, driveops.LogExportCapabilityName, &capabilities.LogExport},
 	}
 	for _, extended := range extendedSelectors {
 		selection, err := extended.selectOperation(c.target)

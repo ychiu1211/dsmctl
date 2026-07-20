@@ -47,6 +47,7 @@ type driveAdminClient interface {
 	DriveAdminConnections(context.Context) (synology.DriveAdminConnections, error)
 	DriveAdminTeamFolders(context.Context) (synology.DriveAdminTeamFolders, error)
 	DriveAdminLog(context.Context, synology.DriveAdminLogQuery) (synology.DriveAdminLog, error)
+	DriveLogExport(context.Context, synology.DriveLogExportQuery) ([]byte, error)
 	DriveAdminCapabilities(context.Context) (synology.DriveAdminCapabilities, synology.CompatibilityReport, error)
 	DriveServerConfig(context.Context) (synology.DriveServerConfig, error)
 	ApplyDriveServerConfigChange(context.Context, driveadmin.ServerConfigChange) (synology.DriveConfigMutationResult, error)
@@ -745,6 +746,31 @@ func (s *Service) GetDriveAdminLog(ctx context.Context, requestedNAS string, que
 		return DriveAdminLogResult{}, authenticationError(name, err)
 	}
 	return DriveAdminLogResult{NAS: name, Log: log}, nil
+}
+
+// DriveLogExportResult carries the exported CSV bytes and its size.
+type DriveLogExportResult struct {
+	NAS   string `json:"nas" jsonschema:"NAS profile used for the request"`
+	CSV   []byte `json:"csv" jsonschema:"Exported Drive server log as CSV bytes"`
+	Bytes int    `json:"bytes" jsonschema:"Size of the exported CSV in bytes"`
+}
+
+func (s *Service) ExportDriveLog(ctx context.Context, requestedNAS string, query synology.DriveLogExportQuery) (DriveLogExportResult, error) {
+	if query.From < 0 || query.To < 0 {
+		return DriveLogExportResult{}, fmt.Errorf("log time bounds must be Unix seconds at or after 0")
+	}
+	if query.From > 0 && query.To > 0 && query.To < query.From {
+		return DriveLogExportResult{}, fmt.Errorf("log time upper bound is before the lower bound")
+	}
+	name, client, err := s.driveAdminClient(ctx, requestedNAS)
+	if err != nil {
+		return DriveLogExportResult{}, err
+	}
+	csv, err := client.DriveLogExport(ctx, query)
+	if err != nil {
+		return DriveLogExportResult{}, authenticationError(name, err)
+	}
+	return DriveLogExportResult{NAS: name, CSV: csv, Bytes: len(csv)}, nil
 }
 
 func validateDriveAdminLogQuery(query *driveadmin.LogQuery) error {

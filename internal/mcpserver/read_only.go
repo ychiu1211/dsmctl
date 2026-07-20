@@ -18,7 +18,9 @@ func NewReadOnly(service *application.Service, version string) *mcp.Server {
 		// FileStation content transfer and mutations never reach the read-only
 		// gateway: get_filestation_file_content would exfiltrate arbitrary file
 		// bytes to a remote caller, and the plan/apply pair mutates the NAS.
+		// get_drive_log_export is likewise a bulk content transfer.
 		"get_filestation_file_content",
+		"get_drive_log_export",
 		"plan_filestation_change",
 		"apply_filestation_plan",
 		"plan_account_change",
