@@ -56,6 +56,8 @@ flowchart LR
   WI052 --> WI054["WI-054 Drive user-privilege view"]
   WI050 --> WI055["WI-055 My Drive home versioning"]
   WI022 --> WI056["WI-056 Drive node views"]
+  WI056 --> WI057["WI-057 Drive node restore"]
+  WI022 --> WI058["WI-058 Drive log export"]
   WI023["WI-023 LAN device discovery"]
 ```
 
@@ -112,6 +114,8 @@ flowchart LR
 | [WI-047](work-items/WI-047-admin-ui-workflow-redesign.md) | P1 | `done` | G | WI-045, WI-046 | Redesign authenticated pages around resource lists, state-aware actions, and guided workflows. |
 | [WI-048](work-items/WI-048-mcp-oauth-url-login.md) | P0 | `done` | G | WI-045 | Add standards-based MCP OAuth URL login while retaining manual client tokens. |
 | [WI-050](work-items/WI-050-drive-team-folder-write.md) | P1 | `done` | C | WI-022, WI-031 | Guarded Drive team-folder enable/disable and versioning via `SYNO.SynologyDrive.Share` set, replacing the WI-022 fail-closed stub; CLI + MCP. |
+| [WI-058](work-items/WI-058-drive-log-export.md) | P3 | `ready` | C | WI-022 | Drive log export to a local file (Log.export file response via the byte transport); Log.delete stays deferred. |
+| [WI-057](work-items/WI-057-drive-node-restore.md) | P2 | `ready` | C | WI-056 | Guarded Drive node restore (async Restore start/status/finish task) completing the rescue story; live choreography spec'd. |
 | [WI-056](work-items/WI-056-drive-node-views.md) | P2 | `done` | C | WI-022, WI-050 | Drive rescue-view reads: browse team folders/My Drive including removed entries, and per-node version history; CLI + MCP, live-verified. Node.Restore write deferred as its own item. |
 | [WI-055](work-items/WI-055-drive-home-versioning.md) | P3 | `done` | C | WI-050 | My Drive home versioning via the team-folder write (set_versioning only), always high risk with a fan-out warning; live-verified 8→10→8. |
 | [WI-054](work-items/WI-054-drive-user-privilege-view.md) | P2 | `done` | C | WI-022, WI-052 | Drive user-privilege view read; live-verified that Drive access control is the account module's application privilege (Privilege.set deliberately not exposed). |
