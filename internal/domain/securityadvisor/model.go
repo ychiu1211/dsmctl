@@ -4,10 +4,10 @@
 // schedule and security baseline. WebAPI names and field names stay behind the
 // operation package.
 //
-// This is the read-only slice (WI-068 Slice A). The load-heavy run-scan action
-// (SYNO.Core.SecurityScan.Operation) and the guarded schedule/baseline write
-// (SYNO.Core.SecurityScan.Conf set) are deferred to later, explicitly-authorized
-// slices and are only reported as capabilities here, never executed.
+// The load-heavy run-scan action (SYNO.Core.SecurityScan.Operation start) and
+// the guarded schedule/baseline write (SYNO.Core.SecurityScan.Conf set) are
+// live-verified writes exposed here through the plan/apply contract and an
+// explicit run action.
 //
 // The model carries descriptive audit output only. Session identity (SIDs,
 // SynoTokens) never enters these types, and no finding value is resolved back to
@@ -16,6 +16,38 @@ package securityadvisor
 
 // ModuleName is the stable product-facing identifier for the module.
 const ModuleName = "security-advisor"
+
+// Baseline identifies a Security Advisor security baseline group. The read
+// surface can additionally report the custom checklist as "custom"; the guarded
+// write only switches between the two managed baselines, because moving to or
+// editing the custom checklist is per-check remediation owned by a separate work
+// item, not this settings module.
+const (
+	// BaselineHome is the personal/home baseline (fewer, lighter checks).
+	BaselineHome = "home"
+	// BaselineCompany is the business/high-security baseline.
+	BaselineCompany = "company"
+	// BaselineCustom is the read-only marker for a user-customized checklist.
+	BaselineCustom = "custom"
+)
+
+// ScheduleChange is the patch-only intent for the guarded schedule + baseline
+// write. A nil field keeps the currently configured DSM value; the apply path
+// reads the complete current Conf, merges this patch, and submits the whole
+// merged configuration so an unspecified field is never silently reset. There
+// are no secret fields, so this carries no credential reference.
+type ScheduleChange struct {
+	Baseline        *string `json:"baseline,omitempty" jsonschema:"Desired security baseline: home or company; omit to keep the current baseline"`
+	ScheduleEnabled *bool   `json:"schedule_enabled,omitempty" jsonschema:"Whether the scheduled scan is enabled; omit to keep the current setting"`
+	Hour            *int    `json:"hour,omitempty" jsonschema:"Scheduled hour 0-23; omit to keep the current hour"`
+	Minute          *int    `json:"minute,omitempty" jsonschema:"Scheduled minute 0-59; omit to keep the current minute"`
+	Weekday         *string `json:"weekday,omitempty" jsonschema:"DSM weekday selector (0-6) for the scheduled scan; omit to keep the current weekday"`
+}
+
+// IsEmpty reports whether the patch carries no fields.
+func (c ScheduleChange) IsEmpty() bool {
+	return c.Baseline == nil && c.ScheduleEnabled == nil && c.Hour == nil && c.Minute == nil && c.Weekday == nil
+}
 
 // Severity is the normalized Security Advisor finding severity. DSM 7.3 reports
 // the raw values safe/info/warning/outOfDate/risk/danger; the decoder maps them
@@ -124,14 +156,14 @@ type Configuration struct {
 
 // Capabilities reports which Security Advisor operations dsmctl currently
 // exposes for the selected NAS. Reads come from SYNO.Core.SecurityScan.Status
-// (status + findings) and SYNO.Core.SecurityScan.Conf (schedule + baseline). The
-// run-scan action and the schedule/baseline write are deferred slices; their
-// availability is reported from the advertised APIs but they are not executed by
-// this module.
+// (status + findings) and SYNO.Core.SecurityScan.Conf (schedule + baseline); the
+// guarded schedule/baseline write rides SYNO.Core.SecurityScan.Conf set and the
+// run-scan action rides SYNO.Core.SecurityScan.Operation start. Each is reported
+// from its own advertised backend and fails closed when absent.
 type Capabilities struct {
 	Module        string `json:"module" jsonschema:"Stable module name: security-advisor"`
 	StatusRead    bool   `json:"status_read" jsonschema:"Whether the last-scan status and per-category findings can be read"`
 	ScheduleRead  bool   `json:"schedule_read" jsonschema:"Whether the scan schedule and security baseline can be read"`
-	RunScan       bool   `json:"run_scan" jsonschema:"Whether the run-scan action API is advertised (deferred: not executed by this slice)"`
-	ScheduleWrite bool   `json:"schedule_write" jsonschema:"Whether the schedule/baseline write API is advertised (deferred: not executed by this slice)"`
+	RunScan       bool   `json:"run_scan" jsonschema:"Whether the run-scan action is available (SYNO.Core.SecurityScan.Operation start)"`
+	ScheduleWrite bool   `json:"schedule_write" jsonschema:"Whether the guarded schedule/baseline write is available (SYNO.Core.SecurityScan.Conf set)"`
 }

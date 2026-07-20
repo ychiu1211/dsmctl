@@ -27,6 +27,8 @@ type securityAdvisorClient interface {
 	SecurityAdvisorStatus(context.Context) (synology.SecurityAdvisorStatus, error)
 	SecurityAdvisorConfiguration(context.Context) (synology.SecurityAdvisorConfiguration, error)
 	SecurityAdvisorCapabilities(context.Context) (synology.SecurityAdvisorCapabilities, synology.CompatibilityReport, error)
+	ApplySecurityAdvisorScheduleChange(context.Context, synology.SecurityAdvisorScheduleChange) (synology.SecurityAdvisorMutationResult, error)
+	RunSecurityScan(context.Context) (synology.SecurityAdvisorScanResult, error)
 }
 
 func (s *Service) GetSecurityAdvisorStatus(ctx context.Context, requestedNAS string) (SecurityAdvisorStatusResult, error) {

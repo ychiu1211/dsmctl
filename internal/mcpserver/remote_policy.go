@@ -36,6 +36,11 @@ func ToolScope(name string) (string, bool) {
 	switch {
 	case name == "discover_lan_devices":
 		return remotepolicy.ScopeLANDiscover, true
+	case name == "run_security_scan":
+		// A load-heavy NAS action with no plan/apply cycle. It mutates no
+		// configuration but must not be reachable by a read-only token, so it is
+		// classified under the apply scope alongside the other write actions.
+		return remotepolicy.ScopeApply, true
 	case strings.HasPrefix(name, "plan_"):
 		return remotepolicy.ScopePlan, true
 	case strings.HasPrefix(name, "apply_"):

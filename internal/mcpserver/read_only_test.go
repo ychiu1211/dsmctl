@@ -51,6 +51,11 @@ func TestNewReadOnlyOmitsPlanAndApplyTools(t *testing.T) {
 		// Certificate export extracts private-key material to a local file.
 		"get_certificate_export": false,
 	}
+	// Actions that are neither plan_ nor apply_ prefixed but still mutate or
+	// load the NAS must be explicitly stripped from the read-only gateway.
+	strippedActions := map[string]bool{
+		"run_security_scan": false,
+	}
 	for _, tool := range tools.Tools {
 		if strings.HasPrefix(tool.Name, "plan_") || strings.HasPrefix(tool.Name, "apply_") {
 			t.Errorf("read-only server registered %q", tool.Name)
@@ -60,6 +65,9 @@ func TestNewReadOnlyOmitsPlanAndApplyTools(t *testing.T) {
 		}
 		if _, ok := exfiltration[tool.Name]; ok {
 			t.Errorf("read-only gateway must not expose content transfer (%q)", tool.Name)
+		}
+		if _, ok := strippedActions[tool.Name]; ok {
+			t.Errorf("read-only gateway must not expose the NAS action (%q)", tool.Name)
 		}
 	}
 }

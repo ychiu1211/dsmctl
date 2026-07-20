@@ -28,6 +28,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/domain/resmon"
 	"github.com/ychiu1211/dsmctl/internal/domain/rsyncservice"
 	"github.com/ychiu1211/dsmctl/internal/domain/san"
+	"github.com/ychiu1211/dsmctl/internal/domain/securityadvisor"
 	"github.com/ychiu1211/dsmctl/internal/domain/servicediscovery"
 	"github.com/ychiu1211/dsmctl/internal/domain/share"
 	"github.com/ychiu1211/dsmctl/internal/domain/storage"
@@ -1221,6 +1222,28 @@ type getSecurityAdvisorCapabilitiesOutput struct {
 	NAS          string                               `json:"nas" jsonschema:"NAS profile used for the request"`
 	Capabilities synology.SecurityAdvisorCapabilities `json:"capabilities" jsonschema:"Security Advisor operations currently exposed by dsmctl"`
 	Report       synology.CompatibilityReport         `json:"report" jsonschema:"Discovered APIs and selected Security Advisor backends"`
+}
+
+type planSecurityAdvisorScheduleChangeInput struct {
+	NAS     string                         `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request securityadvisor.ScheduleChange `json:"request" jsonschema:"Patch-only scan schedule and security-baseline intent"`
+}
+
+type planSecurityAdvisorScheduleChangeOutput struct {
+	Plan application.SecurityAdvisorSchedulePlan `json:"plan" jsonschema:"Validated plan bound to the complete observed configuration and approval hash"`
+}
+
+type applySecurityAdvisorSchedulePlanInput struct {
+	Plan         application.SecurityAdvisorSchedulePlan `json:"plan" jsonschema:"Unmodified plan returned by plan_security_advisor_schedule_change"`
+	ApprovalHash string                                  `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved security advisor plan"`
+}
+
+type applySecurityAdvisorSchedulePlanOutput struct {
+	Result application.SecurityAdvisorScheduleApplyResult `json:"result" jsonschema:"Schedule + baseline mutation result after stale-state and postcondition checks"`
+}
+
+type runSecurityScanOutput struct {
+	Result application.SecurityAdvisorScanActionResult `json:"result" jsonschema:"Result of triggering a full Security Advisor scan"`
 }
 
 type accountProtectionInput struct {
@@ -3401,7 +3424,7 @@ func New(service *application.Service, version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_security_advisor_capabilities",
 		Title:       "Get Security Advisor capabilities",
-		Description: "Report which Security Advisor operations dsmctl supports on the selected NAS and the backend for each. Each SYNO.Core.SecurityScan.* API is an independent boundary, so status/findings and schedule/baseline reads are reported separately and a NAS without Security Advisor reports them unsupported without erroring. run_scan and schedule/baseline writes are reported from the advertised APIs but are deferred and never executed by this read slice.",
+		Description: "Report which Security Advisor operations dsmctl supports on the selected NAS and the backend for each. Each SYNO.Core.SecurityScan.* API is an independent boundary, so the status/findings read, the schedule/baseline read, the guarded schedule/baseline write, and the run-scan action are reported separately and a NAS without Security Advisor reports them unsupported without erroring.",
 		Annotations: readOnlyAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getSecurityAdvisorInput) (*mcp.CallToolResult, getSecurityAdvisorCapabilitiesOutput, error) {
 		result, err := service.GetSecurityAdvisorCapabilities(ctx, input.NAS)
@@ -3427,7 +3450,7 @@ func New(service *application.Service, version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_security_advisor_schedule",
 		Title:       "Get Security Advisor schedule and baseline",
-		Description: "Read the Security Advisor scan schedule and the active security baseline (for example home or company): whether a scheduled scan is enabled, its time and weekday, and the baseline group. This tool never changes the NAS; changing the schedule or baseline is a deferred, guarded write.",
+		Description: "Read the Security Advisor scan schedule and the active security baseline (for example home or company): whether a scheduled scan is enabled, its time and weekday, and the baseline group. This tool never changes the NAS; changing the schedule or baseline goes through plan_security_advisor_schedule_change and apply_security_advisor_schedule_plan.",
 		Annotations: readOnlyAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getSecurityAdvisorInput) (*mcp.CallToolResult, getSecurityAdvisorScheduleOutput, error) {
 		result, err := service.GetSecurityAdvisorSchedule(ctx, input.NAS)
@@ -3435,6 +3458,45 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getSecurityAdvisorScheduleOutput{}, err
 		}
 		return nil, getSecurityAdvisorScheduleOutput{NAS: result.NAS, Configuration: result.Configuration}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_security_advisor_schedule_change",
+		Title:       "Plan a Security Advisor schedule and baseline change",
+		Description: "Validate a patch-only scan schedule and security-baseline change (enable/disable the scheduled scan, its weekday and time, and switch the baseline between home and company) and return an approval plan bound to the complete observed configuration. Loosening the audit — switching from the business (company) baseline to the home baseline, or disabling the scheduled scan — is classified high risk and named in the plan summary. The custom checklist baseline is not managed here. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planSecurityAdvisorScheduleChangeInput) (*mcp.CallToolResult, planSecurityAdvisorScheduleChangeOutput, error) {
+		plan, err := service.PlanSecurityAdvisorScheduleChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planSecurityAdvisorScheduleChangeOutput{}, err
+		}
+		return nil, planSecurityAdvisorScheduleChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_security_advisor_schedule_plan",
+		Title:       "Apply an approved Security Advisor schedule plan",
+		Description: "Apply an unmodified Security Advisor schedule + baseline plan only while its approval hash and the complete observed configuration still match, then re-read to verify every requested field took effect. The write is patch-only: unspecified fields are preserved. DSM rejects the change while a scan is running.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applySecurityAdvisorSchedulePlanInput) (*mcp.CallToolResult, applySecurityAdvisorSchedulePlanOutput, error) {
+		result, err := service.ApplySecurityAdvisorSchedulePlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applySecurityAdvisorSchedulePlanOutput{}, err
+		}
+		return nil, applySecurityAdvisorSchedulePlanOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "run_security_scan",
+		Title:       "Run a Security Advisor scan now",
+		Description: "Trigger a full Security Advisor scan on demand (Control Panel > Security > Security Advisor). A scan is CPU/IO-heavy on the NAS and changes no configuration; track its progress with get_security_advisor_status. This action is never invoked implicitly by a read and is classified low risk because it changes no security posture.",
+		Annotations: actionAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getSecurityAdvisorInput) (*mcp.CallToolResult, runSecurityScanOutput, error) {
+		result, err := service.RunSecurityScan(ctx, input.NAS)
+		if err != nil {
+			return nil, runSecurityScanOutput{}, err
+		}
+		return nil, runSecurityScanOutput{Result: result}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -4007,6 +4069,19 @@ func mutationAnnotations() *mcp.ToolAnnotations {
 	return &mcp.ToolAnnotations{
 		ReadOnlyHint:    false,
 		DestructiveHint: boolPointer(true),
+		IdempotentHint:  false,
+		OpenWorldHint:   boolPointer(true),
+	}
+}
+
+// actionAnnotations marks a load-heavy action that changes no persisted
+// configuration (so it is not destructive) but is not a read and is not
+// idempotent: running it again starts another scan. It is still stripped from
+// the read-only gateway.
+func actionAnnotations() *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{
+		ReadOnlyHint:    false,
+		DestructiveHint: boolPointer(false),
 		IdempotentHint:  false,
 		OpenWorldHint:   boolPointer(true),
 	}

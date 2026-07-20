@@ -26,6 +26,12 @@ func NewReadOnly(service *application.Service, version string) *mcp.Server {
 		// Certificate export extracts private-key material to a local file; the
 		// plan/apply pair mutates the certificate store (every write is high risk).
 		"get_certificate_export",
+		// run_security_scan is a load-heavy NAS action (not a read); the
+		// schedule/baseline plan/apply pair mutates DSM. All three are stripped
+		// from the read-only gateway.
+		"run_security_scan",
+		"plan_security_advisor_schedule_change",
+		"apply_security_advisor_schedule_plan",
 		"plan_certificate_change",
 		"apply_certificate_plan",
 		"plan_filestation_change",
