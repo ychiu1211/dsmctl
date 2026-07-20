@@ -46,10 +46,14 @@ type Preferences struct {
 	AIHelperLanguages    []string `json:"ai_helper_languages" jsonschema:"AI helper output languages"`
 }
 
-// Font is one entry of the Synology Office font inventory.
+// Font is one entry of the Synology Office font inventory. System fonts ship
+// with Office and cannot be changed; custom fonts are name-registered by an
+// administrator and can be enabled, disabled, and deleted.
 type Font struct {
 	Name        string `json:"name" jsonschema:"Font family name"`
 	DisplayName string `json:"display_name,omitempty" jsonschema:"Localized display name when it differs from the name"`
+	Custom      bool   `json:"custom" jsonschema:"Whether this is an administrator-added custom font (system fonts cannot be changed)"`
+	Enabled     bool   `json:"enabled" jsonschema:"Whether the font is offered in the editors"`
 }
 
 // Capabilities reports which Office settings operations dsmctl exposes for the
@@ -62,6 +66,7 @@ type Capabilities struct {
 	PreferencesRead bool            `json:"preferences_read" jsonschema:"Whether the caller's editor preferences can be read"`
 	PreferencesSet  bool            `json:"preferences_set" jsonschema:"Whether the caller's editor preferences can be changed through guarded plan/apply"`
 	FontsRead       bool            `json:"fonts_read" jsonschema:"Whether the font inventory can be listed"`
+	FontsSet        bool            `json:"fonts_set" jsonschema:"Whether the custom font registry can be changed through guarded plan/apply"`
 	Package         PackageEvidence `json:"package" jsonschema:"Installed Synology Office package evidence"`
 }
 
@@ -83,10 +88,29 @@ type PreferencesChange struct {
 	AIHelperLanguages    *[]string `json:"ai_helper_languages,omitempty" jsonschema:"Replace the AI helper output languages"`
 }
 
+// FontAction is one custom-font registry operation.
+type FontAction string
+
+const (
+	FontActionAdd     FontAction = "add"
+	FontActionEnable  FontAction = "enable"
+	FontActionDisable FontAction = "disable"
+	FontActionDelete  FontAction = "delete"
+)
+
+// FontChange applies one action to a set of custom font names. System fonts
+// cannot be targeted: DSM silently skips them, so dsmctl rejects them during
+// planning instead.
+type FontChange struct {
+	Action FontAction `json:"action" jsonschema:"Custom-font registry action: add, enable, disable, or delete"`
+	Names  []string   `json:"names" jsonschema:"Font family names the action applies to"`
+}
+
 // Change is one Office settings intent. Exactly one scope must be set: System
 // writes the system-wide configuration, Preferences writes the calling user's
-// own editor preferences.
+// own editor preferences, Fonts manages the custom font name registry.
 type Change struct {
 	System      *SystemChange      `json:"system,omitempty" jsonschema:"System-wide settings patch (administrators)"`
 	Preferences *PreferencesChange `json:"preferences,omitempty" jsonschema:"Calling user's editor preferences patch"`
+	Fonts       *FontChange        `json:"fonts,omitempty" jsonschema:"Custom-font registry action (administrators)"`
 }

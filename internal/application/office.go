@@ -40,10 +40,11 @@ type OfficeCapabilitiesResult struct {
 
 // OfficeObservedState is the pre-change state a plan binds to. Exactly the
 // branch matching the change scope is populated, so an unrelated change on the
-// other surface cannot spuriously invalidate the plan.
+// other surfaces cannot spuriously invalidate the plan.
 type OfficeObservedState struct {
 	System      *synology.OfficeSystemSettings `json:"system,omitempty" jsonschema:"System settings observed during planning (system scope only)"`
 	Preferences *synology.OfficePreferences    `json:"preferences,omitempty" jsonschema:"Editor preferences observed during planning (preferences scope only)"`
+	Fonts       *[]synology.OfficeFont         `json:"fonts,omitempty" jsonschema:"Font inventory observed during planning (fonts scope only)"`
 }
 
 type OfficePlan struct {
@@ -74,6 +75,7 @@ type officeClient interface {
 	OfficeCapabilities(context.Context) (synology.OfficeCapabilities, synology.CompatibilityReport, error)
 	ApplyOfficeSystemChange(context.Context, office.SystemChange) (synology.OfficeMutationResult, error)
 	ApplyOfficePreferencesChange(context.Context, office.PreferencesChange) (synology.OfficeMutationResult, error)
+	ApplyOfficeFontChange(context.Context, office.FontChange) (synology.OfficeMutationResult, error)
 }
 
 func (s *Service) GetOfficeInfo(ctx context.Context, requestedNAS string) (OfficeInfoResult, error) {
@@ -194,6 +196,8 @@ func applyOfficePlanWithClient(ctx context.Context, client officeClient, plan Of
 		result, err = client.ApplyOfficeSystemChange(ctx, *plan.Request.System)
 	case plan.Request.Preferences != nil:
 		result, err = client.ApplyOfficePreferencesChange(ctx, *plan.Request.Preferences)
+	case plan.Request.Fonts != nil:
+		result, err = client.ApplyOfficeFontChange(ctx, *plan.Request.Fonts)
 	default:
 		return OfficeApplyResult{}, fmt.Errorf("Office plan has no scope")
 	}
@@ -238,6 +242,13 @@ func observeOfficeState(ctx context.Context, client officeClient, request office
 		}
 		observed.Preferences = &preferences
 	}
+	if request.Fonts != nil {
+		fonts, err := client.OfficeFonts(ctx)
+		if err != nil {
+			return OfficeObservedState{}, err
+		}
+		observed.Fonts = &fonts
+	}
 	return observed, nil
 }
 
@@ -262,9 +273,22 @@ func planOfficeChangeWithClient(ctx context.Context, nas string, client officeCl
 			return OfficePlan{}, fmt.Errorf("NAS %q does not expose a verified Office preferences set backend", nas)
 		}
 	}
+	if request.Fonts != nil {
+		if !capabilities.FontsRead {
+			return OfficePlan{}, fmt.Errorf("NAS %q does not expose a verified Office fonts read backend", nas)
+		}
+		if !capabilities.FontsSet {
+			return OfficePlan{}, fmt.Errorf("NAS %q does not expose a verified Office fonts set backend", nas)
+		}
+	}
 	observed, err := observeOfficeState(ctx, client, request)
 	if err != nil {
 		return OfficePlan{}, authenticationError(nas, err)
+	}
+	if request.Fonts != nil {
+		if err := validateOfficeFontTargets(observed, *request.Fonts); err != nil {
+			return OfficePlan{}, err
+		}
 	}
 	if officeChangeMatches(observed, request) {
 		return OfficePlan{}, fmt.Errorf("Office patch would not change the current settings")
@@ -288,8 +312,14 @@ func planOfficeChangeWithClient(ctx context.Context, nas string, client officeCl
 }
 
 func validateOfficeChange(change office.Change) error {
-	if change.System != nil && change.Preferences != nil {
-		return fmt.Errorf("Office change must target exactly one scope: system or preferences")
+	scopes := 0
+	for _, set := range []bool{change.System != nil, change.Preferences != nil, change.Fonts != nil} {
+		if set {
+			scopes++
+		}
+	}
+	if scopes != 1 {
+		return fmt.Errorf("Office change must target exactly one scope: system, preferences, or fonts")
 	}
 	switch {
 	case change.System != nil:
@@ -300,8 +330,60 @@ func validateOfficeChange(change office.Change) error {
 		if reflect.DeepEqual(*change.Preferences, office.PreferencesChange{}) {
 			return fmt.Errorf("Office preferences patch has no fields")
 		}
+	case change.Fonts != nil:
+		return validateOfficeFontChange(*change.Fonts)
+	}
+	return nil
+}
+
+func validateOfficeFontChange(change office.FontChange) error {
+	switch change.Action {
+	case office.FontActionAdd, office.FontActionEnable, office.FontActionDisable, office.FontActionDelete:
 	default:
-		return fmt.Errorf("Office change must set the system or preferences scope")
+		return fmt.Errorf("Office font action must be add, enable, disable, or delete")
+	}
+	if len(change.Names) == 0 {
+		return fmt.Errorf("Office font change has no font names")
+	}
+	seen := map[string]bool{}
+	for _, name := range change.Names {
+		if strings.TrimSpace(name) == "" {
+			return fmt.Errorf("Office font change contains an empty font name")
+		}
+		if seen[name] {
+			return fmt.Errorf("Office font change lists %q twice", name)
+		}
+		seen[name] = true
+	}
+	return nil
+}
+
+// validateOfficeFontTargets checks the requested names against the observed
+// inventory. DSM silently skips system fonts and unknown names (verified
+// live), so acting on them must fail during planning instead of surfacing as
+// a late postcondition error.
+func validateOfficeFontTargets(observed OfficeObservedState, change office.FontChange) error {
+	if observed.Fonts == nil {
+		return fmt.Errorf("Office font plan is missing the observed inventory")
+	}
+	inventory := map[string]synology.OfficeFont{}
+	for _, font := range *observed.Fonts {
+		inventory[font.Name] = font
+	}
+	for _, name := range change.Names {
+		font, exists := inventory[name]
+		if change.Action == office.FontActionAdd {
+			if exists && !font.Custom {
+				return fmt.Errorf("font %q is a system font and cannot be re-added", name)
+			}
+			continue
+		}
+		if !exists {
+			return fmt.Errorf("font %q does not exist", name)
+		}
+		if !font.Custom {
+			return fmt.Errorf("font %q is a system font and cannot be changed", name)
+		}
 	}
 	return nil
 }
@@ -336,6 +418,10 @@ func officePlanEffects(observed OfficeObservedState, change office.Change) ([]st
 		if preferences.AIHelperLanguages != nil {
 			summary = append(summary, "replace the preference ai_helper_languages list")
 		}
+	}
+	if change.Fonts != nil {
+		summary = append(summary, fmt.Sprintf("%s %d custom font(s): %s",
+			change.Fonts.Action, len(change.Fonts.Names), strings.Join(change.Fonts.Names, ", ")))
 	}
 	return warnings, summary
 }
@@ -374,6 +460,38 @@ func officeChangeMatches(state OfficeObservedState, change office.Change) bool {
 		}
 		if preferences.AIHelperLanguages != nil && !reflect.DeepEqual(current.AIHelperLanguages, *preferences.AIHelperLanguages) {
 			return false
+		}
+	}
+	if change.Fonts != nil {
+		if state.Fonts == nil {
+			return false
+		}
+		inventory := map[string]synology.OfficeFont{}
+		for _, font := range *state.Fonts {
+			inventory[font.Name] = font
+		}
+		for _, name := range change.Fonts.Names {
+			font, exists := inventory[name]
+			switch change.Fonts.Action {
+			case office.FontActionAdd:
+				if !exists || !font.Custom {
+					return false
+				}
+			case office.FontActionEnable:
+				if !exists || !font.Custom || !font.Enabled {
+					return false
+				}
+			case office.FontActionDisable:
+				if !exists || !font.Custom || font.Enabled {
+					return false
+				}
+			case office.FontActionDelete:
+				if exists {
+					return false
+				}
+			default:
+				return false
+			}
 		}
 	}
 	return true

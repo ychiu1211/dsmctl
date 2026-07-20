@@ -636,7 +636,7 @@ type getOfficeFontsOutput struct {
 
 type planOfficeChangeInput struct {
 	NAS     string        `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
-	Request office.Change `json:"request" jsonschema:"Patch-only Office settings intent (exactly one scope: system or preferences)"`
+	Request office.Change `json:"request" jsonschema:"Patch-only Office settings intent (exactly one scope: system, preferences, or fonts)"`
 }
 
 type planOfficeChangeOutput struct {
@@ -2099,7 +2099,7 @@ func New(service *application.Service, version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "plan_office_change",
 		Title:       "Plan a Synology Office settings change",
-		Description: "Validate one patch-only Synology Office settings request (system scope or the calling user's preferences scope), read the current state, and return a hash-bound approval plan. This tool never mutates DSM.",
+		Description: "Validate one patch-only Synology Office settings request (system scope, the calling user's preferences scope, or a custom-font registry action), read the current state, and return a hash-bound approval plan. This tool never mutates DSM.",
 		Annotations: readOnlyAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planOfficeChangeInput) (*mcp.CallToolResult, planOfficeChangeOutput, error) {
 		plan, err := service.PlanOfficeChange(ctx, input.NAS, input.Request)

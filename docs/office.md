@@ -38,8 +38,9 @@ dsmctl office fonts --nas office --json
   languages. Opaque UI-state blobs (panel widths, dismissed hints, formatting
   marks) are not modeled.
 - **`fonts`** reads `SYNO.Office.Setting.Font` (`list`) and normalizes DSM's
-  name-keyed object into a stable name-sorted list with the localized display
-  name when one exists.
+  name-keyed object into a stable name-sorted list: name, localized display
+  name when one exists, whether the entry is an administrator-added **custom**
+  font, and whether it is currently **enabled**.
 
 MCP exposes the same reads through `get_office_capabilities`,
 `get_office_info`, `get_office_settings`, `get_office_preferences`, and
@@ -61,6 +62,19 @@ modules. One request targets **exactly one scope**:
   ```json
   { "preferences": { "ruler": false, "default_locale": "zh-TW" } }
   ```
+
+- `fonts` — the custom font **name registry** (requires an Office manager).
+  One action (`add`, `enable`, `disable`, or `delete`) applies to a list of
+  font family names:
+
+  ```json
+  { "fonts": { "action": "add", "names": ["Noto Sans TC"] } }
+  ```
+
+  System fonts cannot be targeted: DSM silently skips them (verified live),
+  so dsmctl rejects them during planning, and enable/disable/delete require
+  the name to exist as a custom font. Font actions are reversible (the
+  registry holds names, not files) and are medium risk.
 
 ```console
 echo '{"system":{"history_prune":false}}' | dsmctl office plan --nas office -o office.plan.json
@@ -96,10 +110,18 @@ API names, methods, and fields are verified live against Synology Office
   fields `ruler` (required by the decoder as the drift guard),
   `formula_preview`, `formula_panel_opened`, `formula_panel_expanded`,
   `default_locale`, `ai_translator_language`, `ai_helper_languages`.
-- Fonts: `SYNO.Office.Setting.Font` `list` v1.
+- Fonts: `SYNO.Office.Setting.Font` `list`/`add`/`enable`/`disable`/`delete`
+  v1. Mutations take `fonts` as a JSON array of font family names (an array
+  of objects is rejected); every mutation response returns the updated list.
+  A custom entry lists as `"system": false` and, when disabled,
+  `"disable": true`; system entries and unknown names are **silently
+  skipped** by DSM, which is why dsmctl validates targets at plan time and
+  re-reads the list as the postcondition.
 
-Font mutations (`add`/`enable`/`disable`/`delete`) and the per-document
-`SYNO.Office.Setting.UI` / `SYNO.Office.Setting.Person` state (both take an
-`object_id`) exist in the API but are deferred. Every operation gates on
-`SYNO.API.Info` discovery plus the installed-package inventory; confirm the
-selected backends on any target with `dsmctl office capabilities`.
+Binary font-file (TTF) upload rides a different API than
+`SYNO.Office.Setting.Font` and is deferred; the fonts scope manages the name
+registry only. The per-document `SYNO.Office.Setting.UI` /
+`SYNO.Office.Setting.Person` state (both take an `object_id`) also stays out
+of scope. Every operation gates on `SYNO.API.Info` discovery plus the
+installed-package inventory; confirm the selected backends on any target with
+`dsmctl office capabilities`.

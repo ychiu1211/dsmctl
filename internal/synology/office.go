@@ -16,6 +16,7 @@ type OfficeFont = office.Font
 type OfficeCapabilities = office.Capabilities
 type OfficeSystemChange = office.SystemChange
 type OfficePreferencesChange = office.PreferencesChange
+type OfficeFontChange = office.FontChange
 type OfficeMutationResult = officeops.MutationResult
 
 func (c *Client) officeEvidenceLocked() office.PackageEvidence {
@@ -121,6 +122,7 @@ func (c *Client) OfficeCapabilities(ctx context.Context) (OfficeCapabilities, Co
 		{officeops.SelectPreferencesRead, officeops.PreferencesReadCapabilityName},
 		{officeops.SelectPreferencesSet, officeops.PreferencesSetCapabilityName},
 		{officeops.SelectFontsRead, officeops.FontsReadCapabilityName},
+		{officeops.SelectFontsSet, officeops.FontsSetCapabilityName},
 	}
 	selections := make([]compatibility.Selection, 0, len(selectors))
 	for _, entry := range selectors {
@@ -142,6 +144,7 @@ func (c *Client) OfficeCapabilities(ctx context.Context) (OfficeCapabilities, Co
 		PreferencesRead: supported(3),
 		PreferencesSet:  supported(4),
 		FontsRead:       supported(5),
+		FontsSet:        supported(6),
 		Package:         c.officeEvidenceLocked(),
 	}
 	return capabilities, c.target.Report(selections...), nil
@@ -176,6 +179,21 @@ func (c *Client) ApplyOfficePreferencesChange(ctx context.Context, change Office
 	result, _, err := officeops.ExecutePreferencesSet(ctx, c.target, lockedExecutor{client: c}, change)
 	if err != nil {
 		return OfficeMutationResult{}, fmt.Errorf("apply Office preferences: %w", err)
+	}
+	return result, nil
+}
+
+// ApplyOfficeFontChange applies one custom-font registry action.
+func (c *Client) ApplyOfficeFontChange(ctx context.Context, change OfficeFontChange) (OfficeMutationResult, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.preparePackageScopedTargetLocked(ctx, officeops.APINames()...); err != nil {
+		return OfficeMutationResult{}, fmt.Errorf("prepare Office mutation target: %w", err)
+	}
+	result, _, err := officeops.ExecuteFontsSet(ctx, c.target, lockedExecutor{client: c}, change)
+	if err != nil {
+		return OfficeMutationResult{}, fmt.Errorf("apply Office font change: %w", err)
 	}
 	return result, nil
 }
