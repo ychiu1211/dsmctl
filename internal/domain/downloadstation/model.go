@@ -79,17 +79,17 @@ const (
 	TaskActionPause  TaskAction = "pause"
 	TaskActionResume TaskAction = "resume"
 	TaskActionDelete TaskAction = "delete"
+	TaskActionEdit   TaskAction = "edit"
 )
 
 // TaskChange is the intent for a guarded task mutation. Exactly one action is
 // performed. Create uses URIs (+ optional Destination); pause/resume/delete use
-// TaskIDs. Passwords for a protected source are supplied via a credential
-// reference, never inline (create only).
+// TaskIDs; edit re-targets the TaskIDs to Destination (required).
 type TaskChange struct {
-	Action        TaskAction `json:"action" jsonschema:"Task action: create, pause, resume, or delete"`
+	Action        TaskAction `json:"action" jsonschema:"Task action: create, pause, resume, delete, or edit"`
 	URIs          []string   `json:"uris,omitempty" jsonschema:"Source URIs (HTTP/HTTPS/FTP URL or magnet) for create"`
-	Destination   string     `json:"destination,omitempty" jsonschema:"Destination shared folder or path for create; omit to use the DSM default"`
-	TaskIDs       []string   `json:"task_ids,omitempty" jsonschema:"Target task identifiers for pause, resume, or delete"`
+	Destination   string     `json:"destination,omitempty" jsonschema:"Destination shared folder or path; optional for create (DSM default), required for edit"`
+	TaskIDs       []string   `json:"task_ids,omitempty" jsonschema:"Target task identifiers for pause, resume, delete, or edit"`
 	ForceComplete bool       `json:"force_complete,omitempty" jsonschema:"On delete, mark a moving/finishing task complete instead of removing partial data"`
 }
 
@@ -196,8 +196,10 @@ type GlobalSettingsChange struct {
 
 // AutoExtractionSettingsChange patches the per-user archive auto-extraction
 // settings. It is applied as a partial set (only the present fields are sent),
-// so archive passwords — which the read never returns — are never touched.
-// Password management is intentionally out of scope; change passwords in DSM.
+// so archive passwords — which the read never returns — are left untouched
+// unless PasswordsRef is set. The passwords themselves never appear in the
+// change, the plan, or any log: the reference resolves only while an approved
+// plan is being applied.
 type AutoExtractionSettingsChange struct {
 	EnableUnzip     *bool   `json:"enable_unzip,omitempty" jsonschema:"Enable or disable automatic extraction"`
 	CreateSubfolder *bool   `json:"create_subfolder,omitempty" jsonschema:"Create a subfolder per archive"`
@@ -205,12 +207,16 @@ type AutoExtractionSettingsChange struct {
 	UnzipOverwrite  *bool   `json:"unzip_overwrite,omitempty" jsonschema:"Overwrite existing files on extraction"`
 	UnzipToLocal    *bool   `json:"unzip_to_local,omitempty" jsonschema:"Extract to the archive's own folder (true) instead of a fixed path (false)"`
 	UnzipToPath     *string `json:"unzip_to_path,omitempty" jsonschema:"Fixed extraction destination when not extracting to the local folder"`
+	PasswordsRef    *string `json:"passwords_ref,omitempty" jsonschema:"Credential reference such as env:NAME resolving to the newline-separated archive password list; never a plaintext password"`
+	ClearPasswords  bool    `json:"clear_passwords,omitempty" jsonschema:"Remove every stored archive password (mutually exclusive with passwords_ref)"`
 }
 
 // NzbSettingsChange patches the Usenet (NZB) news-server settings. It is applied
 // as a partial set (only the present fields are sent), so the news-server
-// password — which the read never returns — is never touched. Password
-// management is intentionally out of scope; change it in DSM.
+// password — which the read never returns — is left untouched unless
+// PasswordRef is set. The password itself never appears in the change, the
+// plan, or any log: the reference resolves only while an approved plan is
+// being applied.
 type NzbSettingsChange struct {
 	Server               *string `json:"server,omitempty" jsonschema:"News server host"`
 	Port                 *int    `json:"port,omitempty" jsonschema:"News server port"`
@@ -221,6 +227,8 @@ type NzbSettingsChange struct {
 	EnableRemoveParfiles *bool   `json:"enable_remove_parfiles,omitempty" jsonschema:"Remove PAR2 files after repair"`
 	ConnPerDownload      *int    `json:"conn_per_download,omitempty" jsonschema:"Connections per download"`
 	MaxDownloadRate      *int    `json:"max_download_rate,omitempty" jsonschema:"NZB maximum download rate in KB/s; 0 = unlimited"`
+	PasswordRef          *string `json:"password_ref,omitempty" jsonschema:"Credential reference such as env:NAME resolving to the news-server password; never a plaintext password"`
+	ClearPassword        bool    `json:"clear_password,omitempty" jsonschema:"Remove the stored news-server password (mutually exclusive with password_ref)"`
 }
 
 // SettingsChange is a patch across Download Station settings groups. Exactly one
@@ -233,8 +241,8 @@ type SettingsChange struct {
 	Location       *LocationSettingsChange       `json:"location,omitempty" jsonschema:"Destination/watch-folder settings patch"`
 	Scheduler      *SchedulerSettingsChange      `json:"scheduler,omitempty" jsonschema:"Bandwidth-schedule settings patch"`
 	Global         *GlobalSettingsChange         `json:"global,omitempty" jsonschema:"General settings patch"`
-	AutoExtraction *AutoExtractionSettingsChange `json:"auto_extraction,omitempty" jsonschema:"Archive auto-extraction settings patch (non-secret fields only)"`
-	Nzb            *NzbSettingsChange            `json:"nzb,omitempty" jsonschema:"Usenet (NZB) news-server settings patch (non-secret fields only)"`
+	AutoExtraction *AutoExtractionSettingsChange `json:"auto_extraction,omitempty" jsonschema:"Archive auto-extraction settings patch; the password list changes only via passwords_ref/clear_passwords"`
+	Nzb            *NzbSettingsChange            `json:"nzb,omitempty" jsonschema:"Usenet (NZB) news-server settings patch; the password changes only via password_ref/clear_password"`
 }
 
 // SettingsMutationResult records the DSM backend that accepted a settings write.
@@ -336,5 +344,6 @@ type Capabilities struct {
 	StatisticRead bool            `json:"statistic_read" jsonschema:"Whether transfer statistics can be read"`
 	SettingsRead  bool            `json:"settings_read" jsonschema:"Whether the full detailed settings can be read"`
 	TaskWrite     bool            `json:"task_write" jsonschema:"Whether guarded task create/pause/resume/delete is available"`
+	TaskEdit      bool            `json:"task_edit" jsonschema:"Whether the guarded task destination edit (legacy Task API v2) is available"`
 	SettingsWrite bool            `json:"settings_write" jsonschema:"Whether guarded settings changes (BT, FTP/HTTP, RSS, location, scheduler, global, auto-extraction, NZB groups) are available"`
 }

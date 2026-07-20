@@ -143,7 +143,7 @@ func newDownloadTaskPlanCommand(opts *options) *cobra.Command {
 	var inputPath, outputPath string
 	command := &cobra.Command{
 		Use:   "plan",
-		Short: "Validate a task create/pause/resume/delete request and emit an approval plan as JSON",
+		Short: "Validate a task create/pause/resume/delete/edit request and emit an approval plan as JSON",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			var request downloadstation.TaskChange

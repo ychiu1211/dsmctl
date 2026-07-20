@@ -260,6 +260,80 @@ func TestTaskWriteControlSurfacesPerIDFailure(t *testing.T) {
 	}
 }
 
+func TestTaskEditCapturesParamsAndFallsBackToRequestedIDs(t *testing.T) {
+	target := dsTarget("4.1.2-5012")
+	executor := &captureExecutor{response: `{}`}
+	change := downloadstation.TaskChange{
+		Action: downloadstation.TaskActionEdit, TaskIDs: []string{"dbid_1", "dbid_2"}, Destination: "Share/sub",
+	}
+	result, _, err := ExecuteTaskEdit(context.Background(), target, executor, change)
+	if err != nil {
+		t.Fatalf("ExecuteTaskEdit() error = %v", err)
+	}
+	request := executor.requests[0]
+	if request.API != TaskAPIName || request.Version != 2 || request.Method != "edit" ||
+		request.Parameters.Get("id") != "dbid_1,dbid_2" || request.Parameters.Get("destination") != "Share/sub" {
+		t.Fatalf("edit request = %#v", request)
+	}
+	if result.Method != "edit" || !reflect.DeepEqual(result.AffectedIDs, []string{"dbid_1", "dbid_2"}) {
+		t.Fatalf("edit result = %#v", result)
+	}
+}
+
+func TestTaskEditFailsClosedWithoutTaskV2(t *testing.T) {
+	target := compatibility.NewTarget()
+	target.SetAPI(TaskAPIName, compatibility.APIInfo{Path: "DownloadStation/task.cgi", MinVersion: 1, MaxVersion: 1})
+	target.SetInstalledPackages([]compatibility.InstalledPackage{
+		{ID: PackageID, Version: compatibility.ParsePackageVersion("4.1.2-5012"), Running: true},
+	})
+	if selection, err := SelectTaskEdit(target); err == nil || selection.Supported || !compatibility.IsUnsupported(err) {
+		t.Fatalf("SelectTaskEdit() on Task v1 = %#v, %v", selection, err)
+	}
+}
+
+func TestSettingsSetInputsCarryResolvedSecretsOnly(t *testing.T) {
+	password := "secret-value"
+	nzbValues := encodeNzbSetInput(NzbSetInput{
+		Change:   downloadstation.NzbSettingsChange{PasswordRef: stringPointerForTest("env:NZB_PASSWORD")},
+		Password: &password,
+	})
+	if nzbValues.Get("password") != "secret-value" {
+		t.Fatalf("nzb password param = %q", nzbValues.Get("password"))
+	}
+	if len(nzbValues) != 1 {
+		t.Fatalf("nzb values leaked the credential reference: %#v", nzbValues)
+	}
+	// Without a resolved secret, the reference must never reach DSM.
+	nzbValues = encodeNzbSetInput(NzbSetInput{
+		Change: downloadstation.NzbSettingsChange{PasswordRef: stringPointerForTest("env:NZB_PASSWORD")},
+	})
+	if len(nzbValues) != 0 {
+		t.Fatalf("nzb values without a secret = %#v", nzbValues)
+	}
+
+	// Clearing sends the JSON empty-string literal: a bare empty form value is
+	// dropped by DSM's JSON-request parser (live-verified with username).
+	empty := ""
+	nzbValues = encodeNzbSetInput(NzbSetInput{
+		Change:   downloadstation.NzbSettingsChange{},
+		Password: &empty,
+	})
+	if nzbValues.Get("password") != `""` {
+		t.Fatalf("nzb empty password param = %q", nzbValues.Get("password"))
+	}
+
+	passwords := []string{"a", "b"}
+	extractValues := encodeAutoExtractionSetInput(AutoExtractionSetInput{
+		Change:    downloadstation.AutoExtractionSettingsChange{PasswordsRef: stringPointerForTest("env:EXTRACT_PASSWORDS")},
+		Passwords: &passwords,
+	})
+	if extractValues.Get("passwords") != `["a","b"]` || len(extractValues) != 1 {
+		t.Fatalf("extract values = %#v", extractValues)
+	}
+}
+
+func stringPointerForTest(value string) *string { return &value }
+
 func TestTaskWriteFailsClosedWithoutPackage(t *testing.T) {
 	target := dsTarget("")
 	if selection, err := SelectTaskWrite(target); !compatibility.IsUnsupported(err) || selection.Supported {

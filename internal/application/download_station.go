@@ -103,9 +103,10 @@ func (s *Service) GetDownloadStationSettings(ctx context.Context, requestedNAS s
 // bound into a task plan so an apply can detect a target that has since
 // disappeared without binding to volatile transfer progress.
 type DownloadStationTaskSummary struct {
-	ID    string `json:"id" jsonschema:"Task identifier"`
-	Title string `json:"title,omitempty" jsonschema:"Task title"`
-	Type  string `json:"type,omitempty" jsonschema:"Download protocol"`
+	ID          string `json:"id" jsonschema:"Task identifier"`
+	Title       string `json:"title,omitempty" jsonschema:"Task title"`
+	Type        string `json:"type,omitempty" jsonschema:"Download protocol"`
+	Destination string `json:"destination,omitempty" jsonschema:"Observed destination folder"`
 }
 
 type DownloadStationTaskPlan struct {
@@ -225,6 +226,9 @@ func planDownloadStationTaskWithClient(ctx context.Context, nas string, client d
 	if !capabilities.TaskRead || !capabilities.TaskWrite {
 		return DownloadStationTaskPlan{}, fmt.Errorf("NAS %q does not expose a verified Download Station task read/write backend", nas)
 	}
+	if request.Action == downloadstation.TaskActionEdit && !capabilities.TaskEdit {
+		return DownloadStationTaskPlan{}, fmt.Errorf("NAS %q does not expose a verified Download Station task edit backend (legacy Task API v2)", nas)
+	}
 	plan := DownloadStationTaskPlan{APIVersion: downloadStationAPIVersion, NAS: nas, Request: request, Observed: []DownloadStationTaskSummary{}}
 	if request.Action != downloadstation.TaskActionCreate {
 		tasks, err := client.DownloadStationTasks(ctx)
@@ -241,10 +245,23 @@ func planDownloadStationTaskWithClient(ctx context.Context, nas string, client d
 			if !ok {
 				return DownloadStationTaskPlan{}, fmt.Errorf("task %q was not found on NAS %q", id, nas)
 			}
-			observed = append(observed, DownloadStationTaskSummary{ID: task.ID, Title: task.Title, Type: task.Type})
+			observed = append(observed, DownloadStationTaskSummary{ID: task.ID, Title: task.Title, Type: task.Type, Destination: task.Destination})
 		}
 		sort.Slice(observed, func(i, j int) bool { return observed[i].ID < observed[j].ID })
 		plan.Observed = observed
+		if request.Action == downloadstation.TaskActionEdit {
+			destination := strings.TrimSpace(request.Destination)
+			changed := false
+			for _, task := range observed {
+				if task.Destination != destination {
+					changed = true
+					break
+				}
+			}
+			if !changed {
+				return DownloadStationTaskPlan{}, fmt.Errorf("every targeted task is already at destination %q", destination)
+			}
+		}
 	}
 	plan.ObservedFingerprint, err = hashJSON(plan.Observed)
 	if err != nil {
@@ -270,7 +287,7 @@ func validateTaskChangeShape(change downloadstation.TaskChange) error {
 				return err
 			}
 		}
-	case downloadstation.TaskActionPause, downloadstation.TaskActionResume, downloadstation.TaskActionDelete:
+	case downloadstation.TaskActionPause, downloadstation.TaskActionResume, downloadstation.TaskActionDelete, downloadstation.TaskActionEdit:
 		if len(change.TaskIDs) == 0 {
 			return fmt.Errorf("a %s action requires at least one task_id", change.Action)
 		}
@@ -279,8 +296,11 @@ func validateTaskChangeShape(change downloadstation.TaskChange) error {
 				return fmt.Errorf("task_id must not be empty")
 			}
 		}
+		if change.Action == downloadstation.TaskActionEdit && strings.TrimSpace(change.Destination) == "" {
+			return fmt.Errorf("an edit action requires a destination")
+		}
 	default:
-		return fmt.Errorf("unsupported task action %q; use create, pause, resume, or delete", change.Action)
+		return fmt.Errorf("unsupported task action %q; use create, pause, resume, delete, or edit", change.Action)
 	}
 	return nil
 }
@@ -317,6 +337,10 @@ func downloadStationTaskEffects(change downloadstation.TaskChange) (string, []st
 		return "medium",
 			[]string{"pausing stops transfer for the task(s); it is reversible with resume"},
 			[]string{fmt.Sprintf("pause task(s) %s", strings.Join(change.TaskIDs, ", "))}
+	case downloadstation.TaskActionEdit:
+		return "medium",
+			[]string{"editing moves the task's downloaded data to the new destination"},
+			[]string{fmt.Sprintf("move task(s) %s to %q", strings.Join(change.TaskIDs, ", "), strings.TrimSpace(change.Destination))}
 	default:
 		return "high", []string{}, []string{}
 	}
@@ -379,6 +403,18 @@ func verifyDownloadStationTaskPostcondition(ctx context.Context, client download
 			}
 		}
 		return nil
+	case downloadstation.TaskActionEdit:
+		destination := strings.TrimSpace(change.Destination)
+		for _, id := range change.TaskIDs {
+			task, ok := byID[id]
+			if !ok {
+				return fmt.Errorf("task %q is missing after edit", id)
+			}
+			if task.Destination != destination {
+				return fmt.Errorf("task %q destination is %q, want %q", id, task.Destination, destination)
+			}
+		}
+		return nil
 	default:
 		return nil
 	}
@@ -417,7 +453,7 @@ type DownloadStationSettingsApplyResult struct {
 type downloadStationSettingsClient interface {
 	DownloadStationSettingsGroup(context.Context, string) (json.RawMessage, error)
 	DownloadStationCapabilities(context.Context) (synology.DownloadStationCapabilities, synology.CompatibilityReport, error)
-	ApplyDownloadStationSettingsChange(context.Context, synology.DownloadStationSettingsChange) (synology.DownloadStationSettingsMutationResult, error)
+	ApplyDownloadStationSettingsChange(context.Context, synology.DownloadStationSettingsChange, synology.DownloadStationSettingsSecrets) (synology.DownloadStationSettingsMutationResult, error)
 }
 
 func (s *Service) downloadStationSettingsClient(ctx context.Context, requestedNAS string) (string, downloadStationSettingsClient, error) {
@@ -493,14 +529,56 @@ func (s *Service) ApplyDownloadStationSettingsPlan(ctx context.Context, plan Dow
 	if current.ObservedFingerprint != plan.ObservedFingerprint || current.Hash != plan.Hash {
 		return DownloadStationSettingsApplyResult{}, fmt.Errorf("settings plan is stale; create a new plan")
 	}
-	result, err := client.ApplyDownloadStationSettingsChange(ctx, plan.Request)
+	secrets, err := s.resolveDownloadStationSettingsSecrets(ctx, plan.Request)
+	if err != nil {
+		return DownloadStationSettingsApplyResult{}, err
+	}
+	result, err := client.ApplyDownloadStationSettingsChange(ctx, plan.Request, secrets)
 	if err != nil {
 		return DownloadStationSettingsApplyResult{}, authenticationError(plan.NAS, err)
 	}
-	if err := verifySettingsGroupPostcondition(ctx, client, plan.Request); err != nil {
+	if err := verifySettingsGroupPostcondition(ctx, client, plan.Request, secrets); err != nil {
 		return DownloadStationSettingsApplyResult{}, fmt.Errorf("verify settings change: %w", err)
 	}
 	return DownloadStationSettingsApplyResult{NAS: plan.NAS, PlanHash: plan.Hash, Applied: true, Result: result}, nil
+}
+
+// resolveDownloadStationSettingsSecrets resolves the credential references in
+// a settings change at apply time. The plaintext exists only in memory for the
+// DSM call; it never enters plans, results, or logs. The archive password list
+// reference resolves to newline-separated values; an empty value clears the
+// stored secret.
+func (s *Service) resolveDownloadStationSettingsSecrets(ctx context.Context, change downloadstation.SettingsChange) (synology.DownloadStationSettingsSecrets, error) {
+	secrets := synology.DownloadStationSettingsSecrets{}
+	if change.Nzb != nil && change.Nzb.PasswordRef != nil {
+		password, err := s.secretReferences.ResolveSecret(ctx, *change.Nzb.PasswordRef)
+		if err != nil {
+			return synology.DownloadStationSettingsSecrets{}, fmt.Errorf("resolve nzb password_ref: %w", err)
+		}
+		secrets.NzbPassword = &password
+	}
+	if change.Nzb != nil && change.Nzb.ClearPassword {
+		empty := ""
+		secrets.NzbPassword = &empty
+	}
+	if change.AutoExtraction != nil && change.AutoExtraction.PasswordsRef != nil {
+		raw, err := s.secretReferences.ResolveSecret(ctx, *change.AutoExtraction.PasswordsRef)
+		if err != nil {
+			return synology.DownloadStationSettingsSecrets{}, fmt.Errorf("resolve auto_extraction passwords_ref: %w", err)
+		}
+		passwords := []string{}
+		for _, line := range strings.Split(raw, "\n") {
+			if trimmed := strings.TrimSpace(line); trimmed != "" {
+				passwords = append(passwords, trimmed)
+			}
+		}
+		secrets.ExtractionPasswords = &passwords
+	}
+	if change.AutoExtraction != nil && change.AutoExtraction.ClearPasswords {
+		empty := []string{}
+		secrets.ExtractionPasswords = &empty
+	}
+	return secrets, nil
 }
 
 // activeSettingsGroup returns the single group a change targets. Exactly one
@@ -633,6 +711,14 @@ func settingsGroupEffects(group string, change downloadstation.SettingsChange, o
 			return false, "", nil, nil, fmt.Errorf("decode observed auto-extraction settings: %w", err)
 		}
 		noop, summary := autoExtractionEffects(current, *change.AutoExtraction)
+		if change.AutoExtraction.PasswordsRef != nil {
+			noop = false
+			summary = append(summary, "replace the archive password list (resolved from the credential reference at apply)")
+		}
+		if change.AutoExtraction.ClearPasswords {
+			noop = false
+			summary = append(summary, "clear the archive password list")
+		}
 		return noop, "medium", []string{}, summary, nil
 	case "nzb":
 		var current downloadstation.NzbSettings
@@ -640,13 +726,21 @@ func settingsGroupEffects(group string, change downloadstation.SettingsChange, o
 			return false, "", nil, nil, fmt.Errorf("decode observed NZB settings: %w", err)
 		}
 		noop, summary := nzbEffects(current, *change.Nzb)
+		if change.Nzb.PasswordRef != nil {
+			noop = false
+			summary = append(summary, "change the news-server password (resolved from the credential reference at apply)")
+		}
+		if change.Nzb.ClearPassword {
+			noop = false
+			summary = append(summary, "clear the news-server password")
+		}
 		return noop, "medium", []string{}, summary, nil
 	default:
 		return false, "", nil, nil, fmt.Errorf("unsupported settings group %q", group)
 	}
 }
 
-func verifySettingsGroupPostcondition(ctx context.Context, client downloadStationSettingsClient, change downloadstation.SettingsChange) error {
+func verifySettingsGroupPostcondition(ctx context.Context, client downloadStationSettingsClient, change downloadstation.SettingsChange, secrets synology.DownloadStationSettingsSecrets) error {
 	group, err := activeSettingsGroup(change)
 	if err != nil {
 		return err
@@ -699,6 +793,12 @@ func verifySettingsGroupPostcondition(ctx context.Context, client downloadStatio
 		var a downloadstation.AutoExtractionSettings
 		if err := json.Unmarshal(raw, &a); err != nil {
 			return err
+		}
+		if (change.AutoExtraction.PasswordsRef != nil || change.AutoExtraction.ClearPasswords) && secrets.ExtractionPasswords != nil {
+			expectConfigured := len(*secrets.ExtractionPasswords) > 0
+			if a.PasswordConfigured != expectConfigured {
+				return fmt.Errorf("password_configured is %t, want %t", a.PasswordConfigured, expectConfigured)
+			}
 		}
 		return verifyAutoExtractionPostcondition(a, *change.AutoExtraction)
 	case "nzb":
@@ -1059,8 +1159,15 @@ func validateSettingsChangeShape(change downloadstation.SettingsChange) error {
 	case "auto_extraction":
 		a := change.AutoExtraction
 		if a.EnableUnzip == nil && a.CreateSubfolder == nil && a.DeleteArchive == nil &&
-			a.UnzipOverwrite == nil && a.UnzipToLocal == nil && a.UnzipToPath == nil {
+			a.UnzipOverwrite == nil && a.UnzipToLocal == nil && a.UnzipToPath == nil &&
+			a.PasswordsRef == nil && !a.ClearPasswords {
 			return fmt.Errorf("auto_extraction settings patch has no fields")
+		}
+		if a.PasswordsRef != nil && !validSecretReference(*a.PasswordsRef) {
+			return fmt.Errorf("passwords_ref must use env:NAME or vault:<id>")
+		}
+		if a.PasswordsRef != nil && a.ClearPasswords {
+			return fmt.Errorf("passwords_ref and clear_passwords are mutually exclusive")
 		}
 		if a.UnzipToPath != nil && strings.TrimSpace(*a.UnzipToPath) == "" && (a.UnzipToLocal == nil || !*a.UnzipToLocal) {
 			return fmt.Errorf("unzip_to_path must not be empty unless unzip_to_local is true")
@@ -1070,8 +1177,14 @@ func validateSettingsChangeShape(change downloadstation.SettingsChange) error {
 		n := change.Nzb
 		if n.Server == nil && n.Port == nil && n.Username == nil && n.EnableAuth == nil &&
 			n.EnableEncryption == nil && n.EnableParchive == nil && n.EnableRemoveParfiles == nil &&
-			n.ConnPerDownload == nil && n.MaxDownloadRate == nil {
+			n.ConnPerDownload == nil && n.MaxDownloadRate == nil && n.PasswordRef == nil && !n.ClearPassword {
 			return fmt.Errorf("nzb settings patch has no fields")
+		}
+		if n.PasswordRef != nil && !validSecretReference(*n.PasswordRef) {
+			return fmt.Errorf("password_ref must use env:NAME or vault:<id>")
+		}
+		if n.PasswordRef != nil && n.ClearPassword {
+			return fmt.Errorf("password_ref and clear_password are mutually exclusive")
 		}
 		if n.Port != nil && (*n.Port < 1 || *n.Port > 65535) {
 			return fmt.Errorf("port must be between 1 and 65535")

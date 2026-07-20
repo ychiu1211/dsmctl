@@ -331,7 +331,7 @@ type getDownloadStationSettingsOutput struct {
 
 type planDownloadStationTaskChangeInput struct {
 	NAS     string                     `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
-	Request downloadstation.TaskChange `json:"request" jsonschema:"Task create/pause/resume/delete intent"`
+	Request downloadstation.TaskChange `json:"request" jsonschema:"Task create/pause/resume/delete/edit intent"`
 }
 
 type planDownloadStationTaskChangeOutput struct {
@@ -1584,7 +1584,7 @@ func New(service *application.Service, version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "plan_download_station_task_change",
 		Title:       "Plan a Download Station task change",
-		Description: "Validate a task create/pause/resume/delete request and return an approval plan. Control actions are bound to the observed target tasks so an apply fails if a target has since disappeared. This tool never mutates DSM.",
+		Description: "Validate a task create/pause/resume/delete/edit request and return an approval plan. Control actions are bound to the observed target tasks (edit also to their destinations) so an apply fails if a target has since changed. This tool never mutates DSM.",
 		Annotations: readOnlyAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planDownloadStationTaskChangeInput) (*mcp.CallToolResult, planDownloadStationTaskChangeOutput, error) {
 		plan, err := service.PlanDownloadStationTaskChange(ctx, input.NAS, input.Request)

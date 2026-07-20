@@ -84,7 +84,7 @@ type Client interface {
 	FileStationBackgroundTasks(ctx context.Context) (synology.FileStationBackgroundTasks, error)
 	ApplyDownloadStationTaskChange(ctx context.Context, change synology.DownloadStationTaskChange) (synology.DownloadStationTaskMutationResult, error)
 	DownloadStationSettingsGroup(ctx context.Context, group string) (json.RawMessage, error)
-	ApplyDownloadStationSettingsChange(ctx context.Context, change synology.DownloadStationSettingsChange) (synology.DownloadStationSettingsMutationResult, error)
+	ApplyDownloadStationSettingsChange(ctx context.Context, change synology.DownloadStationSettingsChange, secrets synology.DownloadStationSettingsSecrets) (synology.DownloadStationSettingsMutationResult, error)
 }
 
 type Option func(*Manager)

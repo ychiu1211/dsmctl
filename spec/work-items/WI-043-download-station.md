@@ -1,7 +1,7 @@
 ---
 id: WI-043
 title: Download Station module (read-only)
-status: in_progress
+status: done
 priority: P2
 owner: ""
 depends_on: [WI-019, WI-022]
@@ -52,8 +52,8 @@ are present on DSM 7.3; the legacy surface is simpler and version-stable).
 
 ## Non-goals
 
-- Task `edit` (rename / re-target an existing task) — the other four task
-  actions (create/pause/resume/delete) are implemented as guarded plan/apply.
+- (shipped in this WI) Task `edit` destination re-target; task rename does not
+  exist in the Download Station API.
 - RSS (`RSS.Site` / `RSS.Feed`), BT search (`BTSearch`), eMule search, eMule
   server management, and the per-task BT/file/tracker/peer/NZB detail
   sub-resources.
@@ -126,9 +126,18 @@ are present on DSM 7.3; the legacy surface is simpler and version-stable).
       two fields, change one alone, confirm the other and password_configured
       survive); NZB partial set live-verified reverted. Unit tests pin that
       neither encode ever emits a password parameter.
-- [ ] `edit` (rename/re-target); NZB and auto-extraction **password** changes via
-      credential-ref (never in the model); and the eMule group (enabling it starts
-      the eMule service).
+- [x] Task `edit` (destination re-target via the legacy Task API v2 method,
+      separately gated as download.task.edit; rename is not a DSM feature) and
+      the NZB/auto-extraction **password** changes via credential references
+      (password_ref / passwords_ref, clear_password / clear_passwords; the
+      value never enters the change, plan, or logs). Live-verified 2026-07-20
+      on 4.1.2, fully reverted: disposable-task create -> edit (Share ->
+      docker, postcondition-verified) -> delete; extraction passwords set via
+      env ref (password_configured true) then cleared (false); NZB
+      username+password set then cleared — the clear path exposed that DSM
+      drops empty form values (a false success our postcondition caught), so
+      string parameters now encode an empty value as the JSON literal "".
+      The eMule group stays a non-goal (enabling it starts the eMule service).
 
 ## Verification
 

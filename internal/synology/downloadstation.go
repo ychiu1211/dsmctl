@@ -123,6 +123,13 @@ func (c *Client) ApplyDownloadStationTaskChange(ctx context.Context, change Down
 	if err := c.preparePackageScopedTargetLocked(ctx, downloadstationops.APINames()...); err != nil {
 		return DownloadStationTaskMutationResult{}, fmt.Errorf("prepare Download Station mutation target: %w", err)
 	}
+	if change.Action == downloadstation.TaskActionEdit {
+		result, _, err := downloadstationops.ExecuteTaskEdit(ctx, c.target, lockedExecutor{client: c}, change)
+		if err != nil {
+			return DownloadStationTaskMutationResult{}, downloadStationReadError("task edit", c.downloadStationEvidenceLocked(), err)
+		}
+		return result, nil
+	}
 	result, _, err := downloadstationops.ExecuteTaskWrite(ctx, c.target, lockedExecutor{client: c}, change)
 	if err != nil {
 		return DownloadStationTaskMutationResult{}, downloadStationReadError("task change", c.downloadStationEvidenceLocked(), err)
@@ -198,7 +205,15 @@ func (c *Client) DownloadStationSettingsGroup(ctx context.Context, group string)
 // ApplyDownloadStationSettingsChange merges a settings-group patch into the
 // freshly read full group object and submits it, so a field the caller did not
 // specify is never reset.
-func (c *Client) ApplyDownloadStationSettingsChange(ctx context.Context, change DownloadStationSettingsChange) (DownloadStationSettingsMutationResult, error) {
+// DownloadStationSettingsSecrets carries secrets resolved from credential
+// references at apply time. They exist only in memory for the DSM call and are
+// never part of plans, results, or logs.
+type DownloadStationSettingsSecrets struct {
+	NzbPassword         *string
+	ExtractionPasswords *[]string
+}
+
+func (c *Client) ApplyDownloadStationSettingsChange(ctx context.Context, change DownloadStationSettingsChange, secrets DownloadStationSettingsSecrets) (DownloadStationSettingsMutationResult, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -268,18 +283,21 @@ func (c *Client) ApplyDownloadStationSettingsChange(ctx context.Context, change 
 		}
 		return result, nil
 	case change.AutoExtraction != nil:
-		// Auto-extraction is a partial set: send only the patched non-secret
-		// fields directly, so the archive passwords the read never returns are
-		// left untouched. No read-merge is performed.
-		result, _, err := downloadstationops.ExecuteAutoExtractionSet(ctx, c.target, lockedExecutor{client: c}, *change.AutoExtraction)
+		// Auto-extraction is a partial set: only the patched fields are sent.
+		// The archive password list is included only when the apply resolved a
+		// credential reference into secrets.
+		input := downloadstationops.AutoExtractionSetInput{Change: *change.AutoExtraction, Passwords: secrets.ExtractionPasswords}
+		result, _, err := downloadstationops.ExecuteAutoExtractionSet(ctx, c.target, lockedExecutor{client: c}, input)
 		if err != nil {
 			return DownloadStationSettingsMutationResult{}, fmt.Errorf("apply Download Station auto-extraction settings: %w", err)
 		}
 		return result, nil
 	case change.Nzb != nil:
-		// NZB is a partial set: only the patched non-secret fields are sent, so
-		// the news-server password the read never returns is left untouched.
-		result, _, err := downloadstationops.ExecuteNzbSet(ctx, c.target, lockedExecutor{client: c}, *change.Nzb)
+		// NZB is a partial set: only the patched fields are sent. The
+		// news-server password is included only when the apply resolved a
+		// credential reference into secrets.
+		input := downloadstationops.NzbSetInput{Change: *change.Nzb, Password: secrets.NzbPassword}
+		result, _, err := downloadstationops.ExecuteNzbSet(ctx, c.target, lockedExecutor{client: c}, input)
 		if err != nil {
 			return DownloadStationSettingsMutationResult{}, fmt.Errorf("apply Download Station NZB settings: %w", err)
 		}
@@ -421,6 +439,7 @@ func (c *Client) DownloadStationCapabilities(ctx context.Context) (DownloadStati
 		downloadstationops.SelectStatistic,
 		downloadstationops.SelectSettings,
 		downloadstationops.SelectTaskWrite,
+		downloadstationops.SelectTaskEdit,
 		downloadstationops.SelectSettingsWrite,
 	}
 	selections := make([]compatibility.Selection, 0, len(selectors))
@@ -438,6 +457,7 @@ func (c *Client) DownloadStationCapabilities(ctx context.Context) (DownloadStati
 		downloadstationops.StatisticReadCapabilityName,
 		downloadstationops.SettingsReadCapabilityName,
 		downloadstationops.TaskWriteCapabilityName,
+		downloadstationops.TaskEditCapabilityName,
 		downloadstationops.SettingsWriteCapabilityName,
 	}
 	for index, name := range capabilityNames {
@@ -453,7 +473,8 @@ func (c *Client) DownloadStationCapabilities(ctx context.Context) (DownloadStati
 		StatisticRead: supported(2),
 		SettingsRead:  supported(3),
 		TaskWrite:     supported(4),
-		SettingsWrite: supported(5),
+		TaskEdit:      supported(5),
+		SettingsWrite: supported(6),
 	}
 	return capabilities, c.target.Report(selections...), nil
 }
