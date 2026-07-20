@@ -134,9 +134,11 @@ dsmctl drive admin team-folders apply -f enable.plan.json --approve <hash>
   turning versioning off, or tightening retention prunes stored versions and
   is high risk.
 
-The Drive home entry (`homes/mydrive*`) and the `surveillance` share are
-rejected: the former is managed by the DSM home service, and Drive silently
-ignores the latter. Drive answers `Share.set` with an empty success even when
+The Drive home entry (`homes/mydrive*`) accepts only `set_versioning`: it
+patches the global My Drive versioning DSM fans out to **every user home**,
+so those plans are always high risk. Enabling or disabling the home entry is
+rejected (My Drive follows the DSM home service), and the `surveillance`
+share is rejected because Drive silently ignores it. Drive answers `Share.set` with an empty success even when
 it skips an ineligible share, so apply verifies the postcondition by
 re-reading the team-folder list (with bounded retries while Drive converges)
 and returns an explicit not-yet-confirmed error instead of a false success.

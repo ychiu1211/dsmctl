@@ -321,6 +321,43 @@ func TestDriveTeamFolderApplyRejectsStalePlan(t *testing.T) {
 	}
 }
 
+func TestDriveHomeVersioningIsAllowedAndAlwaysHighRisk(t *testing.T) {
+	withoutTeamFolderVerifyDelay(t)
+	client := driveTeamFolderTestClient()
+	eight, zero := 8, 0
+	client.folders = append(client.folders, driveadmin.TeamFolder{
+		Name: "homes/mydrive_home", Enabled: true, Status: "normal",
+		MaxVersions: &eight, VersionPolicy: "fifo", RetentionDays: &zero,
+	})
+
+	// Raising the kept versions is non-destructive but still high risk on the
+	// home entry because it fans out to every user home.
+	change := driveadmin.TeamFolderChange{Action: driveadmin.TeamFolderActionSetVersioning, Name: "homes/mydrive_home", MaxVersions: intPtr(10)}
+	if err := validateDriveTeamFolderChange(change); err != nil {
+		t.Fatalf("home set_versioning must validate: %v", err)
+	}
+	plan, err := planDriveTeamFolderChangeWithClient(context.Background(), "lab", client, change)
+	if err != nil {
+		t.Fatalf("plan error = %v", err)
+	}
+	if plan.Risk != "high" || plan.Destructive {
+		t.Fatalf("home versioning plan = %#v", plan)
+	}
+	found := false
+	for _, warning := range plan.Warnings {
+		if strings.Contains(warning, "every user home") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("home warnings = %#v", plan.Warnings)
+	}
+	result, err := applyDriveTeamFolderPlanWithClient(context.Background(), client, plan)
+	if err != nil || *result.TeamFolder.MaxVersions != 10 {
+		t.Fatalf("apply result = %#v err = %v", result, err)
+	}
+}
+
 func TestDriveConnectionKickPlanApply(t *testing.T) {
 	withoutTeamFolderVerifyDelay(t)
 	client := driveTeamFolderTestClient()
@@ -383,7 +420,8 @@ func TestValidateDriveTeamFolderChangeRejectsUnsafeIntents(t *testing.T) {
 		want   string
 	}{
 		{"missing name", driveadmin.TeamFolderChange{Action: driveadmin.TeamFolderActionDisable}, "requires the shared-folder name"},
-		{"home entry", driveadmin.TeamFolderChange{Action: driveadmin.TeamFolderActionEnable, Name: "homes/mydrive_home", MaxVersions: intPtr(8), VersionPolicy: "fifo"}, "home service"},
+		{"home enable", driveadmin.TeamFolderChange{Action: driveadmin.TeamFolderActionEnable, Name: "homes/mydrive_home", MaxVersions: intPtr(8), VersionPolicy: "fifo"}, "cannot be enabled or disabled"},
+		{"home disable", driveadmin.TeamFolderChange{Action: driveadmin.TeamFolderActionDisable, Name: "homes/mydrive_home"}, "cannot be enabled or disabled"},
 		{"surveillance", driveadmin.TeamFolderChange{Action: driveadmin.TeamFolderActionSetVersioning, Name: "surveillance", MaxVersions: intPtr(8)}, "surveillance"},
 		{"unknown action", driveadmin.TeamFolderChange{Action: "toggle", Name: "projects"}, "action must be"},
 		{"enable without versions", driveadmin.TeamFolderChange{Action: driveadmin.TeamFolderActionEnable, Name: "projects"}, "requires max_versions"},

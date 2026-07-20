@@ -887,6 +887,12 @@ func planDriveTeamFolderChangeWithClient(ctx context.Context, nas string, client
 	} else {
 		plan.Risk = "medium"
 	}
+	// The home entry's versioning fans out to every user's My Drive, so the
+	// change is always high risk regardless of direction.
+	if strings.HasPrefix(request.Name, "homes") {
+		plan.Risk = "high"
+		plan.Warnings = append(plan.Warnings, "this changes the My Drive versioning of every user home on the NAS")
+	}
 	plan.Hash, err = driveTeamFolderPlanHash(plan)
 	if err != nil {
 		return DriveTeamFolderPlan{}, err
@@ -952,8 +958,8 @@ func validateDriveTeamFolderChange(change driveadmin.TeamFolderChange) error {
 	if name != change.Name {
 		return fmt.Errorf("team-folder name must not carry surrounding whitespace")
 	}
-	if strings.HasPrefix(name, "homes") {
-		return fmt.Errorf("the Drive home entry %q is managed by the DSM home service and is out of scope for a team-folder change", name)
+	if strings.HasPrefix(name, "homes") && change.Action != driveadmin.TeamFolderActionSetVersioning {
+		return fmt.Errorf("the Drive home entry %q follows the DSM home service and cannot be enabled or disabled as a team folder; only set_versioning applies", name)
 	}
 	if name == "surveillance" {
 		return fmt.Errorf("Drive ignores the surveillance share; it cannot be managed as a team folder")
