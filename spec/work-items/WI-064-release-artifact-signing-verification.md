@@ -1,7 +1,7 @@
 ---
 id: WI-064
 title: Sign and verify release artifacts with attested provenance and SBOM
-status: proposed
+status: deferred
 priority: P2
 owner: ""
 depends_on:
@@ -16,6 +16,11 @@ touches:
 ---
 
 # WI-064 — Sign and verify release artifacts with attested provenance and SBOM
+
+> **Decision (2026-07-20): not signing for now — deferred.** Release-artifact
+> signing/attestation is not being pursued at this time; the signing
+> root-of-trust question is set aside rather than answered. Revisit when release
+> signing is prioritized. The scope below is preserved for that future pickup.
 
 ## Outcome
 

@@ -87,9 +87,16 @@ feature train and therefore cannot by itself signal a CLI/MCP schema break.
 
 ## Product decisions required (blocking `ready`)
 
-- **D1 — compatibility window.** The minimum time or number of compatibility-train
-  releases a `stable` surface must remain after being deprecated before removal
-  (for example, "at least two train releases or 90 days, whichever is longer").
+- **D1 — compatibility window. RESOLVED (2026-07-20): no fixed removal window.**
+  The **operation is the stable abstraction**; DSM-version differences are absorbed
+  by per-variant version ranges (the WI-044 model — e.g. `op X`: 7.1/7.2 → impl a,
+  7.3 → impl b). Support is unbounded forward/backward: an operation is not aged
+  out on a timer — its abstract surface persists while its variant set is extended.
+  A DSM version with no matching variant is reported **out-of-range (fail-closed)**
+  in the capability report, never silently broken or removed. (Original question:
+  the minimum time / number of trains a `stable` surface must remain after
+  deprecation before removal — moot under this model; removal is a deliberate,
+  changelog-signalled act, not a schedule.)
 - **D2 — breaking-change signal.** Because the release number is DSM-train-derived
   and cannot act as a semver major, decide the signal: (a) add an independent
   monotonic schema/contract version surfaced in `--version` and
