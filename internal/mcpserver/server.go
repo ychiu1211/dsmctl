@@ -1055,6 +1055,30 @@ type applyPackageInstallPlanOutput struct {
 	Result application.PackageInstallApplyResult `json:"result" jsonschema:"Per-package install outcomes confirmed by the inventory, in install order"`
 }
 
+type planPackageLocalInstallInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	// SPKPath is read on the dsmctl host, not the NAS.
+	SPKPath string `json:"spk_path" jsonschema:"Path on the dsmctl host to the local .spk file to upload and install"`
+	// VolumePath selects where the package installs, e.g. /volume1.
+	VolumePath string `json:"volume_path" jsonschema:"Target install volume path, for example /volume1"`
+	// Pointers so an omitted field keeps the safe default, matching the CLI.
+	RunAfterInstall *bool `json:"run_after_install,omitempty" jsonschema:"Start the package after install; defaults to true"`
+	AllowUnsigned   *bool `json:"allow_unsigned,omitempty" jsonschema:"Disable DSM code-signature enforcement to install a package not signed by Synology; defaults to false"`
+}
+
+type planPackageLocalInstallOutput struct {
+	Plan application.PackageLocalInstallPlan `json:"plan" jsonschema:"Hash-bound local install intent, bound to the .spk file content (size + SHA-256)"`
+}
+
+type applyPackageLocalInstallPlanInput struct {
+	Plan         application.PackageLocalInstallPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_package_local_install"`
+	ApprovalHash string                              `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved local install plan"`
+}
+
+type applyPackageLocalInstallPlanOutput struct {
+	Result application.PackageLocalInstallApplyResult `json:"result" jsonschema:"Local install outcome confirmed by the inventory"`
+}
+
 type getDriveAdminInput struct {
 	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
 }
@@ -2910,6 +2934,39 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, applyPackageInstallPlanOutput{}, err
 		}
 		return nil, applyPackageInstallPlanOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_package_local_install",
+		Title:       "Plan a guarded local (manual) package install",
+		Description: "Read a local .spk file on the dsmctl host and return a hash-bound install plan bound to the exact file content (byte size + SHA-256), not the online catalog. The plan is always high risk because installing uploads and runs third-party software; apply it with apply_package_local_install_plan, which refuses a .spk that changed since planning. Set allow_unsigned to install a package DSM's code-signature policy would otherwise reject. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planPackageLocalInstallInput) (*mcp.CallToolResult, planPackageLocalInstallOutput, error) {
+		runAfterInstall, allowUnsigned := true, false
+		if input.RunAfterInstall != nil {
+			runAfterInstall = *input.RunAfterInstall
+		}
+		if input.AllowUnsigned != nil {
+			allowUnsigned = *input.AllowUnsigned
+		}
+		plan, err := service.PlanPackageLocalInstall(ctx, input.NAS, input.SPKPath, input.VolumePath, runAfterInstall, allowUnsigned)
+		if err != nil {
+			return nil, planPackageLocalInstallOutput{}, err
+		}
+		return nil, planPackageLocalInstallOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_package_local_install_plan",
+		Title:       "Apply an approved local (manual) package install plan",
+		Description: "Upload and install the .spk from an unmodified local install plan only with its exact approval hash, and only when the file on disk still matches the size and SHA-256 the plan was bound to. DSM extracts the uploaded package, installs it (or upgrades it when the same package is already installed), and completion is confirmed against the installed-package inventory; a failed install cleans up the uploaded temp file. Installing runs third-party code and can take minutes.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyPackageLocalInstallPlanInput) (*mcp.CallToolResult, applyPackageLocalInstallPlanOutput, error) {
+		result, err := service.ApplyPackageLocalInstallPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applyPackageLocalInstallPlanOutput{}, err
+		}
+		return nil, applyPackageLocalInstallPlanOutput{Result: result}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

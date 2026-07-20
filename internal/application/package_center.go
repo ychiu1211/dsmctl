@@ -2,7 +2,11 @@ package application
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/ychiu1211/dsmctl/internal/domain/packagecenter"
@@ -62,6 +66,7 @@ type packageClient interface {
 	PackageSettings(context.Context) (synology.PackageSettings, error)
 	PackageCatalog(context.Context) (synology.PackageCatalog, error)
 	PackageInstall(context.Context, synology.PackageInstallInput) (synology.PackageInstallResult, error)
+	PackageInstallLocal(context.Context, synology.PackageLocalInstallInput) (synology.PackageInstallResult, error)
 	PackageCapabilities(context.Context) (synology.PackageCapabilities, synology.CompatibilityReport, error)
 	ApplyPackageSettingsChange(context.Context, synology.PackageSettings) (synology.PackageMutationResult, error)
 	ApplyPackageLifecycleChange(context.Context, synology.PackageLifecycleChange) (synology.PackageMutationResult, error)
@@ -476,6 +481,179 @@ func verifyPackageUpdatePrecondition(ctx context.Context, plan PackageInstallPla
 		return fmt.Errorf("package %q is now %s, not the planned %s; create a new plan", plan.PackageID, currentVersion, plan.FromVersion)
 	}
 	return nil
+}
+
+const packageLocalInstallAPIVersion = "dsmctl.io/v1alpha1"
+
+// maxLocalPackageSize caps the .spk read into memory for upload. Real packages
+// are well under this; the bound turns a wrong path (e.g. a disk image) into a
+// clear error instead of exhausting memory.
+const maxLocalPackageSize = 1 << 30 // 1 GiB
+
+// PackageLocalInstallPlan is a hash-bound intent to install a package from a
+// local .spk file. Unlike the online install plan it is not resolved against the
+// online catalog; it is bound to the exact file content (size + SHA-256) so apply
+// installs precisely what was planned.
+type PackageLocalInstallPlan struct {
+	APIVersion      string   `json:"api_version" jsonschema:"Plan schema version"`
+	NAS             string   `json:"nas" jsonschema:"NAS profile selected during planning"`
+	SPKPath         string   `json:"spk_path" jsonschema:"Local .spk file path to upload and install"`
+	FileName        string   `json:"file_name" jsonschema:"Base name of the .spk file sent to DSM"`
+	FileSize        int64    `json:"file_size" jsonschema:"Size of the .spk file in bytes"`
+	FileSHA256      string   `json:"file_sha256" jsonschema:"SHA-256 of the .spk file content the plan is bound to"`
+	VolumePath      string   `json:"volume_path" jsonschema:"Target install volume path"`
+	RunAfterInstall bool     `json:"run_after_install" jsonschema:"Whether the package starts after install"`
+	AllowUnsigned   bool     `json:"allow_unsigned" jsonschema:"Whether DSM code-signature enforcement is disabled for this install"`
+	Risk            string   `json:"risk" jsonschema:"Plan risk level"`
+	Warnings        []string `json:"warnings" jsonschema:"Install warnings"`
+	Summary         []string `json:"summary" jsonschema:"Human-readable operations"`
+	Hash            string   `json:"hash" jsonschema:"SHA-256 approval hash covering the resolved install intent"`
+}
+
+// PackageLocalInstallApplyResult reports the outcome of a completed local install.
+type PackageLocalInstallApplyResult struct {
+	NAS      string                        `json:"nas" jsonschema:"NAS profile used for apply"`
+	PlanHash string                        `json:"plan_hash" jsonschema:"Approved plan hash"`
+	Result   synology.PackageInstallResult `json:"result" jsonschema:"Install outcome confirmed by inventory"`
+}
+
+// PlanPackageLocalInstall reads and hashes a local .spk and emits a hash-bound
+// install plan. The file is bound by content, so apply refuses a changed file.
+func (s *Service) PlanPackageLocalInstall(ctx context.Context, requestedNAS, spkPath, volumePath string, runAfterInstall, allowUnsigned bool) (PackageLocalInstallPlan, error) {
+	if strings.TrimSpace(spkPath) == "" {
+		return PackageLocalInstallPlan{}, fmt.Errorf("local install requires a .spk file path")
+	}
+	if strings.TrimSpace(volumePath) == "" {
+		return PackageLocalInstallPlan{}, fmt.Errorf("local install requires a target volume path")
+	}
+	data, err := readLocalPackage(spkPath)
+	if err != nil {
+		return PackageLocalInstallPlan{}, err
+	}
+	// Resolve the NAS profile (and validate connectivity) so the plan names the
+	// exact profile apply must match.
+	name, _, err := s.packageClient(ctx, requestedNAS)
+	if err != nil {
+		return PackageLocalInstallPlan{}, err
+	}
+	return newLocalInstallPlan(name, spkPath, data, volumePath, runAfterInstall, allowUnsigned)
+}
+
+// newLocalInstallPlan builds a hash-bound plan from the resolved NAS name and the
+// .spk bytes. It is the pure core of PlanPackageLocalInstall.
+func newLocalInstallPlan(nas, spkPath string, data []byte, volumePath string, runAfterInstall, allowUnsigned bool) (PackageLocalInstallPlan, error) {
+	sum := sha256.Sum256(data)
+	plan := PackageLocalInstallPlan{
+		APIVersion:      packageLocalInstallAPIVersion,
+		NAS:             nas,
+		SPKPath:         spkPath,
+		FileName:        filepath.Base(spkPath),
+		FileSize:        int64(len(data)),
+		FileSHA256:      hex.EncodeToString(sum[:]),
+		VolumePath:      volumePath,
+		RunAfterInstall: runAfterInstall,
+		AllowUnsigned:   allowUnsigned,
+		Risk:            "high",
+		Warnings:        []string{"installing uploads and runs third-party software on the NAS from a local file"},
+	}
+	if allowUnsigned {
+		plan.Warnings = append(plan.Warnings, "code-signature verification is disabled (--allow-unsigned): the package publisher is not verified")
+	}
+	plan.Summary = []string{fmt.Sprintf("upload %s (%d bytes) and install to %s", plan.FileName, plan.FileSize, volumePath)}
+	var err error
+	plan.Hash, err = packageLocalInstallPlanHash(plan)
+	if err != nil {
+		return PackageLocalInstallPlan{}, err
+	}
+	return plan, nil
+}
+
+// ApplyPackageLocalInstallPlan verifies the approval hash and that the .spk on
+// disk still matches the plan, then uploads and installs it.
+func (s *Service) ApplyPackageLocalInstallPlan(ctx context.Context, plan PackageLocalInstallPlan, approvalHash string) (PackageLocalInstallApplyResult, error) {
+	data, err := validateLocalInstallApply(plan, approvalHash)
+	if err != nil {
+		return PackageLocalInstallApplyResult{}, err
+	}
+	name, client, err := s.packageClient(ctx, plan.NAS)
+	if err != nil {
+		return PackageLocalInstallApplyResult{}, err
+	}
+	if name != plan.NAS {
+		return PackageLocalInstallApplyResult{}, fmt.Errorf("local install plan NAS %q resolved to different profile %q", plan.NAS, name)
+	}
+	return applyLocalInstallWithClient(ctx, client, plan, data)
+}
+
+// validateLocalInstallApply checks the approval hash, plan metadata, and that the
+// .spk on disk still matches the planned content, returning the verified bytes.
+func validateLocalInstallApply(plan PackageLocalInstallPlan, approvalHash string) ([]byte, error) {
+	if strings.TrimSpace(approvalHash) == "" || approvalHash != plan.Hash {
+		return nil, fmt.Errorf("approval hash does not match the local install plan")
+	}
+	if plan.APIVersion != packageLocalInstallAPIVersion || strings.TrimSpace(plan.NAS) == "" || strings.TrimSpace(plan.SPKPath) == "" {
+		return nil, fmt.Errorf("invalid local install plan metadata")
+	}
+	expectedHash, err := packageLocalInstallPlanHash(plan)
+	if err != nil {
+		return nil, err
+	}
+	if expectedHash != plan.Hash {
+		return nil, fmt.Errorf("local install plan contents were modified after planning")
+	}
+	data, err := readLocalPackage(plan.SPKPath)
+	if err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256(data)
+	if int64(len(data)) != plan.FileSize || hex.EncodeToString(sum[:]) != plan.FileSHA256 {
+		return nil, fmt.Errorf("the .spk file changed since planning; create a new plan")
+	}
+	return data, nil
+}
+
+// applyLocalInstallWithClient uploads and installs the verified .spk bytes. It is
+// the client-facing core of ApplyPackageLocalInstallPlan.
+func applyLocalInstallWithClient(ctx context.Context, client packageClient, plan PackageLocalInstallPlan, data []byte) (PackageLocalInstallApplyResult, error) {
+	result, err := client.PackageInstallLocal(ctx, synology.PackageLocalInstallInput{
+		FileName:        plan.FileName,
+		Data:            data,
+		VolumePath:      plan.VolumePath,
+		RunAfterInstall: plan.RunAfterInstall,
+		AllowUnsigned:   plan.AllowUnsigned,
+	})
+	if err != nil {
+		return PackageLocalInstallApplyResult{NAS: plan.NAS, PlanHash: plan.Hash}, authenticationError(plan.NAS, err)
+	}
+	return PackageLocalInstallApplyResult{NAS: plan.NAS, PlanHash: plan.Hash, Result: result}, nil
+}
+
+func packageLocalInstallPlanHash(plan PackageLocalInstallPlan) (string, error) {
+	plan.Hash = ""
+	return hashJSON(plan)
+}
+
+// readLocalPackage reads a .spk into memory, rejecting an empty or oversized file
+// so a wrong path fails clearly rather than being uploaded or exhausting memory.
+func readLocalPackage(path string) ([]byte, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("read .spk file: %w", err)
+	}
+	if info.IsDir() {
+		return nil, fmt.Errorf("%s is a directory, not a .spk file", path)
+	}
+	if info.Size() == 0 {
+		return nil, fmt.Errorf("%s is empty", path)
+	}
+	if info.Size() > maxLocalPackageSize {
+		return nil, fmt.Errorf("%s is %d bytes, larger than the %d-byte local install limit", path, info.Size(), maxLocalPackageSize)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read .spk file: %w", err)
+	}
+	return data, nil
 }
 
 func (s *Service) GetPackageState(ctx context.Context, requestedNAS string) (PackageStateResult, error) {

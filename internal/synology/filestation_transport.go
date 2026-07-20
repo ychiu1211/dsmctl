@@ -153,17 +153,8 @@ func (c *Client) UploadFile(ctx context.Context, dir, name string, src io.Reader
 }
 
 func doUpload(ctx context.Context, prep transferPrep, sid, synoToken, dir, name string, src io.Reader, size int64, opts UploadOptions) (UploadResult, error) {
-	boundary, err := randomBoundary()
-	if err != nil {
-		return UploadResult{}, err
-	}
-	var head bytes.Buffer
-	writer := multipart.NewWriter(&head)
-	if err := writer.SetBoundary(boundary); err != nil {
-		return UploadResult{}, err
-	}
 	// DSM requires every parameter field before the file content part.
-	fields := [][2]string{
+	fields := []multipartField{
 		{"api", filestationops.UploadAPIName},
 		{"version", strconv.Itoa(prep.version)},
 		{"method", "upload"},
@@ -173,18 +164,51 @@ func doUpload(ctx context.Context, prep transferPrep, sid, synoToken, dir, name 
 		{"_sid", sid},
 	}
 	if synoToken != "" {
-		fields = append(fields, [2]string{"SynoToken", synoToken})
+		fields = append(fields, multipartField{"SynoToken", synoToken})
+	}
+	data, err := doMultipartUpload(ctx, prep, sid, synoToken, filestationops.UploadAPIName, "upload", fields, "file", name, src, size)
+	if err != nil {
+		return UploadResult{}, err
+	}
+	return decodeUploadResult(data), nil
+}
+
+// multipartField is one ordered text field in a multipart upload body. DSM
+// requires every parameter field to precede the file part, so the order in the
+// slice is significant.
+type multipartField struct {
+	name, value string
+}
+
+// doMultipartUpload streams one multipart/form-data POST that carries the
+// ordered text fields followed by a single file part (fileField/fileName from
+// src, exactly size bytes) and decodes the standard DSM envelope, returning its
+// raw data payload. It is the shared streaming transport behind every webapi
+// upload — a FileStation file upload and a local package upload — so binary
+// payloads stream between the part header and the closing boundary without being
+// buffered, and each caller supplies its own API-specific fields and decodes the
+// returned data itself. It streams src, so a retry (after a session refresh)
+// must pass a fresh reader.
+func doMultipartUpload(ctx context.Context, prep transferPrep, sid, synoToken, apiName, method string, fields []multipartField, fileField, fileName string, src io.Reader, size int64) (json.RawMessage, error) {
+	boundary, err := randomBoundary()
+	if err != nil {
+		return nil, err
+	}
+	var head bytes.Buffer
+	writer := multipart.NewWriter(&head)
+	if err := writer.SetBoundary(boundary); err != nil {
+		return nil, err
 	}
 	for _, field := range fields {
-		if err := writer.WriteField(field[0], field[1]); err != nil {
-			return UploadResult{}, err
+		if err := writer.WriteField(field.name, field.value); err != nil {
+			return nil, err
 		}
 	}
 	partHeader := textproto.MIMEHeader{}
-	partHeader.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename=%q`, name))
+	partHeader.Set("Content-Disposition", fmt.Sprintf(`form-data; name=%q; filename=%q`, fileField, fileName))
 	partHeader.Set("Content-Type", "application/octet-stream")
 	if _, err := writer.CreatePart(partHeader); err != nil {
-		return UploadResult{}, err
+		return nil, err
 	}
 	// Close the multipart body by hand so the file bytes stream between the part
 	// header and the closing boundary without buffering the file in memory.
@@ -196,7 +220,7 @@ func doUpload(ctx context.Context, prep transferPrep, sid, synoToken, dir, name 
 	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/webapi/" + strings.TrimLeft(prep.apiPath, "/")
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), body)
 	if err != nil {
-		return UploadResult{}, err
+		return nil, err
 	}
 	request.Header.Set("Content-Type", writer.FormDataContentType())
 	request.Header.Set("Accept", "application/json")
@@ -210,25 +234,25 @@ func doUpload(ctx context.Context, prep transferPrep, sid, synoToken, dir, name 
 	}
 	response, err := prep.client.Do(request)
 	if err != nil {
-		return UploadResult{}, fmt.Errorf("request %s: %w", redactTransferURL(endpoint), err)
+		return nil, fmt.Errorf("request %s: %w", redactTransferURL(endpoint), err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
-		return UploadResult{}, fmt.Errorf("request %s returned HTTP %s", redactTransferURL(endpoint), response.Status)
+		return nil, fmt.Errorf("request %s returned HTTP %s", redactTransferURL(endpoint), response.Status)
 	}
 	var envelopeResult envelope
 	if err := json.NewDecoder(io.LimitReader(response.Body, maxBodySize)).Decode(&envelopeResult); err != nil {
-		return UploadResult{}, fmt.Errorf("decode upload response: %w", err)
+		return nil, fmt.Errorf("decode %s upload response: %w", apiName, err)
 	}
 	if !envelopeResult.Success {
 		code := 0
 		if envelopeResult.Error != nil {
 			code = envelopeResult.Error.Code
 		}
-		return UploadResult{}, &APIError{API: filestationops.UploadAPIName, Method: "upload", Code: code}
+		return nil, &APIError{API: apiName, Method: method, Code: code}
 	}
-	return decodeUploadResult(envelopeResult.Data), nil
+	return envelopeResult.Data, nil
 }
 
 func decodeUploadResult(data json.RawMessage) UploadResult {

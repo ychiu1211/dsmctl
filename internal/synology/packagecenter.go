@@ -1,8 +1,11 @@
 package synology
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/ychiu1211/dsmctl/internal/domain/packagecenter"
@@ -196,12 +199,159 @@ func (c *Client) PackageInstall(ctx context.Context, input PackageInstallInput) 
 		return PackageInstallResult{}, fmt.Errorf("start install of %s: %w", input.Name, err)
 	}
 	result := PackageInstallResult{PackageID: input.Name, TaskID: task.TaskID}
+	return c.awaitPackageInstalledLocked(ctx, input.Name, input.ExpectVersion, result)
+}
 
-	// The download and install run asynchronously and the task id can change
-	// between phases, so success is confirmed by the inventory. The status poll
-	// is best-effort: it surfaces an explicit task error fast, but a status call
-	// that errors (e.g. the task was cleared) is not itself fatal. 150 MB
-	// packages can take a few minutes; cap the wait and report a timeout.
+// PackageLocalInstallInput carries a local .spk's bytes plus manual-install
+// options. The caller reads and validates the file; this method uploads it.
+type PackageLocalInstallInput struct {
+	FileName        string
+	Data            []byte
+	VolumePath      string
+	RunAfterInstall bool
+	// AllowUnsigned disables DSM's code-signature enforcement, permitting a
+	// package that is not signed by Synology (or a trusted publisher) to install.
+	AllowUnsigned bool
+}
+
+// PackageInstallLocal uploads a local package file and installs (or upgrades, if
+// the uploaded package is already installed) it, then polls until DSM reports the
+// task finished and confirms via the inventory. The upload's parsed INFO supplies
+// the package id used to confirm the install.
+func (c *Client) PackageInstallLocal(ctx context.Context, input PackageLocalInstallInput) (PackageInstallResult, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if len(input.Data) == 0 {
+		return PackageInstallResult{}, fmt.Errorf("local install requires package file bytes")
+	}
+	if err := c.prepareCompatibilityTargetLocked(ctx, pkgops.InstallationAPIName, pkgops.InventoryAPIName); err != nil {
+		return PackageInstallResult{}, fmt.Errorf("prepare Package Center local install target: %w", err)
+	}
+	executor := lockedExecutor{client: c}
+
+	// 1) Upload the .spk. DSM extracts it to a temp location, parses its INFO,
+	// and returns a temp reference (task_id/filename) plus the package identity.
+	// The upload reuses the streaming multipart transport that backs the
+	// FileStation upload rather than a bespoke one.
+	uploadData, err := c.uploadPackageLocked(ctx, pkgops.UploadMethod, input.FileName, input.Data)
+	if err != nil {
+		return PackageInstallResult{}, fmt.Errorf("upload local package %s: %w", input.FileName, err)
+	}
+	upload, err := pkgops.DecodeUploadResult(uploadData)
+	if err != nil {
+		return PackageInstallResult{}, err
+	}
+	if upload.PackageID == "" {
+		_ = pkgops.ExecuteUploadCleanup(ctx, c.target, executor, upload.TaskID, upload.FileName)
+		return PackageInstallResult{}, fmt.Errorf("upload of %s did not report a package id; the file may not be a valid .spk", input.FileName)
+	}
+
+	// Determine whether this is an upgrade so DSM's install vs upgrade method is
+	// chosen correctly. When it is an upgrade the confirmation must require the
+	// uploaded package's version, since the old version is already present in the
+	// inventory and would otherwise confirm instantly.
+	upgrade := false
+	expectVersion := ""
+	if state, _, invErr := pkgops.ExecuteInventory(ctx, c.target, executor); invErr == nil {
+		for _, pkg := range state.Packages {
+			if pkg.ID == upload.PackageID {
+				upgrade = true
+				expectVersion = upload.Version
+				break
+			}
+		}
+	}
+
+	// 2) Install from the uploaded file.
+	task, _, err := pkgops.ExecuteLocalInstall(ctx, c.target, executor, pkgops.LocalInstallInput{
+		VolumePath: input.VolumePath, TaskID: upload.TaskID, Path: upload.FileName,
+		CheckCodesign: !input.AllowUnsigned, RunAfterInstall: input.RunAfterInstall, Upgrade: upgrade,
+	})
+	if err != nil {
+		// Best-effort cleanup of the uploaded temp package so a failed install
+		// does not leak the upload.
+		_ = pkgops.ExecuteUploadCleanup(ctx, c.target, executor, upload.TaskID, upload.FileName)
+		return PackageInstallResult{}, fmt.Errorf("install local package %s: %w", upload.PackageID, err)
+	}
+
+	// 3) Poll status + confirm via inventory (same machinery as the online
+	// install), keying on the id parsed from the uploaded package's INFO.
+	result := PackageInstallResult{PackageID: upload.PackageID, TaskID: task.TaskID}
+	return c.awaitPackageInstalledLocked(ctx, upload.PackageID, expectVersion, result)
+}
+
+// uploadPackageLocked POSTs a local .spk to SYNO.Core.Package.Installation's
+// upload method and returns the raw envelope data for the caller to decode. It
+// runs under the client mutex (like the other package methods) and reuses the
+// shared streaming multipart transport that backs the FileStation upload rather
+// than a bespoke helper. The package bytes are held in memory (the caller has
+// already read and hashed the file), so a single retry after a session refresh
+// replays them from a fresh reader.
+func (c *Client) uploadPackageLocked(ctx context.Context, method, fileName string, data []byte) (json.RawMessage, error) {
+	if err := c.ensureAPIsLocked(ctx, pkgops.InstallationAPIName); err != nil {
+		return nil, err
+	}
+	if err := c.loginLocked(ctx); err != nil {
+		return nil, err
+	}
+	info, ok := c.target.API(pkgops.InstallationAPIName)
+	if !ok {
+		return nil, fmt.Errorf("Synology API %s is not available on this NAS", pkgops.InstallationAPIName)
+	}
+	const version = 1
+	if !info.Supports(version) {
+		return nil, fmt.Errorf("Synology API %s does not support requested version %d (available %d-%d)", pkgops.InstallationAPIName, version, info.MinVersion, info.MaxVersion)
+	}
+	// A local upload can be large; streamingClient drops the fixed per-request
+	// timeout so the transfer is bounded only by the caller's context.
+	prep := transferPrep{endpoint: *c.baseURL, apiPath: info.Path, version: version, client: c.streamingClient()}
+
+	fields := func(sid, synoToken string) []multipartField {
+		f := []multipartField{
+			{"api", pkgops.InstallationAPIName},
+			{"version", strconv.Itoa(version)},
+			{"method", method},
+			// additional makes the upload parse and return the .spk INFO keys, so
+			// the response carries the package identity (id/name/version).
+			{pkgops.UploadAdditionalField, pkgops.UploadAdditionalValue},
+			{"_sid", sid},
+		}
+		if synoToken != "" {
+			f = append(f, multipartField{"SynoToken", synoToken})
+		}
+		return f
+	}
+
+	raw, err := doMultipartUpload(ctx, prep, c.sid, c.synoToken, pkgops.InstallationAPIName, method, fields(c.sid, c.synoToken), pkgops.UploadFileField, fileName, bytes.NewReader(data), int64(len(data)))
+	if isSessionError(err) {
+		c.sid = ""
+		c.synoToken = ""
+		if reErr := c.reestablishLocked(ctx); reErr != nil {
+			if IsSessionExpired(reErr) {
+				return nil, reErr
+			}
+			return nil, &SessionExpiredError{Cause: reErr}
+		}
+		return doMultipartUpload(ctx, prep, c.sid, c.synoToken, pkgops.InstallationAPIName, method, fields(c.sid, c.synoToken), pkgops.UploadFileField, fileName, bytes.NewReader(data), int64(len(data)))
+	}
+	return raw, err
+}
+
+// awaitPackageInstalledLocked polls an in-flight install task and confirms
+// completion via the inventory. The download/install phases run asynchronously
+// and the task id can change between them, so success is confirmed by the
+// inventory rather than a single task's finished flag. The status poll is
+// best-effort: it surfaces an explicit task error fast, but a status call that
+// errors (for example the task was cleared) is not itself fatal. Large packages
+// can take a few minutes; the wait is capped and a timeout is reported.
+//
+// expectVersion, when set, makes the inventory confirmation require that exact
+// installed version. An update or a local upgrade targets a package that is
+// already in the inventory, so plain presence would confirm instantly against
+// the old version; a fresh install passes "" and confirms on presence.
+func (c *Client) awaitPackageInstalledLocked(ctx context.Context, packageID, expectVersion string, result PackageInstallResult) (PackageInstallResult, error) {
+	executor := lockedExecutor{client: c}
 	deadline := time.Now().Add(30 * time.Minute)
 	for {
 		select {
@@ -209,17 +359,17 @@ func (c *Client) PackageInstall(ctx context.Context, input PackageInstallInput) 
 			return result, ctx.Err()
 		default:
 		}
-		if progress, statusErr := pkgops.ExecuteInstallStatus(ctx, c.target, lockedExecutor{client: c}, task.TaskID); statusErr == nil {
-			if _, taskErr := installTaskDone(progress, input.Name); taskErr != "" {
-				return result, fmt.Errorf("install of %s failed: %s", input.Name, taskErr)
+		if progress, statusErr := pkgops.ExecuteInstallStatus(ctx, c.target, executor, result.TaskID); statusErr == nil {
+			if _, taskErr := installTaskDone(progress, packageID); taskErr != "" {
+				return result, fmt.Errorf("install of %s failed: %s", packageID, taskErr)
 			}
 		}
-		state, _, invErr := pkgops.ExecuteInventory(ctx, c.target, lockedExecutor{client: c})
+		state, _, invErr := pkgops.ExecuteInventory(ctx, c.target, executor)
 		if invErr != nil {
-			return result, fmt.Errorf("verify install of %s: %w", input.Name, invErr)
+			return result, fmt.Errorf("verify install of %s: %w", packageID, invErr)
 		}
 		for _, pkg := range state.Packages {
-			if pkg.ID == input.Name && (input.ExpectVersion == "" || pkg.Version == input.ExpectVersion) {
+			if pkg.ID == packageID && (expectVersion == "" || pkg.Version == expectVersion) {
 				result.Installed = true
 				result.Version = pkg.Version
 				break
@@ -229,10 +379,10 @@ func (c *Client) PackageInstall(ctx context.Context, input PackageInstallInput) 
 			return result, nil
 		}
 		if time.Now().After(deadline) {
-			if input.ExpectVersion != "" {
-				return result, fmt.Errorf("install of %s did not reach version %s in the inventory within the timeout", input.Name, input.ExpectVersion)
+			if expectVersion != "" {
+				return result, fmt.Errorf("install of %s did not reach version %s in the inventory within the timeout", packageID, expectVersion)
 			}
-			return result, fmt.Errorf("install of %s did not appear in the inventory within the timeout", input.Name)
+			return result, fmt.Errorf("install of %s did not appear in the inventory within the timeout", packageID)
 		}
 		if err := sleepContext(ctx, 5*time.Second); err != nil {
 			return result, err

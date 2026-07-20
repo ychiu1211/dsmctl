@@ -8,10 +8,16 @@ depends_on: [WI-019, WI-029]
 parallel_group: C
 touches:
   - internal/synology/operations/packagecenter/localinstall.go
+  - internal/synology/operations/packagecenter/localinstall_test.go
   - internal/synology/packagecenter.go
-  - internal/synology/client.go
+  - internal/synology/filestation_transport.go
+  - internal/synology/package_upload_test.go
   - internal/application/package_center.go
+  - internal/application/package_center_test.go
   - internal/cli/package.go
+  - internal/mcpserver/server.go
+  - internal/mcpserver/read_only.go
+  - internal/mcpserver/server_test.go
   - docs/package-center.md
 ---
 
@@ -31,15 +37,13 @@ online catalog — complementing the online install/update path shipped in
   `task_id`/`path` (not a catalog `url`), then reuse the existing online
   install/status polling machinery. See [[dsm-manual-spk-install-api]].
 - New operation `internal/synology/operations/packagecenter/localinstall.go`
-  (+ `localinstall_test.go`), client + application + CLI wiring, and a
+  (+ `localinstall_test.go`), client + application + CLI + MCP wiring, and a
   `docs/package-center.md` update.
-
-> This is a **tracking stub**. The implementation is being authored as
-> **uncommitted WIP** on branch `claude/spk-install-cli-ed5ef5` (checked out in
-> the `weblogin-protocol-exploration-cfd633` worktree): untracked
-> `localinstall.go` + `_test.go` plus edits to `package_center.go`,
-> `package.go`, `client.go`, `packagecenter.go`, and the docs. Fold this stub
-> into the fuller spec when it is committed.
+- The upload reuses the existing streaming multipart transport that backs the
+  FileStation upload (WI-049), extracted as a shared `doMultipartUpload` in
+  `internal/synology/filestation_transport.go`, rather than adding a second
+  multipart helper to `client.go`. The client.go multipart helper the early WIP
+  drafted was dropped in favor of this reuse.
 
 ## Non-goals
 
@@ -54,15 +58,34 @@ online catalog — complementing the online install/update path shipped in
 
 ## Acceptance criteria
 
-- [ ] Local `.spk` install via `upload` → `install` with `task_id`/`path`,
-      reusing the WI-029 status machinery; CLI + MCP; live-verified on the lab.
-- [ ] `plan_/apply_package_*` (local-install variant) excluded appropriately from
-      the read-only gateway.
+- [x] Local `.spk` install via `upload` → `install` keyed by the returned
+      `task_id` (falling back to `path`), reusing the WI-029 install-status +
+      inventory-confirmation machinery (`awaitPackageInstalledLocked`, now shared
+      by the online and local paths). An already-installed package is upgraded and
+      confirmed against the uploaded package's version.
+- [x] Hash-bound plan/apply bound to the exact `.spk` content (byte size +
+      SHA-256); apply refuses a file that changed after planning. CLI
+      (`package install --spk`) and MCP (`plan_package_local_install` /
+      `apply_package_local_install_plan`).
+- [x] The local-install `plan_`/`apply_` MCP tools are stripped from the
+      read-only gateway alongside the other package plan/apply tools (guarded by
+      `TestNewReadOnlyOmitsPlanAndApplyTools`).
+- [ ] Live-verified on the DSM lab (install of a throwaway `.spk` with a revert).
+      **Deferred**: a live install runs package code on the NAS and requires
+      explicit user authorization, so it is not performed here — see Handoff.
 
 ## Verification
 
-- `go test ./... -count=1`, `go vet ./...`; live install of a throwaway `.spk`
-  on the DSM lab with a revert.
+- `go build ./...`, `go vet ./...`, `go test ./... -count=1` all green.
+- Request-capture / fake-transport unit tests cover the upload multipart field
+  order and file part (`TestPackageUploadMultipartContract`), the
+  `task_id`-vs-`path` install request contract and install/upgrade method
+  selection (`TestLocalInstallRequestContract`), the upload-cleanup contract
+  (`TestUploadCleanupContract`), the upload response decode
+  (`TestDecodeUploadResult`), and the hash-bound plan/apply file binding
+  (`TestPackageLocalInstallPlanApplyBindsFileContent`).
+- Still pending: live install of a throwaway `.spk` on the DSM lab with a revert
+  (requires explicit authorization).
 
 ## Coordination
 
@@ -72,6 +95,19 @@ online catalog — complementing the online install/update path shipped in
 
 ## Handoff
 
-Genuinely in progress as uncommitted WIP on `claude/spk-install-cli-ed5ef5` as of
-2026-07-20; had no WI number and no roadmap row before this item. Assign an owner,
-finish, and commit under WI-082.
+Implemented and committed on `claude/spk-install-cli-ed5ef5`, rebased onto the
+current `origin/main`. The early WIP (based on the WI-039 era) was brought up to
+date: conflicts in `client.go`, `packagecenter.go`, `package_center.go`,
+`package_center_test.go`, and the docs were resolved by keeping main's
+infrastructure (WI-060's `HTTPError`/retry loop; the online install + guarded
+update) and re-applying the local-install additions on top. The WIP's duplicate
+in-memory multipart helper in `client.go` was dropped; the upload now reuses the
+WI-049 streaming transport (`doMultipartUpload`). `awaitPackageInstalledLocked`
+was generalized with an `expectVersion` parameter so the online and local paths
+share one poll-and-confirm loop.
+
+**Remaining before this can be marked done:** a live install of a throwaway
+`.spk` on the DSM lab, with a revert. That runs package code on the NAS and is a
+guarded mutation, so it needs explicit user authorization and was intentionally
+not performed. Everything else (build/vet/test, unit + request-capture coverage,
+read-only gateway stripping) is complete.

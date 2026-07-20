@@ -2,6 +2,8 @@ package application
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -10,11 +12,12 @@ import (
 )
 
 type fakePackageClient struct {
-	settings  synology.PackageSettings
-	packages  []packagecenter.Package
-	catalog   synology.PackageCatalog
-	caps      synology.PackageCapabilities
-	mutations int
+	settings      synology.PackageSettings
+	packages      []packagecenter.Package
+	catalog       synology.PackageCatalog
+	caps          synology.PackageCapabilities
+	mutations     int
+	localInstalls int
 }
 
 func (client *fakePackageClient) PackageState(context.Context) (synology.PackageState, error) {
@@ -31,6 +34,11 @@ func (client *fakePackageClient) PackageCatalog(context.Context) (synology.Packa
 
 func (client *fakePackageClient) PackageInstall(_ context.Context, input synology.PackageInstallInput) (synology.PackageInstallResult, error) {
 	return synology.PackageInstallResult{PackageID: input.Name, Installed: true}, nil
+}
+
+func (client *fakePackageClient) PackageInstallLocal(_ context.Context, input synology.PackageLocalInstallInput) (synology.PackageInstallResult, error) {
+	client.localInstalls++
+	return synology.PackageInstallResult{PackageID: "LocalPkg", TaskID: "@SYNOPKG_UPLOAD_test", Installed: true, Version: "1.0.0-1"}, nil
 }
 
 func (client *fakePackageClient) PackageCapabilities(context.Context) (synology.PackageCapabilities, synology.CompatibilityReport, error) {
@@ -364,5 +372,59 @@ func TestPackagePlanHashRejectsTampering(t *testing.T) {
 	plan.Risk = "low"
 	if err := validatePackagePlan(plan, plan.Hash); err == nil || !strings.Contains(err.Error(), "modified") {
 		t.Fatalf("tampered plan error = %v", err)
+	}
+}
+
+func TestPackageLocalInstallPlanApplyBindsFileContent(t *testing.T) {
+	dir := t.TempDir()
+	spk := filepath.Join(dir, "example.spk")
+	if err := os.WriteFile(spk, []byte("fake spk bytes"), 0o600); err != nil {
+		t.Fatalf("write .spk: %v", err)
+	}
+
+	data, err := readLocalPackage(spk)
+	if err != nil {
+		t.Fatalf("readLocalPackage() error = %v", err)
+	}
+	plan, err := newLocalInstallPlan("lab", spk, data, "/volume1", true, false)
+	if err != nil {
+		t.Fatalf("newLocalInstallPlan() error = %v", err)
+	}
+	if plan.Hash == "" || plan.FileSHA256 == "" || plan.FileSize != int64(len(data)) ||
+		plan.FileName != "example.spk" || plan.Risk != "high" {
+		t.Fatalf("plan = %#v", plan)
+	}
+
+	// A wrong approval hash is rejected before touching the client.
+	client := &fakePackageClient{caps: testPackageCaps()}
+	if _, err := validateLocalInstallApply(plan, "deadbeef"); err == nil {
+		t.Fatal("validateLocalInstallApply() accepted a wrong hash")
+	}
+
+	// The file changing after planning invalidates the plan.
+	if err := os.WriteFile(spk, []byte("tampered spk bytes!"), 0o600); err != nil {
+		t.Fatalf("rewrite .spk: %v", err)
+	}
+	if _, err := validateLocalInstallApply(plan, plan.Hash); err == nil || !strings.Contains(err.Error(), "changed since planning") {
+		t.Fatalf("changed-file apply error = %v", err)
+	}
+	if client.localInstalls != 0 {
+		t.Fatal("a rejected plan reached the client")
+	}
+
+	// Restore the exact planned content and apply succeeds through the client.
+	if err := os.WriteFile(spk, []byte("fake spk bytes"), 0o600); err != nil {
+		t.Fatalf("restore .spk: %v", err)
+	}
+	verified, err := validateLocalInstallApply(plan, plan.Hash)
+	if err != nil {
+		t.Fatalf("validateLocalInstallApply() error = %v", err)
+	}
+	result, err := applyLocalInstallWithClient(context.Background(), client, plan, verified)
+	if err != nil {
+		t.Fatalf("applyLocalInstallWithClient() error = %v", err)
+	}
+	if !result.Result.Installed || client.localInstalls != 1 || result.PlanHash != plan.Hash {
+		t.Fatalf("apply result = %#v (installs=%d)", result, client.localInstalls)
 	}
 }

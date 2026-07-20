@@ -30,18 +30,46 @@ func newPackageCommand(opts *options) *cobra.Command {
 }
 
 func newPackageInstallCommand(opts *options) *cobra.Command {
-	var volume, approvalHash string
-	var start, quick bool
+	var volume, approvalHash, spk string
+	var start, quick, allowUnsigned bool
 	command := &cobra.Command{
-		Use:   "install <package-id>",
-		Short: "Install a package from the online server (plan by default; --approve to run)",
-		Args:  cobra.ExactArgs(1),
+		Use:   "install [package-id]",
+		Short: "Install a package — from the online server by id, or a local .spk with --spk (plan by default; --approve to run)",
+		Long: "Install a package (plan by default; pass --approve <hash> to run).\n\n" +
+			"Two modes:\n" +
+			"  online: dsmctl package install <package-id> --volume /volume1\n" +
+			"          resolves the package from Synology's online server and has DSM download it.\n" +
+			"  local:  dsmctl package install --spk ./foo.spk --volume /volume1\n" +
+			"          uploads a local .spk file and installs it (Package Center \"Manual Install\").",
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			service, err := loadService(opts)
 			if err != nil {
 				return err
 			}
 			defer closeService(service)
+
+			if spk != "" {
+				if len(args) != 0 {
+					return fmt.Errorf("provide either a package id (online install) or --spk (local install), not both")
+				}
+				plan, err := service.PlanPackageLocalInstall(cmd.Context(), opts.nas, spk, volume, start, allowUnsigned)
+				if err != nil {
+					return err
+				}
+				if approvalHash == "" {
+					return encodeIndentedJSON(cmd.OutOrStdout(), plan)
+				}
+				result, err := service.ApplyPackageLocalInstallPlan(cmd.Context(), plan, approvalHash)
+				if err != nil {
+					return err
+				}
+				return encodeIndentedJSON(cmd.OutOrStdout(), result)
+			}
+
+			if len(args) != 1 {
+				return fmt.Errorf("install requires a package id, or use --spk <file> for a local package")
+			}
 			plan, err := service.PlanPackageInstall(cmd.Context(), opts.nas, args[0], volume, start, quick)
 			if err != nil {
 				return err
@@ -57,9 +85,11 @@ func newPackageInstallCommand(opts *options) *cobra.Command {
 			return encodeIndentedJSON(cmd.OutOrStdout(), result)
 		},
 	}
+	command.Flags().StringVar(&spk, "spk", "", "path to a local .spk file to upload and install (Manual Install)")
 	command.Flags().StringVar(&volume, "volume", "", "target install volume path (e.g. /volume1)")
 	command.Flags().BoolVar(&start, "start", true, "start the package after install")
-	command.Flags().BoolVar(&quick, "quick", true, "quick install with defaults (no configuration wizard)")
+	command.Flags().BoolVar(&quick, "quick", true, "online install: quick install with defaults (no configuration wizard)")
+	command.Flags().BoolVar(&allowUnsigned, "allow-unsigned", false, "local install: disable code-signature enforcement to install a package not signed by Synology")
 	command.Flags().StringVar(&approvalHash, "approve", "", "exact SHA-256 hash printed by the install plan to execute the install")
 	_ = command.MarkFlagRequired("volume")
 	return command

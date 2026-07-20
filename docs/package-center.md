@@ -20,8 +20,10 @@ stable DSM id, display name, installed version, a normalized run status
 and whether DSM allows the package to be started, stopped, or uninstalled.
 
 `capabilities` reports which operations are available and the DSM backend
-selected for each, including the guarded online `install` and `update`
-(both backed by `SYNO.Core.Package.Installation`).
+selected for each, including the guarded `install` (online by package id and
+local from an uploaded `.spk` — see
+[Local (manual) install](#local-manual-install)) and `update`, all backed by
+`SYNO.Core.Package.Installation`.
 
 MCP exposes the same application results through `get_package_capabilities`,
 `get_package_state`, and `get_package_settings`.
@@ -167,6 +169,36 @@ running state). MCP: `plan_package_update` +
 Live-verified on DSM 7.3: PHP 8.2 updated 8.2.28-0107 → 8.2.30-0170 with the
 inventory confirming the new version, and the downgrade guard refusing the
 File Station 1.4.3-2210 → 1.4.3-1610 "update".
+
+## Local (manual) install
+
+Install a package from a local `.spk` file instead of the online repository —
+Package Center's "Manual Install". Like the online install it is **high risk**
+(it uploads and runs third-party code) and gated by the same hash-bound
+plan/apply:
+
+```console
+dsmctl package install --spk ./mypackage.spk --volume /volume1 --nas office
+dsmctl package install --spk ./mypackage.spk --volume /volume1 --nas office --approve <hash-from-plan>
+```
+
+Unlike the online plan, the local plan is **bound to the exact file content**
+(byte size + SHA-256) rather than a catalog entry, so apply refuses a `.spk`
+that changed since planning. Apply uploads the file
+(`SYNO.Core.Package.Installation` `upload`, multipart, reusing the same
+streaming transport as FileStation uploads), then installs from the uploaded
+temp file (`install`, referencing it by the returned task id — or its path as a
+fallback) and confirms completion against the installed-package inventory; a
+failed install cleans up the uploaded temp file. When DSM already has the same
+package installed, DSM performs an upgrade instead, and completion is confirmed
+against the uploaded package's version. Pass `--allow-unsigned` to install a
+package that is not signed by Synology (or a trusted publisher); without it DSM
+enforces its code-signature policy. `--volume` (target install volume) and
+`--start` (start after install, default on) are shared with the online install.
+
+MCP: `plan_package_local_install` and `apply_package_local_install_plan`; the
+read-only gateway strips both, and the remote gateway's high-risk approval flow
+applies.
 
 ## Deferred operations
 
