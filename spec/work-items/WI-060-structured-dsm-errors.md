@@ -28,6 +28,14 @@ with the same category string. Transient DSM failures on read-only calls are
 retried with bounded backoff; mutations are never silently retried. No rendered
 error ever contains a SID, SynoToken, password, or OTP.
 
+> Status (2026-07-20): the taxonomy + CLI exit-code half of this outcome is
+> **shipped**; the two clauses describing *machine-readable MCP structured error
+> content with the category string* and *transient read-only retry with backoff*
+> are the **deferred** follow-on target, not yet implemented
+> (`CategoryTransient`/`CategoryRateLimit` are defined but not yet produced by any
+> classifier, and no MCP error middleware injects the category). See the split
+> Acceptance criteria and the Handoff for the exact boundary.
+
 ## Scope
 
 - Define a closed, stable set of DSM error categories:

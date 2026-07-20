@@ -179,10 +179,17 @@ module.
 - [x] Slice A: `certificate capabilities|list` (CLI) and the `get_certificates`
       / `get_certificate_capabilities` MCP tools return normalized state — certs
       with subject/issuer/SAN/expiry/days-remaining/default flag and the bound
-      services — and a decoder test asserts no private-key field decodes into the
-      domain model. (Bindings are inline in `CRT.list`, so no separate `services`
+      services. The no-private-key property is currently **structural** — the
+      decoder is a public-field whitelist (`operations/certificate/decode.go`) and
+      the domain model has no key-bearing field (`domain/certificate/model.go`) —
+      not yet enforced by a dedicated key-injection test (see the unchecked item
+      below). (Bindings are inline in `CRT.list`, so no separate `services`
       read/`SYNO.Core.Certificate.Service` call is needed — that API's `list` is
       code 103 on the lab; the per-cert `services[]` array is authoritative.)
+- [ ] A decoder test injects a `key`/`private_key` field into a `CRT.list`
+      response fixture and asserts it is dropped, upgrading the no-key guarantee
+      from structural to test-enforced (currently only asserted by a comment in
+      `operation_test.go`).
 - [x] Slice A live verification on the DSM 7.3 lab: read the two installed
       certificates (self-signed default `synology` serving 6 services incl. the
       DSM desktop; renewable Let's Encrypt QuickConnect cert), confirmed the

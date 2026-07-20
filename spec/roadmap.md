@@ -40,6 +40,8 @@ flowchart LR
   WI045 --> WI047["WI-047 Guided Admin UI workflows"]
   WI046 --> WI047
   WI045 --> WI048["WI-048 MCP OAuth URL login"]
+  WI048 --> WI081["WI-081 Automatic TLS trust enrollment"]
+  WI019 --> WI082["WI-082 Local (offline) .spk install"]
   WI037 --> WI039["WI-039 Web-login page design tokens"]
   WI039 --> WI040["WI-040 dsmctl favicon"]
   WI006 --> WI041["WI-041 External Access module"]
@@ -172,10 +174,32 @@ flowchart LR
 | [WI-078](work-items/WI-078-directory.md) | P2 | `proposed` | C | WI-006 | Directory services: read domain/LDAP join status + synced users/groups; guarded AD/LDAP join/leave (bind password via credential_ref). High risk (changes NAS auth). |
 | [WI-079](work-items/WI-079-kmip.md) | P3 | `proposed` | C | WI-006 | KMIP key management: read client/server config+status; guarded config write (material via credential_ref). High risk (can make encrypted shares unmountable). Coordinates with WI-008. |
 | [WI-080](work-items/WI-080-universalsearch.md) | P3 | `proposed` | C | WI-019, WI-022 | Universal Search index management (package-gated): read indexed folders+status; guarded add/remove/reindex. |
+| [WI-081](work-items/WI-081-automatic-tls-trust-enrollment.md) | P2 | `in_progress` | G | WI-032, WI-048 | Automatic TLS trust enrollment: shared `internal/tlstrust` package + CLI `auth` and Gateway-admin enrollment, replacing manual fingerprint paste without weakening pin-on-first-use. **Uncommitted WIP in the local `main` worktree**; resolves the mis-filed-as-WI-051 number collision. |
+| [WI-082](work-items/WI-082-local-package-install.md) | P2 | `in_progress` | C | WI-019, WI-029 | Local (offline) `.spk` install via `Installation.upload` → `install` (task_id/path), reusing WI-029 status machinery; CLI + MCP. **Uncommitted WIP on `claude/spk-install-cli-ed5ef5`**; previously unregistered. |
 
 Parallel groups indicate likely file overlap. Items in different groups may run
 at the same time after checking their `touches` lists. Only one agent should
 work on an individual item.
+
+## In-flight reconciliation (2026-07-20)
+
+A ground-truth pass (spec claims vs. actual code + git) found two features being
+actively worked on as **uncommitted WIP** with no roadmap presence; both are now
+registered above:
+
+- **[WI-081](work-items/WI-081-automatic-tls-trust-enrollment.md)** (Automatic
+  TLS trust enrollment) — dirty in the local `main` worktree, mis-filed as
+  `WI-051` (already taken by the shipped Office module). Renumber the draft to
+  WI-081 and correct its `status` before committing.
+- **[WI-082](work-items/WI-082-local-package-install.md)** (Local `.spk`
+  install) — dirty on `claude/spk-install-cli-ed5ef5`, no prior number.
+
+The three long-standing `in_progress` items reflect *partial* completion, not
+stalled work: **WI-017** is code/asset-complete pending real Intel/AMD x86_64
+Synology hardware certification; **WI-060** shipped its taxonomy + CLI-exit-code
+core with the MCP `category` field and transient read-only retry deferred;
+**WI-065** shipped Slice A (read) with all of Slice B (guarded writes) still
+absent from the codebase.
 
 ## Milestone definition
 
