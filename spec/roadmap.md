@@ -65,6 +65,27 @@ flowchart LR
   WI044 -. "release policy" .-> WI063["WI-063 CLI/MCP schema stability"]
   WI017 -. "sign the artifacts it ships" .-> WI064["WI-064 Release artifact signing"]
   WI023["WI-023 LAN device discovery"]
+  subgraph SEC["Security & networking (greenfield program)"]
+    WI006 --> WI065["WI-065 Certificate management"]
+    WI006 --> WI066["WI-066 Firewall"]
+    WI006 --> WI067["WI-067 Account protection / auto-block"]
+    WI006 --> WI068["WI-068 Security Advisor"]
+    WI006 --> WI069["WI-069 Network interfaces / bonding / routing"]
+    WI006 --> WI070["WI-070 Login Portal / reverse proxy"]
+    WI006 --> WI071["WI-071 Terminal + SNMP"]
+  end
+  subgraph SYS["System administration (greenfield program)"]
+    WI006 --> WI072["WI-072 Notification settings"]
+    WI006 --> WI073["WI-073 Task Scheduler"]
+    WI006 --> WI074["WI-074 DSM update + config backup"]
+    WI006 --> WI075["WI-075 Hardware / Power / UPS"]
+    WI006 --> WI076["WI-076 External devices"]
+    WI006 --> WI077["WI-077 Disk SMART + health"]
+    WI006 --> WI078["WI-078 Directory services (LDAP/AD)"]
+    WI006 --> WI079["WI-079 KMIP key management"]
+    WI019 --> WI080["WI-080 Universal Search index"]
+  end
+  WI079 -. "encrypted-share keys" .-> WI008
 ```
 
 ## Work queue
@@ -135,6 +156,22 @@ flowchart LR
 | [WI-062](work-items/WI-062-ci-matrix-live-test-policy.md) | P1 | `ready` | E | — | CI test matrix (ubuntu + windows unit/request-capture gate), a guard that live-test env vars stay unset so destructive mutations can never run in CI, and an in-repo DSM compatibility evidence record. |
 | [WI-063](work-items/WI-063-cli-mcp-schema-stability-policy.md) | P1 | `proposed` | E | WI-044 | CLI/MCP schema-stability policy (M4): covered-surface set, stable/experimental tiers, deprecation window, changelog discipline, and golden drift guards; blocked on the compatibility-window and breaking-change-signal product decisions. |
 | [WI-064](work-items/WI-064-release-artifact-signing-verification.md) | P2 | `proposed` | E | WI-017 | Sign and verify WI-017's release artifacts: signed SHA256SUMS, DSSE provenance bound to digests, attested SBOM, and an offline-capable `verify-release.sh`; blocked on the signing root-of-trust product decision. |
+| [WI-065](work-items/WI-065-certificate.md) | P1 | `in_progress` | C | WI-006 | Certificate management: read slice shipped (installed certs + expiry + bound services via CRT.list; CLI + MCP; live-verified). Guarded import/set-default/bind/delete deferred (change live DSM TLS — need per-op authorization); Lets Encrypt issuance a non-goal. |
+| [WI-066](work-items/WI-066-firewall.md) | P1 | `proposed` | C | WI-006 | Firewall: read profiles/rules/adapter policy; guarded rule create/reorder/enable/delete + default policy, with a never-drop-the-current-session lockout guard. Very high risk. |
+| [WI-067](work-items/WI-067-accountprotection.md) | P2 | `proposed` | C | WI-006 | Account protection: read+guarded auto-block (attempts/window/expire) + allow/block lists, DoS protection, and enforced-2FA policy. |
+| [WI-068](work-items/WI-068-security-advisor.md) | P2 | `proposed` | C | WI-006 | Security Advisor: run a scan, read results/severity; guarded scan schedule + baseline (home vs business). |
+| [WI-069](work-items/WI-069-network.md) | P2 | `proposed` | C | WI-006 | Network interfaces/bonding/routing: read general+per-NIC+bond+static routes; guarded writes with a never-sever-the-management-NIC guard. Extreme risk. |
+| [WI-070](work-items/WI-070-loginportal.md) | P2 | `proposed` | C | WI-006 | Login Portal: read+guarded DSM port/HSTS/redirect, per-app portal alias/port, and reverse-proxy rule CRUD. High risk (can change how DSM is reached). |
+| [WI-071](work-items/WI-071-terminalsnmp.md) | P2 | `proposed` | C | WI-006 | Terminal + SNMP: read+guarded SSH/Telnet enable + SSH port, and SNMP v1/v2c/v3 (secrets via credential_ref) + trap target. Enabling SSH/Telnet is high risk. |
+| [WI-072](work-items/WI-072-notification.md) | P2 | `proposed` | C | WI-006 | Notification settings: read+guarded email/SMS/push/webhook targets (secrets via credential_ref) + per-event rules; send-a-test-message action. |
+| [WI-073](work-items/WI-073-taskscheduler.md) | P2 | `proposed` | C | WI-006 | Task Scheduler: read/list tasks; guarded create/edit/delete/run of scheduled+triggered scripts and service tasks. High risk (scheduled root code execution). |
+| [WI-074](work-items/WI-074-dsmupdate.md) | P2 | `proposed` | C | WI-006 | DSM update + config backup: read update status + auto-update policy (guarded); DSM install (reboot) and config restore deferred/guarded like the package-upgrade precedent. |
+| [WI-075](work-items/WI-075-hardware.md) | P3 | `proposed` | C | WI-006 | Hardware/Power/UPS: read+guarded beep/fan/LED, power schedule, power-recovery, and UPS mode/thresholds. Power schedule/recovery/UPS high risk. |
+| [WI-076](work-items/WI-076-externaldevice.md) | P3 | `proposed` | C | WI-006 | External devices: read USB/eSATA volumes + printers; guarded eject and printer settings. |
+| [WI-077](work-items/WI-077-disk-smart-health.md) | P2 | `proposed` | C | WI-006 | Disk SMART + health: read disk health + SMART attributes; guarded SMART-test run + schedule. Complements the storage inventory (which lacks per-disk SMART). |
+| [WI-078](work-items/WI-078-directory.md) | P2 | `proposed` | C | WI-006 | Directory services: read domain/LDAP join status + synced users/groups; guarded AD/LDAP join/leave (bind password via credential_ref). High risk (changes NAS auth). |
+| [WI-079](work-items/WI-079-kmip.md) | P3 | `proposed` | C | WI-006 | KMIP key management: read client/server config+status; guarded config write (material via credential_ref). High risk (can make encrypted shares unmountable). Coordinates with WI-008. |
+| [WI-080](work-items/WI-080-universalsearch.md) | P3 | `proposed` | C | WI-019, WI-022 | Universal Search index management (package-gated): read indexed folders+status; guarded add/remove/reindex. |
 
 Parallel groups indicate likely file overlap. Items in different groups may run
 at the same time after checking their `touches` lists. Only one agent should
