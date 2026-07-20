@@ -115,6 +115,38 @@ func TestFavoritesAndBackgroundTasksDecode(t *testing.T) {
 	}
 }
 
+func TestSharingEditAndClearInvalidAndClearFinished(t *testing.T) {
+	edit, _, err := ExecuteSharingEdit(context.Background(), mutTarget(), routeExecutor{t: t, routes: map[string]string{
+		"SYNO.FileStation.Sharing edit": `{}`,
+	}}, SharingEditInput{LinkID: "AbC123", ExpireDate: "2026-08-01"})
+	if err != nil || len(edit.Paths) != 1 || edit.Paths[0] != "AbC123" {
+		t.Fatalf("ExecuteSharingEdit = %#v, err = %v", edit, err)
+	}
+	if _, _, err := ExecuteSharingClearInvalid(context.Background(), mutTarget(), routeExecutor{t: t, routes: map[string]string{
+		"SYNO.FileStation.Sharing clear_invalid": `{}`,
+	}}); err != nil {
+		t.Fatalf("ExecuteSharingClearInvalid() error = %v", err)
+	}
+	if _, _, err := ExecuteBackgroundTaskClearFinished(context.Background(), mutTarget(), routeExecutor{t: t, routes: map[string]string{
+		"SYNO.FileStation.BackgroundTask clear_finished": `{}`,
+	}}); err != nil {
+		t.Fatalf("ExecuteBackgroundTaskClearFinished() error = %v", err)
+	}
+}
+
+func TestSelectThumbBackend(t *testing.T) {
+	target := fsTarget()
+	target.SetAPI(ThumbAPIName, compatibility.APIInfo{Path: "entry.cgi", MinVersion: 1, MaxVersion: 3})
+	sel, err := SelectThumb(target)
+	if err != nil || !sel.Supported || sel.API != ThumbAPIName || sel.Version != 2 {
+		t.Fatalf("SelectThumb = %#v, err = %v", sel, err)
+	}
+	// Fails closed when the Thumb API is absent.
+	if sel, err := SelectThumb(fsTarget()); err == nil || sel.Supported || !compatibility.IsUnsupported(err) {
+		t.Fatalf("SelectThumb without API = %#v, %v", sel, err)
+	}
+}
+
 func TestMutationDecodersRejectMalformed(t *testing.T) {
 	tests := []struct {
 		name string

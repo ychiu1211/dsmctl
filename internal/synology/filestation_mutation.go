@@ -122,6 +122,13 @@ func (c *Client) ApplyFileStationChange(ctx context.Context, request FileStation
 		}
 		c.target.AddCapability(filestationops.SharingCapabilityName)
 		return result, nil
+	case filestation.ActionClearFinishedTasks:
+		result, _, err := filestationops.ExecuteBackgroundTaskClearFinished(ctx, c.target, executor)
+		if err != nil {
+			return FileStationMutationResult{}, err
+		}
+		c.target.AddCapability(filestationops.BackgroundTaskCapabilityName)
+		return result, nil
 	default:
 		return FileStationMutationResult{}, fmt.Errorf("unsupported FileStation mutation action %q", request.Action)
 	}

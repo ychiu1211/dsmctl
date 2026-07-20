@@ -75,6 +75,7 @@ type Client interface {
 	FileStationVirtualFolders(ctx context.Context, query synology.FileStationVirtualFolderQuery) (synology.FileStationListing, error)
 	FileStationCheckPermission(ctx context.Context, query synology.FileStationCheckPermissionQuery) (synology.FileStationPermissionCheck, error)
 	DownloadFile(ctx context.Context, path string) (*synology.DownloadContent, error)
+	FileStationThumbnail(ctx context.Context, path string, opts synology.ThumbnailOptions) (*synology.DownloadContent, error)
 	UploadFile(ctx context.Context, dir, name string, src io.Reader, size int64, opts synology.UploadOptions) (synology.UploadResult, error)
 	ApplyFileStationChange(ctx context.Context, request synology.FileStationChangeRequest, password string) (synology.FileStationMutationResult, error)
 	FileStationFavoriteList(ctx context.Context) (synology.FileStationFavorites, error)

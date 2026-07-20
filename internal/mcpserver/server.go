@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -289,6 +290,22 @@ type getFileStationFileContentOutput struct {
 	ContentType   string `json:"content_type,omitempty" jsonschema:"Content type reported by DSM"`
 	Filename      string `json:"filename,omitempty" jsonschema:"File name reported by DSM"`
 	ContentBase64 string `json:"content_base64" jsonschema:"Base64-encoded file content"`
+}
+
+type getFileStationThumbnailInput struct {
+	NAS      string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Path     string `json:"path" jsonschema:"Absolute path of the image to thumbnail"`
+	Size     string `json:"size,omitempty" jsonschema:"Thumbnail size: small (default), medium, large, or original"`
+	Rotate   int    `json:"rotate,omitempty" jsonschema:"Rotation index 0-4 (0 = none)"`
+	MaxBytes int64  `json:"max_bytes,omitempty" jsonschema:"Maximum bytes to return inline; capped at 8 MiB regardless"`
+}
+
+type getFileStationThumbnailOutput struct {
+	NAS           string `json:"nas" jsonschema:"NAS profile used for the request"`
+	Path          string `json:"path" jsonschema:"Thumbnailed NAS path"`
+	Size          int64  `json:"size" jsonschema:"Number of bytes returned"`
+	ContentType   string `json:"content_type,omitempty" jsonschema:"Content type reported by DSM"`
+	ContentBase64 string `json:"content_base64" jsonschema:"Base64-encoded thumbnail image content"`
 }
 
 type getFileStationFavoritesOutput struct {
@@ -1504,6 +1521,41 @@ func New(service *application.Service, version string) *mcp.Server {
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_filestation_thumbnail",
+		Title:       "Download FileStation image thumbnail",
+		Description: "Fetch an image thumbnail from a NAS and return it base64-encoded (size small/medium/large/original, optional rotation). A rendition larger than the 8 MiB inline limit is refused — stream it with the CLI 'file thumb' instead. This reads the NAS and never modifies it.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getFileStationThumbnailInput) (*mcp.CallToolResult, getFileStationThumbnailOutput, error) {
+		limit := input.MaxBytes
+		if limit <= 0 || limit > maxInlineFileDownload {
+			limit = maxInlineFileDownload
+		}
+		size := input.Size
+		if size == "" {
+			size = "small"
+		}
+		switch size {
+		case "small", "medium", "large", "original":
+		default:
+			return nil, getFileStationThumbnailOutput{}, fmt.Errorf("size must be small, medium, large, or original")
+		}
+		if input.Rotate < 0 || input.Rotate > 4 {
+			return nil, getFileStationThumbnailOutput{}, fmt.Errorf("rotate must be between 0 and 4")
+		}
+		data, meta, err := service.ReadFileStationThumbnail(ctx, input.NAS, input.Path, size, input.Rotate, limit)
+		if err != nil {
+			return nil, getFileStationThumbnailOutput{}, err
+		}
+		return nil, getFileStationThumbnailOutput{
+			NAS:           meta.NAS,
+			Path:          meta.Path,
+			Size:          meta.Size,
+			ContentType:   meta.ContentType,
+			ContentBase64: base64.StdEncoding.EncodeToString(data),
+		}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_filestation_favorites",
 		Title:       "List FileStation favorites",
 		Description: "List the current session's personal FileStation sidebar favorites (name, path, status). This tool is read-only.",
@@ -1545,7 +1597,7 @@ func New(service *application.Service, version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "plan_filestation_change",
 		Title:       "Plan a FileStation change",
-		Description: "Validate a FileStation mutation (create_folder, rename, copy, move, delete, compress, extract, upload, sharelink_create, sharelink_edit, sharelink_delete, or sharelink_clear_invalid) and return an approval plan bound to the observed state. The plan surfaces risk, warnings (data loss, overwrite, public exposure), and a hash. This tool never mutates the NAS. Move, delete, and sharelink_create (anonymous public URL) are high risk; upload reads local_path on the host running dsmctl.",
+		Description: "Validate a FileStation mutation (create_folder, rename, copy, move, delete, compress, extract, upload, sharelink_create, sharelink_edit, sharelink_delete, sharelink_clear_invalid, or clear_finished_tasks) and return an approval plan bound to the observed state. The plan surfaces risk, warnings (data loss, overwrite, public exposure), and a hash. This tool never mutates the NAS. Move, delete, and sharelink_create (anonymous public URL) are high risk; upload reads local_path on the host running dsmctl.",
 		Annotations: readOnlyAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planFileStationChangeInput) (*mcp.CallToolResult, planFileStationChangeOutput, error) {
 		plan, err := service.PlanFileStationChange(ctx, input.NAS, input.Request)

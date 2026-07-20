@@ -150,3 +150,61 @@ func TestDoDownloadJSONErrorBecomesAPIError(t *testing.T) {
 		t.Fatalf("expected API error code 408, got %v", err)
 	}
 }
+
+func TestDoThumbnailStreamsImageBytes(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if q.Get("method") != "get" || q.Get("path") != "/home/pic.png" || q.Get("size") != "large" || q.Get("rotate") != "2" {
+			t.Errorf("query = %s", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write([]byte("png-bytes"))
+	}))
+	defer server.Close()
+	prep := newTransferPrep(t, server)
+	content, err := doThumbnail(context.Background(), prep, prep.sid, prep.synoToken, "/home/pic.png", ThumbnailOptions{Size: "large", Rotate: 2})
+	if err != nil {
+		t.Fatalf("doThumbnail() error = %v", err)
+	}
+	defer content.Body.Close()
+	if content.ContentType != "image/png" {
+		t.Fatalf("content type = %q", content.ContentType)
+	}
+	data, _ := io.ReadAll(content.Body)
+	if string(data) != "png-bytes" {
+		t.Fatalf("body = %q", data)
+	}
+}
+
+// TestThumbnailHTTPErrorRedactsCredentials pins the secrets contract: a non-2xx
+// transfer error must never expose the _sid or SynoToken query parameters.
+func TestThumbnailHTTPErrorRedactsCredentials(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer server.Close()
+	prep := newTransferPrep(t, server)
+	_, err := doThumbnail(context.Background(), prep, "super-secret-sid", "super-secret-token", "/nope.png", ThumbnailOptions{})
+	if err == nil {
+		t.Fatal("expected an HTTP error")
+	}
+	if strings.Contains(err.Error(), "super-secret-sid") || strings.Contains(err.Error(), "super-secret-token") {
+		t.Fatalf("error leaked credentials: %v", err)
+	}
+	if !strings.Contains(err.Error(), "REDACTED") {
+		t.Fatalf("error did not mark redaction: %v", err)
+	}
+}
+
+func TestRedactTransferURLMasksSessionParameters(t *testing.T) {
+	parsed, _ := url.Parse("https://nas.example:5001/webapi/entry.cgi?api=SYNO.FileStation.Thumb&_sid=abc123&SynoToken=tok999&path=%2Fx")
+	got := redactTransferURL(*parsed)
+	for _, secret := range []string{"abc123", "tok999"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("redacted URL still contains %q: %s", secret, got)
+		}
+	}
+	if !strings.Contains(got, "path=%2Fx") {
+		t.Fatalf("redacted URL dropped a non-secret parameter: %s", got)
+	}
+}

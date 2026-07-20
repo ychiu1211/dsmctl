@@ -285,3 +285,23 @@ func ExecuteSharingClearInvalid(ctx context.Context, target compatibility.Target
 func ExecuteBackgroundTaskList(ctx context.Context, target compatibility.Target, executor compatibility.Executor) (filestation.BackgroundTasks, compatibility.Selection, error) {
 	return backgroundTaskListOperation.Run(ctx, target, executor, struct{}{})
 }
+
+var backgroundTaskClearFinishedOperation = compatibility.Operation[struct{}, MutationResult]{
+	Name: BackgroundTaskCapabilityName,
+	Variants: []compatibility.Variant[struct{}, MutationResult]{
+		{
+			Name: "filestation-backgroundtask-clear-finished-v3", API: BackgroundTaskAPIName, Version: 3, Priority: 10,
+			Match: compatibility.APIVersion(BackgroundTaskAPIName, 3),
+			Execute: func(ctx context.Context, executor compatibility.Executor, _ struct{}) (MutationResult, error) {
+				if _, err := executor.Execute(ctx, compatibility.Request{API: BackgroundTaskAPIName, Version: 3, Method: "clear_finished"}); err != nil {
+					return MutationResult{}, fmt.Errorf("call %s.clear_finished: %w", BackgroundTaskAPIName, err)
+				}
+				return MutationResult{}, nil
+			},
+		},
+	},
+}
+
+func ExecuteBackgroundTaskClearFinished(ctx context.Context, target compatibility.Target, executor compatibility.Executor) (MutationResult, compatibility.Selection, error) {
+	return backgroundTaskClearFinishedOperation.Run(ctx, target, executor, struct{}{})
+}

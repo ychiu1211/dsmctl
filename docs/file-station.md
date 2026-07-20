@@ -80,6 +80,26 @@ MCP exposes `get_filestation_file_content`, which returns a file's content
 base64-encoded (refused above an 8 MiB inline limit; stream larger files with the
 CLI). It is read-only with respect to the NAS.
 
+### Thumbnails
+
+```console
+dsmctl file thumb /home/photo.jpg --nas lab                    # -> ./photo.jpg.thumb
+dsmctl file thumb /home/photo.jpg --size large -o out.jpg --nas lab
+```
+
+`file thumb` streams an image thumbnail through `SYNO.FileStation.Thumb` (sizes
+`small`/`medium`/`large`/`original`, optional `--rotate 0-4`), using the same
+`.part`-then-rename streaming as `file get`. A source smaller than the requested
+rendition returns the original bytes; a non-image or missing path returns a typed
+API error. MCP exposes `get_filestation_thumbnail` (base64, 8 MiB cap). Because a
+thumbnail is image content, both content-transfer tools are stripped from the
+read-only gateway so a remote caller cannot exfiltrate file bytes.
+
+Transfer errors (download, thumbnail, upload) mask the `_sid` and `SynoToken`
+query parameters: Go's `url.URL.Redacted` masks only userinfo, so the transport
+redacts those credential parameters itself before an endpoint appears in any
+error — no session id or token ever reaches a log.
+
 ## Writes (shipped)
 
 Every NAS mutation goes through the repo's hash-bound **plan/apply** contract. The
@@ -137,17 +157,24 @@ dsmctl file favorite add /home/docs --name Docs   # per-user, reversible (direct
 dsmctl file favorite list
 dsmctl file favorite remove /home/docs
 dsmctl file tasks                                  # in-progress background tasks
+dsmctl file tasks clear-finished --yes             # remove finished-task records (guarded)
 ```
 
 Favorites are per-user sidebar bookmarks — reversible and local to your account,
-so they are direct commands rather than plan/apply.
+so they are direct commands rather than plan/apply. `tasks clear-finished`
+removes finished background-task **records** (not the files those operations
+produced) through the plan/apply pair, like `sharelink_clear_invalid`; the plan
+carries no target (background tasks are volatile) and the postcondition is a
+successful re-read.
 
 ## MCP
 
 MCP exposes the full surface: all reads, `get_filestation_file_content` (base64,
-8 MiB cap), `get_filestation_favorites`, `get_filestation_sharing_links`,
+8 MiB cap), `get_filestation_thumbnail` (base64, 8 MiB cap),
+`get_filestation_favorites`, `get_filestation_sharing_links`,
 `get_filestation_background_tasks`, and the `plan_filestation_change` /
 `apply_filestation_plan` pair (create_folder, rename, copy, move, delete,
-compress, extract, upload, sharelink_create, sharelink_delete). The **read-only
-gateway** strips every write and the content-transfer tool. See
+compress, extract, upload, sharelink_create, sharelink_edit, sharelink_delete,
+sharelink_clear_invalid, clear_finished_tasks). The **read-only gateway** strips
+every write and both content-transfer tools. See
 [WI-049](../spec/work-items/WI-049-file-station.md).

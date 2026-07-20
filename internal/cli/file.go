@@ -33,6 +33,7 @@ func newFileCommand(opts *options) *cobra.Command {
 		newFileVirtualFoldersCommand(opts),
 		newFileCheckPermissionCommand(opts),
 		newFileGetCommand(opts),
+		newFileThumbCommand(opts),
 		newFileMkdirCommand(opts),
 		newFileRenameCommand(opts),
 		newFileCopyCommand(opts),
@@ -206,6 +207,23 @@ func newFileTasksCommand(opts *options) *cobra.Command {
 		},
 	}
 	command.Flags().BoolVar(&jsonOutput, "json", false, "output structured JSON")
+	command.AddCommand(newFileTasksClearFinishedCommand(opts))
+	return command
+}
+
+func newFileTasksClearFinishedCommand(opts *options) *cobra.Command {
+	var yes bool
+	command := &cobra.Command{
+		Use:   "clear-finished",
+		Short: "Remove finished background file-operation task records (guarded plan/apply)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runFileMutation(cmd, opts, filestation.ChangeRequest{
+				Action: filestation.ActionClearFinishedTasks,
+			}, yes)
+		},
+	}
+	mutationYesFlag(command, &yes)
 	return command
 }
 
@@ -626,6 +644,67 @@ func newFileGetCommand(opts *options) *cobra.Command {
 		},
 	}
 	command.Flags().StringVarP(&output, "output", "o", "", "local output path (default: base name of the remote path)")
+	return command
+}
+
+func newFileThumbCommand(opts *options) *cobra.Command {
+	var (
+		output string
+		size   string
+		rotate int
+	)
+	command := &cobra.Command{
+		Use:   "thumb <path>",
+		Short: "Download an image thumbnail from the NAS to local disk",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			switch size {
+			case "small", "medium", "large", "original":
+			default:
+				return fmt.Errorf("--size must be small, medium, large, or original")
+			}
+			if rotate < 0 || rotate > 4 {
+				return fmt.Errorf("--rotate must be between 0 and 4")
+			}
+			remote := args[0]
+			local := output
+			if local == "" {
+				local = filepath.Base(remote) + ".thumb"
+			}
+			if local == "" || local == "." || local == string(filepath.Separator) {
+				return fmt.Errorf("cannot determine a local output name for %q; pass --output", remote)
+			}
+			service, err := loadService(opts.configPath)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			part := local + ".part"
+			file, err := os.Create(part)
+			if err != nil {
+				return fmt.Errorf("create %q: %w", part, err)
+			}
+			result, downloadErr := service.DownloadFileStationThumbnail(cmd.Context(), opts.nas, remote, size, rotate, file)
+			closeErr := file.Close()
+			if downloadErr != nil {
+				_ = os.Remove(part)
+				return downloadErr
+			}
+			if closeErr != nil {
+				_ = os.Remove(part)
+				return fmt.Errorf("finalize %q: %w", part, closeErr)
+			}
+			if err := os.Rename(part, local); err != nil {
+				_ = os.Remove(part)
+				return fmt.Errorf("rename %q to %q: %w", part, local, err)
+			}
+			fmt.Fprintf(cmd.ErrOrStderr(), "Downloaded %s thumbnail of %s (%d bytes) to %s\n", size, remote, result.Size, local)
+			return nil
+		},
+	}
+	command.Flags().StringVarP(&output, "output", "o", "", "local output path (default: <base>.thumb)")
+	command.Flags().StringVar(&size, "size", "small", "thumbnail size: small, medium, large, or original")
+	command.Flags().IntVar(&rotate, "rotate", 0, "rotation index 0-4 (0 = none)")
 	return command
 }
 

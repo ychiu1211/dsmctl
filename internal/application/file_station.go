@@ -225,6 +225,62 @@ func (s *Service) ReadFileStationFile(ctx context.Context, requestedNAS, path st
 	return data, result, nil
 }
 
+// DownloadFileStationThumbnail streams an image thumbnail to dst. Like a
+// download it reads the NAS and writes a local destination, so it is exempt
+// from plan/apply.
+func (s *Service) DownloadFileStationThumbnail(ctx context.Context, requestedNAS, path, size string, rotate int, dst io.Writer) (FileStationDownloadResult, error) {
+	name, client, err := s.manager.Client(ctx, requestedNAS)
+	if err != nil {
+		return FileStationDownloadResult{}, err
+	}
+	content, err := client.FileStationThumbnail(ctx, path, synology.ThumbnailOptions{Size: size, Rotate: rotate})
+	if err != nil {
+		return FileStationDownloadResult{}, authenticationError(name, err)
+	}
+	defer content.Body.Close()
+	written, err := io.Copy(dst, content.Body)
+	if err != nil {
+		return FileStationDownloadResult{}, fmt.Errorf("stream thumbnail of %q from NAS %q: %w", path, name, err)
+	}
+	return FileStationDownloadResult{
+		NAS:         name,
+		Path:        path,
+		Size:        written,
+		ContentType: content.ContentType,
+		Filename:    content.Filename,
+	}, nil
+}
+
+// ReadFileStationThumbnail fetches an image thumbnail fully into memory, up to
+// limit bytes, for callers that must return it inline (an MCP tool). Thumbnails
+// are small, but the limit still bounds the transfer. limit must be positive.
+func (s *Service) ReadFileStationThumbnail(ctx context.Context, requestedNAS, path, size string, rotate int, limit int64) ([]byte, FileStationDownloadResult, error) {
+	name, client, err := s.manager.Client(ctx, requestedNAS)
+	if err != nil {
+		return nil, FileStationDownloadResult{}, err
+	}
+	content, err := client.FileStationThumbnail(ctx, path, synology.ThumbnailOptions{Size: size, Rotate: rotate})
+	if err != nil {
+		return nil, FileStationDownloadResult{}, authenticationError(name, err)
+	}
+	defer content.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(content.Body, limit+1))
+	if err != nil {
+		return nil, FileStationDownloadResult{}, fmt.Errorf("read thumbnail of %q from NAS %q: %w", path, name, err)
+	}
+	if int64(len(data)) > limit {
+		return nil, FileStationDownloadResult{}, fmt.Errorf("thumbnail of %q exceeds the %d-byte inline limit; use the CLI 'file thumb' to stream it", path, limit)
+	}
+	result := FileStationDownloadResult{
+		NAS:         name,
+		Path:        path,
+		Size:        int64(len(data)),
+		ContentType: content.ContentType,
+		Filename:    content.Filename,
+	}
+	return data, result, nil
+}
+
 func (s *Service) CheckFileStationPermission(ctx context.Context, requestedNAS string, query filestation.CheckPermissionQuery) (FileStationPermissionCheckResult, error) {
 	name, client, err := s.manager.Client(ctx, requestedNAS)
 	if err != nil {

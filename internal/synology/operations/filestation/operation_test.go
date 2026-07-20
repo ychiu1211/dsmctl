@@ -221,7 +221,7 @@ func TestAPINamesCoverSurface(t *testing.T) {
 	want := map[string]bool{
 		InfoAPIName: true, ListAPIName: true, SearchAPIName: true, DirSizeAPIName: true,
 		MD5APIName: true, VirtualFolderAPIName: true, CheckPermissionAPIName: true,
-		UploadAPIName: true, DownloadAPIName: true,
+		UploadAPIName: true, DownloadAPIName: true, ThumbAPIName: true,
 	}
 	if len(got) != len(want) {
 		t.Fatalf("APINames() = %#v", got)

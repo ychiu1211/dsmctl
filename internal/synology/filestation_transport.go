@@ -210,12 +210,12 @@ func doUpload(ctx context.Context, prep transferPrep, sid, synoToken, dir, name 
 	}
 	response, err := prep.client.Do(request)
 	if err != nil {
-		return UploadResult{}, fmt.Errorf("request %s: %w", endpoint.Redacted(), err)
+		return UploadResult{}, fmt.Errorf("request %s: %w", redactTransferURL(endpoint), err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
-		return UploadResult{}, fmt.Errorf("request %s returned HTTP %s", endpoint.Redacted(), response.Status)
+		return UploadResult{}, fmt.Errorf("request %s returned HTTP %s", redactTransferURL(endpoint), response.Status)
 	}
 	var envelopeResult envelope
 	if err := json.NewDecoder(io.LimitReader(response.Body, maxBodySize)).Decode(&envelopeResult); err != nil {
@@ -309,12 +309,12 @@ func doDownload(ctx context.Context, prep transferPrep, sid, synoToken, path str
 	}
 	response, err := prep.client.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("request %s: %w", endpoint.Redacted(), err)
+		return nil, fmt.Errorf("request %s: %w", redactTransferURL(endpoint), err)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
 		_ = response.Body.Close()
-		return nil, fmt.Errorf("request %s returned HTTP %s", endpoint.Redacted(), response.Status)
+		return nil, fmt.Errorf("request %s returned HTTP %s", redactTransferURL(endpoint), response.Status)
 	}
 	// DSM streams the file bytes on success but returns a JSON envelope on error
 	// (auth failure, path not found). Branch on the content type before handing
@@ -342,6 +342,136 @@ func doDownload(ctx context.Context, prep transferPrep, sid, synoToken, path str
 		Filename:    filenameFromDisposition(response.Header.Get("Content-Disposition")),
 	}
 	return content, nil
+}
+
+// ThumbnailOptions selects which rendition of an image thumbnail to fetch.
+type ThumbnailOptions struct {
+	// Size is one of small, medium, large, or original; empty defaults to small.
+	Size string
+	// Rotate is the DSM rotation index 0-4 (0 = none).
+	Rotate int
+}
+
+// FileStationThumbnail opens a streaming read of an image thumbnail. Like
+// DownloadFile it releases the client mutex before returning the live body,
+// which the caller closes. A non-image path or a thumbnail DSM cannot render
+// returns a typed API error rather than a body.
+func (c *Client) FileStationThumbnail(ctx context.Context, path string, opts ThumbnailOptions) (*DownloadContent, error) {
+	c.mu.Lock()
+	prep, err := c.prepareTransferLocked(ctx, filestationops.ThumbAPIName, filestationops.ThumbCapabilityName, filestationops.SelectThumb)
+	c.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	sid, synoToken := prep.sid, prep.synoToken
+	for attempt := 0; attempt < 2; attempt++ {
+		content, err := doThumbnail(ctx, prep, sid, synoToken, path, opts)
+		if err == nil {
+			return content, nil
+		}
+		if attempt == 0 && isSessionError(err) {
+			newSID, newToken, reErr := c.reestablishForTransfer(ctx)
+			if reErr != nil {
+				return nil, reErr
+			}
+			sid, synoToken = newSID, newToken
+			continue
+		}
+		if isSessionError(err) {
+			return nil, &SessionExpiredError{Cause: err}
+		}
+		return nil, fmt.Errorf("thumbnail %q: %w", path, err)
+	}
+	return nil, fmt.Errorf("thumbnail %q failed after a session renewal", path)
+}
+
+func doThumbnail(ctx context.Context, prep transferPrep, sid, synoToken, path string, opts ThumbnailOptions) (*DownloadContent, error) {
+	size := opts.Size
+	if size == "" {
+		size = "small"
+	}
+	endpoint := prep.endpoint
+	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/webapi/" + strings.TrimLeft(prep.apiPath, "/")
+	query := url.Values{
+		"api":     {filestationops.ThumbAPIName},
+		"version": {strconv.Itoa(prep.version)},
+		"method":  {"get"},
+		"path":    {path},
+		"size":    {size},
+		"rotate":  {strconv.Itoa(opts.Rotate)},
+	}
+	if sid != "" {
+		query.Set("_sid", sid)
+	}
+	if synoToken != "" {
+		query.Set("SynoToken", synoToken)
+	}
+	endpoint.RawQuery = query.Encode()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("User-Agent", "dsmctl/0.1")
+	if sid != "" {
+		request.AddCookie(&http.Cookie{Name: "id", Value: sid})
+	}
+	if synoToken != "" {
+		request.Header.Set("X-SYNO-TOKEN", synoToken)
+	}
+	response, err := prep.client.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("request %s: %w", redactTransferURL(endpoint), err)
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
+		_ = response.Body.Close()
+		return nil, fmt.Errorf("request %s returned HTTP %s", redactTransferURL(endpoint), response.Status)
+	}
+	// DSM streams the image bytes on success but returns a JSON envelope on
+	// error (auth failure, not an image, thumbnail unavailable). Branch on the
+	// content type before handing the body to the caller.
+	contentType := response.Header.Get("Content-Type")
+	if strings.Contains(strings.ToLower(contentType), "application/json") {
+		defer response.Body.Close()
+		var envelopeResult envelope
+		if err := json.NewDecoder(io.LimitReader(response.Body, maxBodySize)).Decode(&envelopeResult); err != nil {
+			return nil, fmt.Errorf("decode thumbnail error response: %w", err)
+		}
+		if !envelopeResult.Success {
+			code := 0
+			if envelopeResult.Error != nil {
+				code = envelopeResult.Error.Code
+			}
+			return nil, &APIError{API: filestationops.ThumbAPIName, Method: "get", Code: code}
+		}
+		return nil, fmt.Errorf("thumbnail returned an unexpected JSON response")
+	}
+	return &DownloadContent{
+		Body:        response.Body,
+		Size:        response.ContentLength,
+		ContentType: contentType,
+		Filename:    filenameFromDisposition(response.Header.Get("Content-Disposition")),
+	}, nil
+}
+
+// redactTransferURL returns endpoint with credential query parameters masked,
+// safe to embed in an error or log. url.URL.Redacted only masks userinfo, not
+// the _sid/SynoToken query parameters the download and thumbnail transports set,
+// so the raw endpoint would otherwise leak the session id and token — which the
+// secrets contract forbids from any error or log.
+func redactTransferURL(endpoint url.URL) string {
+	query := endpoint.Query()
+	redacted := false
+	for _, key := range []string{"_sid", "SynoToken"} {
+		if query.Has(key) {
+			query.Set(key, "REDACTED")
+			redacted = true
+		}
+	}
+	if redacted {
+		endpoint.RawQuery = query.Encode()
+	}
+	return endpoint.Redacted()
 }
 
 func filenameFromDisposition(header string) string {

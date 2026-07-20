@@ -80,6 +80,15 @@ func TestValidateFileChange(t *testing.T) {
 			request: filestation.ChangeRequest{Action: filestation.ActionShareLinkClearInvalid},
 		},
 		{
+			name:    "clear_finished_tasks ok",
+			request: filestation.ChangeRequest{Action: filestation.ActionClearFinishedTasks},
+		},
+		{
+			name:    "clear_finished_tasks takes no payload",
+			request: filestation.ChangeRequest{Action: filestation.ActionClearFinishedTasks, ShareLink: &filestation.ShareLinkChange{LinkID: "x"}},
+			wantErr: "no payload",
+		},
+		{
 			name:    "unknown action",
 			request: filestation.ChangeRequest{Action: "explode"},
 			wantErr: "unsupported",

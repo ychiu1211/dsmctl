@@ -480,7 +480,7 @@ func APINames() []string {
 	return []string{
 		InfoAPIName, ListAPIName, SearchAPIName, DirSizeAPIName,
 		MD5APIName, VirtualFolderAPIName, CheckPermissionAPIName,
-		UploadAPIName, DownloadAPIName,
+		UploadAPIName, DownloadAPIName, ThumbAPIName,
 	}
 }
 

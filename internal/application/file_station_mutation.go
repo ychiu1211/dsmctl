@@ -405,6 +405,12 @@ func buildFilePrecondition(ctx context.Context, client runtime.Client, request f
 		// path, so the precondition carries no targets.
 		summary = append(summary, "remove every expired or invalid sharing link")
 
+	case filestation.ActionClearFinishedTasks:
+		// A global cleanup of finished background-task records; it binds to no
+		// specific path (background tasks are volatile), so the precondition
+		// carries no targets. It clears only records, not produced files.
+		summary = append(summary, "remove every finished background file-operation task")
+
 	default:
 		return filestation.FilePrecondition{}, false, nil, nil, fmt.Errorf("unsupported FileStation action %q", request.Action)
 	}
@@ -512,6 +518,13 @@ func verifyFilePostcondition(ctx context.Context, client runtime.Client, request
 		if _, err := client.FileStationSharingList(ctx); err != nil {
 			return fmt.Errorf("verify sharing cleanup: %w", err)
 		}
+	case filestation.ActionClearFinishedTasks:
+		// Background tasks are volatile (a running task can finish during the
+		// call), so requiring zero finished tasks would be racy. The re-read
+		// confirms the API is healthy after the cleanup, matching clear_invalid.
+		if _, err := client.FileStationBackgroundTasks(ctx); err != nil {
+			return fmt.Errorf("verify finished-task cleanup: %w", err)
+		}
 	}
 	return nil
 }
@@ -607,6 +620,8 @@ func actionSupported(capabilities synology.FileStationCapabilities, action strin
 	case filestation.ActionShareLinkCreate, filestation.ActionShareLinkDelete,
 		filestation.ActionShareLinkEdit, filestation.ActionShareLinkClearInvalid:
 		return capabilities.Sharing
+	case filestation.ActionClearFinishedTasks:
+		return capabilities.BackgroundTask
 	default:
 		return false
 	}
@@ -774,6 +789,11 @@ func validateFileChange(request filestation.ChangeRequest) error {
 	case filestation.ActionShareLinkClearInvalid:
 		if request.ShareLink != nil {
 			return fmt.Errorf("sharelink_clear_invalid takes no payload")
+		}
+		return nil
+	case filestation.ActionClearFinishedTasks:
+		if request.ShareLink != nil {
+			return fmt.Errorf("clear_finished_tasks takes no payload")
 		}
 		return nil
 	default:

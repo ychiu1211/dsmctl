@@ -43,12 +43,21 @@ func TestNewReadOnlyOmitsPlanAndApplyTools(t *testing.T) {
 	if len(tools.Tools) == 0 {
 		t.Fatal("read-only server registered no tools")
 	}
+	// Content-exfiltration reads are stripped even though they are get_* reads:
+	// they would stream file/thumbnail bytes to a remote caller.
+	exfiltration := map[string]bool{
+		"get_filestation_file_content": false,
+		"get_filestation_thumbnail":    false,
+	}
 	for _, tool := range tools.Tools {
 		if strings.HasPrefix(tool.Name, "plan_") || strings.HasPrefix(tool.Name, "apply_") {
 			t.Errorf("read-only server registered %q", tool.Name)
 		}
 		if tool.Name == "discover_lan_devices" {
 			t.Errorf("read-only gateway surface must not expose LAN discovery (%q)", tool.Name)
+		}
+		if _, ok := exfiltration[tool.Name]; ok {
+			t.Errorf("read-only gateway must not expose content transfer (%q)", tool.Name)
 		}
 	}
 }

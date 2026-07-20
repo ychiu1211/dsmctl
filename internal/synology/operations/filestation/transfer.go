@@ -15,9 +15,11 @@ import (
 const (
 	UploadAPIName   = "SYNO.FileStation.Upload"
 	DownloadAPIName = "SYNO.FileStation.Download"
+	ThumbAPIName    = "SYNO.FileStation.Thumb"
 
 	UploadCapabilityName   = "file.upload"
 	DownloadCapabilityName = "file.download"
+	ThumbCapabilityName    = "file.thumbnail"
 )
 
 var errTransferViaExecutor = errors.New("FileStation upload/download uses binary transport, not the WebAPI executor")
@@ -48,6 +50,23 @@ var downloadOperation = compatibility.Operation[struct{}, struct{}]{
 	},
 }
 
+// thumbOperation selects the thumbnail backend. Like Download it is a binary
+// transport (a streaming GET), so Execute never runs — the façade performs the
+// transfer. Thumb.get is versioned 1-3 on DSM 7.3; v2 carries the stable
+// size/rotate query surface used here.
+var thumbOperation = compatibility.Operation[struct{}, struct{}]{
+	Name: ThumbCapabilityName,
+	Variants: []compatibility.Variant[struct{}, struct{}]{
+		{
+			Name: "filestation-thumb-v2", API: ThumbAPIName, Version: 2, Priority: 10,
+			Match: compatibility.APIVersion(ThumbAPIName, 2),
+			Execute: func(context.Context, compatibility.Executor, struct{}) (struct{}, error) {
+				return struct{}{}, errTransferViaExecutor
+			},
+		},
+	},
+}
+
 func SelectUpload(target compatibility.Target) (compatibility.Selection, error) {
 	_, selection, err := uploadOperation.Select(target)
 	return selection, err
@@ -55,5 +74,10 @@ func SelectUpload(target compatibility.Target) (compatibility.Selection, error) 
 
 func SelectDownload(target compatibility.Target) (compatibility.Selection, error) {
 	_, selection, err := downloadOperation.Select(target)
+	return selection, err
+}
+
+func SelectThumb(target compatibility.Target) (compatibility.Selection, error) {
+	_, selection, err := thumbOperation.Select(target)
 	return selection, err
 }

@@ -173,8 +173,22 @@ any concurrent client-core change.
   `sharelink_edit` / `sharelink_clear_invalid` plan/apply actions with
   `file share-link edit|clear-invalid` CLI wrappers; live-verified on the lab
   with a disposable folder/link (future expiry -> past expiry -> cleared),
-  fully cleaned up. Still possible later: `Thumb.get` (needs a binary
-  transport slot and a disposable image asset) and
-  `BackgroundTask.clear_finished` (needs a remote-scope class for a direct
-  mutation tool), plus a synchronous `DirSize` path for trivially small
-  folders.
+  fully cleaned up.
+- Follow-ons shipped 2026-07-20 (second batch): `Thumb.get` as a streaming
+  binary read mirroring Download (CLI `file thumb`, MCP
+  `get_filestation_thumbnail` base64 — both content-transfer tools stripped
+  from the read-only gateway since a thumbnail is image content), and
+  `BackgroundTask.clear_finished` routed through plan/apply as the
+  `clear_finished_tasks` action (CLI `file tasks clear-finished`, MCP via
+  `plan_/apply_filestation_change`) exactly like `sharelink_clear_invalid` —
+  no direct-mutation remote-scope class was needed. The thumbnail 404 path
+  surfaced a pre-existing secret leak: transfer errors embedded the full
+  endpoint URL, and `url.URL.Redacted` masks only userinfo, so `_sid` and
+  `SynoToken` query parameters leaked into download/upload/thumbnail error
+  strings. Fixed with a `redactTransferURL` helper now used by all three
+  transports, with a unit test pinning the redaction and a read-only-gateway
+  test asserting both content tools are stripped. Live-verified on the lab:
+  thumbnail round-trip (upload PNG -> `file thumb --size large` -> valid PNG,
+  MCP base64), redacted 404 error, and `clear-finished` plan/apply; disposable
+  PNG deleted. Still optional later: a synchronous `DirSize` path for
+  trivially small folders.

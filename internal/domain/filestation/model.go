@@ -120,6 +120,7 @@ type Capabilities struct {
 	VirtualFolderRead bool   `json:"virtual_folder_read" jsonschema:"Whether mounted virtual folders can be listed"`
 	PermissionCheck   bool   `json:"permission_check" jsonschema:"Whether write-permission checks are available"`
 	Download          bool   `json:"download" jsonschema:"Whether files can be downloaded (streamed to local disk)"`
+	Thumbnail         bool   `json:"thumbnail" jsonschema:"Whether image thumbnails can be fetched"`
 	Upload            bool   `json:"upload" jsonschema:"Whether files can be uploaded (streamed from local disk)"`
 	CreateFolder      bool   `json:"create_folder" jsonschema:"Whether folders can be created"`
 	Rename            bool   `json:"rename" jsonschema:"Whether entries can be renamed"`

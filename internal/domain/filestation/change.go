@@ -18,12 +18,16 @@ const (
 	ActionShareLinkEdit   = "sharelink_edit"
 	// ActionShareLinkClearInvalid removes every expired/broken sharing link.
 	ActionShareLinkClearInvalid = "sharelink_clear_invalid"
+	// ActionClearFinishedTasks removes every finished background file-operation
+	// task from the task list. It affects only task records, not the files the
+	// operations already produced.
+	ActionClearFinishedTasks = "clear_finished_tasks"
 )
 
 // ChangeRequest is the typed union of FileStation mutations. Exactly one payload
 // matches Action.
 type ChangeRequest struct {
-	Action       string              `json:"action" jsonschema:"Mutation: create_folder, rename, copy, move, delete, compress, extract, upload, sharelink_create, sharelink_edit, sharelink_delete, or sharelink_clear_invalid"`
+	Action       string              `json:"action" jsonschema:"Mutation: create_folder, rename, copy, move, delete, compress, extract, upload, sharelink_create, sharelink_edit, sharelink_delete, sharelink_clear_invalid, or clear_finished_tasks"`
 	CreateFolder *CreateFolderChange `json:"create_folder,omitempty" jsonschema:"Payload when action is create_folder"`
 	Rename       *RenameChange       `json:"rename,omitempty" jsonschema:"Payload when action is rename"`
 	Transfer     *TransferChange     `json:"transfer,omitempty" jsonschema:"Payload when action is copy or move"`
