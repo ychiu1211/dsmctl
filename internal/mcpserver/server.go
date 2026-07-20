@@ -1167,6 +1167,36 @@ type getSecurityAdvisorCapabilitiesOutput struct {
 	Report       synology.CompatibilityReport         `json:"report" jsonschema:"Discovered APIs and selected Security Advisor backends"`
 }
 
+type accountProtectionInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getAutoBlockSettingsOutput struct {
+	NAS      string                     `json:"nas" jsonschema:"NAS profile used for the request"`
+	Settings synology.AutoBlockSettings `json:"settings" jsonschema:"Auto Block configuration"`
+}
+
+type getAutoBlockListsOutput struct {
+	NAS   string                  `json:"nas" jsonschema:"NAS profile used for the request"`
+	Lists synology.AutoBlockLists `json:"lists" jsonschema:"Auto Block allow and block IP lists"`
+}
+
+type getAccountProtectionOutput struct {
+	NAS        string                     `json:"nas" jsonschema:"NAS profile used for the request"`
+	Protection synology.AccountProtection `json:"protection" jsonschema:"Account Protection thresholds"`
+}
+
+type getEnforceTwoFactorOutput struct {
+	NAS    string                    `json:"nas" jsonschema:"NAS profile used for the request"`
+	Policy synology.EnforceTwoFactor `json:"policy" jsonschema:"Enforced-2FA policy scope"`
+}
+
+type getAccountProtectionCapabilitiesOutput struct {
+	NAS          string                                 `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.AccountProtectionCapabilities `json:"capabilities" jsonschema:"Account-protection reads currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport           `json:"report" jsonschema:"Discovered APIs and selected account-protection backends"`
+}
+
 type getDriveAdminCapabilitiesOutput struct {
 	NAS          string                          `json:"nas" jsonschema:"NAS profile used for the request"`
 	Capabilities synology.DriveAdminCapabilities `json:"capabilities" jsonschema:"Drive Admin operations currently exposed by dsmctl, with installed-package evidence"`
@@ -3179,6 +3209,71 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getSecurityAdvisorScheduleOutput{}, err
 		}
 		return nil, getSecurityAdvisorScheduleOutput{NAS: result.NAS, Configuration: result.Configuration}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_account_protection_capabilities",
+		Title:       "Get account-protection capabilities",
+		Description: "Report which Control Panel > Security > Account reads dsmctl supports on the selected NAS (Auto Block settings, the Auto Block allow/block IP lists, Account Protection thresholds, and the enforced-2FA policy) and the backend for each. Each area is an independent boundary: one being absent leaves the others usable. Also reports whether the DoS-protection API is advertised (its read is a deferred follow-on). This slice is read-only; guarded writes are deferred.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input accountProtectionInput) (*mcp.CallToolResult, getAccountProtectionCapabilitiesOutput, error) {
+		result, err := service.GetAccountProtectionCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getAccountProtectionCapabilitiesOutput{}, err
+		}
+		return nil, getAccountProtectionCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_account_protection_autoblock",
+		Title:       "Get Auto Block settings",
+		Description: "Read the DSM Auto Block configuration (Control Panel > Security > Account > Auto Block): whether it is enabled, how many failed sign-in attempts within how many minutes trigger a block, and whether/after how many days a block expires. This tool never changes settings.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input accountProtectionInput) (*mcp.CallToolResult, getAutoBlockSettingsOutput, error) {
+		result, err := service.GetAutoBlockSettings(ctx, input.NAS)
+		if err != nil {
+			return nil, getAutoBlockSettingsOutput{}, err
+		}
+		return nil, getAutoBlockSettingsOutput{NAS: result.NAS, Settings: result.Settings}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_account_protection_autoblock_list",
+		Title:       "Get Auto Block allow/block lists",
+		Description: "Read the DSM Auto Block allow and block IP lists (the addresses always permitted and always blocked). Returns each list's entries (IP or subnet, recorded time, and DSM-reported reason) and totals. This tool never changes the lists.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input accountProtectionInput) (*mcp.CallToolResult, getAutoBlockListsOutput, error) {
+		result, err := service.GetAutoBlockLists(ctx, input.NAS)
+		if err != nil {
+			return nil, getAutoBlockListsOutput{}, err
+		}
+		return nil, getAutoBlockListsOutput{NAS: result.NAS, Lists: result.Lists}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_account_protection",
+		Title:       "Get Account Protection thresholds",
+		Description: "Read the DSM Account Protection policy (protect accounts by blocking untrusted clients after repeated failed sign-ins): whether it is enabled and the attempt/window/block-duration thresholds for untrusted and trusted clients. This tool never changes settings and never reads any user's OTP secret.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input accountProtectionInput) (*mcp.CallToolResult, getAccountProtectionOutput, error) {
+		result, err := service.GetAccountProtection(ctx, input.NAS)
+		if err != nil {
+			return nil, getAccountProtectionOutput{}, err
+		}
+		return nil, getAccountProtectionOutput{NAS: result.NAS, Protection: result.Protection}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_account_protection_enforce_2fa",
+		Title:       "Get enforced-2FA policy",
+		Description: "Read the domain-wide enforced-2FA/MFA policy scope (Control Panel > Security > Account). Surfaces the enforcement scope only; it never reads any user's OTP secret, seed, or recovery codes. This tool never changes the policy.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input accountProtectionInput) (*mcp.CallToolResult, getEnforceTwoFactorOutput, error) {
+		result, err := service.GetEnforceTwoFactor(ctx, input.NAS)
+		if err != nil {
+			return nil, getEnforceTwoFactorOutput{}, err
+		}
+		return nil, getEnforceTwoFactorOutput{NAS: result.NAS, Policy: result.Policy}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
