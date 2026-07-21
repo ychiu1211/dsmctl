@@ -1,17 +1,19 @@
 ---
 name: nas-install
 description: >-
-  Bring up a factory-fresh, reset, or crashed Synology NAS end to end with
-  dsmctl, all the way to fully usable: detect its install state, install DSM
-  (online, or offline by auto-downloading the matching .pat from Synology when the
-  device has no internet), create the first administrator (password stored in the
-  OS credential store), finish the DSM setup wizard (disabling the built-in admin
-  so the welcome wizard stops), and build one storage volume across all disks.
-  `dsmctl install --admin-user <user> --create-volume` does the whole chain in one
-  command. Use when asked to "install DSM", "set up a new NAS", "complete the
-  installation", "reinstall a broken NAS", "裝好一台全新/reset 的 NAS", "線上安裝
-  DSM", "完成安裝", or when a discovered device reports state not_install /
-  sys_crash / sys_migrat.
+  Bring up a factory-fresh, reset, or crashed Synology NAS with dsmctl: detect its
+  install state, install DSM (online, or offline by auto-downloading the matching
+  .pat from Synology when the device has no internet), create the first
+  administrator (password in the OS credential store), and finish the DSM setup
+  wizard (disabling the built-in admin so the welcome wizard stops) — leaving a
+  working, manageable NAS. Prefer to run it in STAGES (install, then provision,
+  then storage) because the storage layout is a deliberate human/MIS decision;
+  building storage is the separate nas-storage-setup skill. A one-shot
+  `dsmctl install --admin-user <user> --create-volume` exists for
+  simple/low-end/unattended boxes. Use when asked to "install DSM", "set up a new
+  NAS", "complete the installation", "reinstall a broken NAS", "裝好一台全新/reset
+  的 NAS", "線上安裝 DSM", "完成安裝", or when a discovered device reports state
+  not_install / sys_crash / sys_migrat.
 ---
 
 # Bring up a fresh Synology NAS (install DSM → first admin → storage)
