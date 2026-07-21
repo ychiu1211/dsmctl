@@ -98,9 +98,11 @@ and System Administration groups first** (queued as WI-065…080).
 - **Data protection**: Hyper Backup, Active Backup, Cloud Sync, **Synology
   High Availability (SHA)**, **Shared Folder Sync** (server-to-server
   replication). Snapshot Replication left this list on 2026-07-21 as
-  **WI-088 (done)** — snapshot reads + guarded snapshot writes shipped and
-  live-verified; retention/schedule writes, replication mutations, and
-  restore/rollback remain deferred follow-ons recorded in that item.
+  **WI-089 (done)** — snapshot reads + guarded snapshot writes shipped and
+  live-verified. Its replication-mutation follow-on is **WI-090 (in_progress)**
+  — guarded relation create source→dest with the destination password
+  vault-brokered at apply time; retention/schedule writes and restore/rollback
+  still deferred.
 - **Virtualization/servers**: Container Manager/Docker, Virtual Machine
   Manager, VPN/DNS/DHCP/WebDAV/Web Station/Mail servers.
 - **Collaboration/dev/fleet**: Note Station/Calendar/Contacts/Chat servers,

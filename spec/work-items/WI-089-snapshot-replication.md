@@ -1,5 +1,5 @@
 ---
-id: WI-088
+id: WI-089
 title: Snapshot Replication module
 status: done
 owner: ""
@@ -18,7 +18,7 @@ touches:
   - docs/snapshot-replication.md
 ---
 
-# WI-088 — Snapshot Replication module
+# WI-089 — Snapshot Replication module
 
 ## Outcome
 
@@ -252,8 +252,9 @@ relation exists — the one open item from this exploration.
 ## Coordination
 
 - WI-084–WI-086 are reserved by the provisioning program and WI-087 by the
-  parallel Hyper Backup module session; this item takes WI-088 (renumbered
-  from an initial WI-087 claim once the collision surfaced).
+  parallel Hyper Backup module session; this item takes WI-089 (renumbered twice: an initial WI-087 claim, then
+  WI-088, both of which collided with parallel sessions — WI-088 is the merged
+  `gateway-nas-credential-copy`).
 - Parallel group C; new operation packages are the parallel boundary. Shared
   files touched: `internal/mcpserver/server.go`, `read_only.go`,
   `server_test.go`, `spec/roadmap.md`, `spec/gap-inventory.md` — coordinate
