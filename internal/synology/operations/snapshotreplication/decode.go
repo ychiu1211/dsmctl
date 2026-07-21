@@ -172,8 +172,11 @@ func decodeReplicationPlans(data json.RawMessage) (snapshotreplication.Replicati
 	return result, nil
 }
 
-// decodeReplicationPlan decodes one plan. Every field is optional — the DSM UI
-// null-guards each additional block — so a missing block never fails the read.
+// decodeReplicationPlan decodes one plan. The base identity fields are on the
+// plan object; the enrichment blocks (site info, can_do, sync_report) are
+// nested under an "additional" sub-object (live-verified against a real
+// nas51→nas255 relation on DSM 7.4.7). Every block is optional — a missing one
+// never fails the read.
 func decodeReplicationPlan(entry map[string]json.RawMessage) snapshotreplication.ReplicationPlan {
 	plan := snapshotreplication.ReplicationPlan{
 		ID:         firstString(entry, "plan_id", "id"),
@@ -183,9 +186,21 @@ func decodeReplicationPlan(entry map[string]json.RawMessage) snapshotreplication
 		TargetName: firstString(entry, "target_name", "target_id"),
 		TargetType: decodeTargetType(entry),
 	}
-	plan.SnapshotCount = int(firstInt64(entry, "snapshot_count"))
-	plan.MainSite = decodeSiteInfo(entry, "main_site_info")
-	plan.DRSite = decodeSiteInfo(entry, "dr_site_info")
+	// The "additional" blocks are nested; fall back to the top level for a DSM
+	// build that flattens them.
+	additional := entry
+	if block, ok := entry["additional"]; ok {
+		var nested map[string]json.RawMessage
+		if json.Unmarshal(block, &nested) == nil && len(nested) > 0 {
+			additional = nested
+		}
+	}
+	if plan.Status == "" {
+		plan.Status = decodeStatus(additional)
+	}
+	plan.SnapshotCount = int(firstInt64(additional, "snapshot_count"))
+	plan.MainSite = decodeSiteInfo(additional, "main_site_info")
+	plan.DRSite = decodeSiteInfo(additional, "dr_site_info")
 	// target_name may only be resolvable from the site blocks.
 	if plan.TargetName == "" {
 		if plan.MainSite.TargetName != "" {
@@ -194,8 +209,8 @@ func decodeReplicationPlan(entry map[string]json.RawMessage) snapshotreplication
 			plan.TargetName = plan.DRSite.TargetName
 		}
 	}
-	plan.LastSyncTime, plan.LastSyncBytes = decodeSyncReport(entry)
-	plan.Can = decodeCanDo(entry)
+	plan.LastSyncTime, plan.LastSyncBytes = decodeSyncReport(additional)
+	plan.Can = decodeCanDo(additional)
 	return plan
 }
 
@@ -261,7 +276,7 @@ func decodeSyncReport(entry map[string]json.RawMessage) (string, int64) {
 		return "", 0
 	}
 	first := report.Recent[0]
-	return firstString(first, "readable_begin_time", "finish_time"), firstInt64(first, "sync_size_byte")
+	return strings.TrimSpace(firstString(first, "readable_begin_time", "finish_time")), firstInt64(first, "sync_size_byte")
 }
 
 func decodeCanDo(entry map[string]json.RawMessage) snapshotreplication.ReplicationCapabilities {

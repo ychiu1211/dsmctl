@@ -195,14 +195,19 @@ func TestPlansFailClosedWithoutPackage(t *testing.T) {
 
 func TestPlansDecodeWithPackage(t *testing.T) {
 	target := packageTarget()
-	// Rich per-plan shape (role int, site info blocks, can_do, sync_report).
+	// Real per-plan shape, live-verified against a nas51→nas255 relation on DSM
+	// 7.4.7: base identity fields on the plan, enrichment blocks nested under
+	// "additional"; readable_begin_time carries a trailing newline.
 	executor := &capturingExecutor{responses: map[string]json.RawMessage{
 		PlanAPIName: json.RawMessage(`{"plans":[{
-			"plan_id":"plan-1","remote_plan_id":"rplan-9","role":1,"target_type":2,"status":"sync","snapshot_count":3,
-			"main_site_info":{"hostname":"nas51","node_id":"n-51","target_name":"data"},
-			"dr_site_info":{"hostname":"nas255","node_id":"n-255","target_name":"data","status":"normal"},
-			"sync_report":{"recent_records":[{"readable_begin_time":"2026/07/21 10:00:00","is_success":true,"sync_size_byte":1048576}]},
-			"can_do":{"can_sync":true,"can_delete":true,"can_failover":false,"can_switchover":false}
+			"plan_id":"plan-1","remote_plan_id":"rplan-9","role":1,"target_type":2,"target_name":"data",
+			"additional":{
+				"snapshot_count":3,
+				"main_site_info":{"hostname":"nas51","node_id":"n-51","target_name":"data"},
+				"dr_site_info":{"hostname":"nas255","node_id":"n-255","target_name":"data","status":"normal"},
+				"sync_report":{"recent_records":[{"readable_begin_time":"Mon Jul 20 23:38:45 2026\n","is_success":true,"sync_size_byte":8990}]},
+				"can_do":{"can_sync":true,"can_delete":true,"can_failover":false,"can_switchover":true,"can_testfailover":true}
+			}
 		}],"total":1}`),
 	}}
 	plans, selection, err := ExecutePlans(context.Background(), target, executor)
@@ -214,16 +219,17 @@ func TestPlansDecodeWithPackage(t *testing.T) {
 	}
 	plan := plans.Plans[0]
 	if plan.ID != "plan-1" || plan.RemoteID != "rplan-9" || plan.Role != "main" || plan.TargetType != "share" ||
-		plan.Status != "sync" || plan.TargetName != "data" || plan.SnapshotCount != 3 {
+		plan.TargetName != "data" || plan.SnapshotCount != 3 {
 		t.Fatalf("plan = %#v", plan)
 	}
 	if plan.MainSite.Hostname != "nas51" || plan.DRSite.Hostname != "nas255" || plan.DRSite.Status != "normal" {
 		t.Fatalf("site info = %#v / %#v", plan.MainSite, plan.DRSite)
 	}
-	if plan.LastSyncTime != "2026/07/21 10:00:00" || plan.LastSyncBytes != 1048576 {
+	// The trailing newline on readable_begin_time must be trimmed.
+	if plan.LastSyncTime != "Mon Jul 20 23:38:45 2026" || plan.LastSyncBytes != 8990 {
 		t.Fatalf("sync report = %q %d", plan.LastSyncTime, plan.LastSyncBytes)
 	}
-	if !plan.Can.CanSync || !plan.Can.CanDelete || plan.Can.CanFailover {
+	if !plan.Can.CanSync || !plan.Can.CanDelete || plan.Can.CanFailover || !plan.Can.CanSwitchover || !plan.Can.CanTestFailover {
 		t.Fatalf("can = %#v", plan.Can)
 	}
 	if executor.requests[0].Method != "list" {
