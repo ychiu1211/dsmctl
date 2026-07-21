@@ -265,14 +265,14 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 }
 
 func TestSnapshotRelationCredentialGuidance(t *testing.T) {
-	// With an admin URL: deep-links to the Credentials page for the destination,
-	// password method only (web login cannot pair), and names the destination.
+	// With an admin URL: deep-links to the Passwords page for the destination,
+	// and names the destination.
 	withURL := snapshotRelationCredentialGuidance("https://gw.example", "nas255")
-	if !strings.Contains(withURL, "https://gw.example/admin/?view=credentials&nas=nas255&method=password") {
-		t.Fatalf("guidance missing the credentials deep link: %s", withURL)
+	if !strings.Contains(withURL, "https://gw.example/admin/?view=passwords&nas=nas255") {
+		t.Fatalf("guidance missing the passwords deep link: %s", withURL)
 	}
-	if !strings.Contains(withURL, "nas255") || !strings.Contains(withURL, "web login cannot be used") {
-		t.Fatalf("guidance missing dest name or web-login note: %s", withURL)
+	if !strings.Contains(withURL, "nas255") {
+		t.Fatalf("guidance missing dest name: %s", withURL)
 	}
 	// Destination names that need escaping are URL-encoded in the link.
 	if escaped := snapshotRelationCredentialGuidance("https://gw.example", "nas a"); !strings.Contains(escaped, "nas=nas+a") {

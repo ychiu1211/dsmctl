@@ -1692,17 +1692,16 @@ func WithAdminURL(rawURL string) Option {
 }
 
 // snapshotRelationCredentialGuidance builds the operator guidance shown when a
-// replication apply cannot pair because the destination has no stored
-// credential. When an admin console URL is configured it deep-links to the
-// Credentials page for the destination (password method only — Snapshot
-// Replication pairing cannot use web login). It returns prose and a URL only,
-// never a secret.
+// replication apply cannot pair because the destination has no saved account
+// and password. When an admin console URL is configured it deep-links to the
+// Passwords page for the destination. It returns prose and a URL only, never a
+// secret.
 func snapshotRelationCredentialGuidance(adminURL, destNAS string) string {
 	if adminURL != "" {
-		link := adminURL + "/admin/?view=credentials&nas=" + url.QueryEscape(destNAS) + "&method=password"
-		return fmt.Sprintf("The destination %q has no stored credential. Open the gateway console Credentials page to enter and store its DSM admin account and password, then re-run this tool:\n%s\nSnapshot Replication pairing needs an account and password; web login cannot be used for it.", destNAS, link)
+		link := adminURL + "/admin/?view=passwords&nas=" + url.QueryEscape(destNAS)
+		return fmt.Sprintf("The destination %q has no saved account and password. Open the gateway console Passwords page to add one, then re-run this tool:\n%s", destNAS, link)
 	}
-	return fmt.Sprintf("The destination %q has no stored credential. Store its DSM admin account and password on the gateway console Credentials page (or with `dsmctl auth login`), then re-run this tool. Snapshot Replication pairing needs an account and password; web login cannot be used for it.", destNAS)
+	return fmt.Sprintf("The destination %q has no saved account and password. Add one on the gateway console Passwords page (or with `dsmctl auth login`), then re-run this tool.", destNAS)
 }
 
 func New(service *application.Service, version string, opts ...Option) *mcp.Server {
