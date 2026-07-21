@@ -79,15 +79,47 @@ The full lifecycle (create with description+lock → edit attributes → toggle
 browsing on and off → delete) was live-verified on the DSM 7.3-81168 lab
 against a throwaway `dsmctl-e2e-snap-*` share, which was removed afterward.
 
+## Replication relation create (WI-090 — built, pairing blocked)
+
+`dsmctl snapshot relation plan|apply|delete` creates a **shared-folder
+replication relation from one NAS profile to another** through the same
+hash-bound plan/apply contract (`plan_snapshot_replication_create` /
+`apply_snapshot_replication_create` over MCP; both stripped from the read-only
+gateway). Both source and destination are configured profiles; you name them,
+and dsmctl resolves the **destination credential from its own vault profile at
+apply time only** — it never enters the plan, its hash, logs, or MCP arguments.
+The plan is high-risk and guards against overwriting destination data (no
+same-named share or existing relation), requires a healthy btrfs destination
+volume, verifies source→destination reachability, and confirms the created
+relation by plan id after polling the async task.
+
+```console
+dsmctl snapshot relation plan --source nas51 --dest nas255 --share data --dest-volume /volume1 -o plan.json
+dsmctl snapshot relation apply --nas nas51 -f plan.json --approve <hash>
+dsmctl snapshot relation delete --nas nas51 --plan-id <id>
+```
+
+> **Live status:** the operation is implemented, adversarially reviewed, and
+> unit-tested; on the nas51↔nas255 pair the apply runs end-to-end and mints the
+> destination session from its vault profile with **no secret in the plan**
+> (verified), but DSM's `SYNO.DR.Node.Credential temp_create` rejects a
+> forwarded session (error 528). DSM 7.4.7 mints the durable pairing credential
+> only through its `synocredential` OAuth2 (auth-code + PKCE) broker, which
+> dsmctl cannot drive headlessly yet. Until a headless-`synocredential`
+> follow-on lands (lead: `SYNO.Remote.Credential.Challenge/.Info`), establish
+> the relation once in the DSM UI; dsmctl reads and manages it thereafter. The
+> failover/switchover/reprotect family is surfaced read-only (`can_*`) and is
+> never executable here.
+
 ## Deferred
 
 - **Retention/schedule writes** (`SYNO.DisasterRecovery.Retention set` with an
   embedded schedule): the wire shape has many interacting fields and could not
   be end-to-end verified on the lab; the operation fails closed until a
   follow-on verifies it.
-- **Replication mutations** (create/edit/delete relations, sync-now, failover,
-  switchover, test-failover, re-protect): they need a second prepared NAS as a
-  replication target and carry extreme risk.
+- **Replication sync-now / edit / failover / switchover / test-failover /
+  re-protect**: sync/edit are a follow-on once create is live; the role-flipping
+  failover family is deferred (extreme risk) and exposed read-only only.
 - **Restore paths** (rollback a share to a snapshot, clone to a new share):
   destructive restore surfaces for a dedicated work item.
 - **LUN snapshots** stay with the SAN module.

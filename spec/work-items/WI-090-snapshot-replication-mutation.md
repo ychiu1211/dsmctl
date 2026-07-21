@@ -105,27 +105,77 @@ One guarded operation plus its read-back, all package-gated on
 
 ## Acceptance criteria
 
-- [ ] `snapshot replication create` (CLI) + `plan_snapshot_replication_create`
+- [x] `snapshot relation plan/apply` (CLI) + `plan_snapshot_replication_create`
       / `apply_snapshot_replication_create` (MCP) create a share relation
       source→dest through hash-bound plan/apply, resolving the destination
       credential internally at apply, with the never-overwrite + reachability
-      guards and the async-task postcondition.
-- [ ] The destination password never appears in the plan, hash, logs, MCP
-      arguments, or any model-visible output (verified live with logging on).
-- [ ] Extreme-risk classification; read-only gateway strips both tools; remote
-      apply requires single-use approval; `server_test` tool count + allowlist
-      updated.
+      guards and the async-task postcondition. **(Built + unit-tested; the
+      live create is blocked at DSM's credential-mint — see Live outcome.)**
+- [x] The destination password never appears in the plan, hash, logs, MCP
+      arguments, or any model-visible output. **Live-verified**: the real
+      `repl-plan.json` for nas51→nas255 contains only profile names + the
+      replication params (grep for passw/sid/synotoken/cred_id = none); the
+      dest session is minted inside `synology.Client` at apply and forwarded
+      only in local variables.
+- [x] High-risk classification (deliberately `"high"`, not `"extreme"`, which
+      would bypass the gateway approval gate that only fires on `"high"`); the
+      read-only gateway strips both tools; remote apply requires single-use
+      approval; `server_test` tool count (198→200) + allowlists updated.
 - [ ] Replication read decoder upgraded to **live-verified** per-plan fields
-      from a real relation; the WI-089 WIRE-UNVERIFIED caveat is cleared.
-- [ ] `snapshot replication delete` removes a relation (guarded).
-- [ ] Failover family exposed as read-only `can_*` reporting only; no
+      from a real relation — **BLOCKED**: no relation could be created live
+      (see Live outcome). The enriched decoder (role/sites/sync_report/can_do)
+      is implemented and unit-tested against the map's field list, but the
+      populated shape is still WIRE-UNVERIFIED.
+- [x] `snapshot relation delete` removes a relation by plan id (guarded, CLI).
+- [x] Failover family exposed as read-only `can_*` reporting only; no
       executable failover/switchover/reprotect in this slice.
-- [ ] Unit: request-capture for temp_create/check_remote_conn/create-v3/
-      get_poll_task/list/delete; plan hash + stale + tamper tests; a test
-      proving the plan/hash never contains the destination secret;
-      `go build ./...`, `go vet ./...`, `go test ./... -count=1` clean.
-- [ ] Live verification nas51→nas255 on a throwaway share, read back, then full
-      teardown (relation + throwaway shares), lab restored.
+- [x] Unit: request-capture for temp_create/check_remote_conn/create-v3/
+      get_poll_task/list/delete; plan hash + stale + tamper tests; a
+      no-secret-in-plan test; `go build ./...`, `go vet ./...`,
+      `go test ./... -count=1` clean.
+- [x] Adversarial review (4 lenses, 11 agents): secret-leak lens found 0;
+      wire-correctness findings refuted; 5 guard-logic defects confirmed and
+      fixed (confirm-by-plan-id, temp-cred cleanup on async failure,
+      case-insensitive collision, volume-health, source fan-out).
+- [ ] Live verification nas51→nas255 — **BLOCKED at the DSM credential-mint**
+      (see below). Teardown clean (throwaway source share removed; both NASes
+      at 0 plans; no partial replica).
+
+## Live outcome (2026-07-21) — BLOCKED at DSM's credential broker
+
+nas51 and nas255 run the package (DSM 7.3.2 / 7.3.1). The apply **ran
+end-to-end, unblocked**, through: TOCTOU re-plan → guards → mint the
+destination session from its vault profile (inside the tool) → forward it to
+the source → `SYNO.DR.Node.Credential temp_create`. temp_create returned
+**error 528**, rejecting the forwarded raw DSM session.
+
+Root cause (scouting's ranked-#1 make-or-break risk, now confirmed): DSM 7.4.7
+mints the durable pairing credential (`cred_id`) **only** through the shared
+`synocredential` component — an OAuth2 auth-code + PKCE broker that runs a
+prior login to the destination and returns a local broker *handle* (a numeric
+`id`, not a DSM sid), which `temp_create`'s `session` field consumes. The UI
+uses **no** account+password DR API path (confirmed by reading the 7.4.7
+`disaster_recovery.js`: `SYNO.DR.Node.Credential` is only ever called with
+`temp_create`/`delete`/`relay`/`get`; the create/check creds are always
+`auth:"cred_id"` from `temp_create`, or `account_in_cred`+`cred_id` in the HA
+unified-controller case — never a bare account+password). A raw forwarded
+session is therefore not accepted.
+
+This is a DSM-side design constraint, **not** a flaw in the vault-brokering:
+the credential architecture is proven (apply ran to the handshake, the dest
+session was minted from its vault profile inside the tool, and no secret
+reached the plan/hash/logs/model). What's missing is a headless equivalent of
+`synocredential.Issue`.
+
+Concrete follow-on lead: DSM exposes `SYNO.Remote.Credential` +
+`SYNO.Remote.Credential.Challenge` + `SYNO.Remote.Credential.Info` and
+`SYNO.Core.OAuth.Server` — very likely the backend `synocredential` wraps and
+the headless-capable challenge/response path. Pinning its params needs the
+`synocredential` source (not in the DR bundle; served path not found by probe)
+or authenticated probing. The alternative that needs no headless OAuth: the
+operator establishes one relation in the DSM UI (synocredential runs in their
+browser), after which dsmctl reads/manages it — which also unblocks the
+populated-decoder criterion above.
 
 ## Verification
 
@@ -147,4 +197,23 @@ One guarded operation plus its read-back, all package-gated on
 
 ## Handoff
 
-Fill this only when pausing incomplete work.
+**State (2026-07-21):** Implementation complete, adversarially reviewed (5
+fixes), full `go build/vet/test ./...` green; committed on
+`claude/snapshot-replication-integration-afbc59`. Reads live-verified; the
+guarded create is **blocked at DSM's `synocredential` credential-mint** (error
+528 — see Live outcome). No live relation exists; teardown is clean.
+
+**To finish, one of:**
+1. Implement a headless `synocredential` equivalent — reverse-engineer
+   `SYNO.Remote.Credential.Challenge`/`.Info` (+ `SYNO.Core.OAuth.Server`),
+   resolve the dest credential via the existing resolver at apply, mint the
+   broker handle, feed it to `temp_create`. Uncertain feasibility; needs the
+   `synocredential` source or authenticated probing. If the handle turns out
+   to be OAuth-token-based, `internal/weblogin` already does DSM OAuth (but
+   interactively) and is the starting point.
+2. Have the operator create one relation in the DSM UI, then live-verify the
+   `DR.Plan list` populated decoder via `dsmctl snapshot replication --nas …`
+   (no pairing needed) and clear the WIRE-UNVERIFIED caveat.
+
+Everything else (guards, plan/apply, vault-brokering, wire payloads, decoder,
+CLI/MCP, tests) is done and does not need rework.
