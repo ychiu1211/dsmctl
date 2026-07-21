@@ -26,11 +26,12 @@ type fakeReplicationRelationClient struct {
 	volAvail    uint64
 	plans       []snapshotreplication.ReplicationPlan
 
-	endpointSID string
-	pairCredID  string
-	createTask  string
-	pollStatus  snapshotreplication.RelationTaskStatus
-	failCheck   bool
+	endpointSID   string
+	pairCredID    string
+	createTask    string
+	pollStatus    snapshotreplication.RelationTaskStatus
+	confirmPlanID string // ID of the plan the confirming read reports (default plan-1)
+	failCheck     bool
 
 	// recorded
 	pairedSID          string
@@ -166,6 +167,62 @@ func TestApplyReplicationRelationStaleRejected(t *testing.T) {
 	}
 }
 
+func TestApplyReplicationRelationConfirmsByPlanID(t *testing.T) {
+	// The task self-reports success for plan-NEW, but the confirming list only
+	// contains a DIFFERENT, pre-existing relation for the same share name. The
+	// apply must NOT false-succeed (it must match on plan id, not target name).
+	source := newSourceRelation()
+	source.pollStatus.PlanID = "plan-NEW"
+	source.confirmPlanID = "plan-OLD" // a same-named but different relation
+	dest := newDestRelation()
+	plan, err := planReplicationRelationForTest(t, source, dest, snapshotreplication.RelationCreate{SourceShare: "data", DestVolume: "/volume1"})
+	if err != nil {
+		t.Fatalf("plan error = %v", err)
+	}
+	if _, err := applySnapshotReplicationRelationWithClients(context.Background(), "nas51", source, "nas255", dest, plan); err == nil || !strings.Contains(err.Error(), "is not listed") {
+		t.Fatalf("apply must reject a plan-id mismatch, got %v", err)
+	}
+	// The temporary credential must be cleaned up on this failure.
+	if len(source.deletedCreds) != 1 {
+		t.Fatalf("credential not cleaned up on confirm failure: %#v", source.deletedCreds)
+	}
+}
+
+func TestApplyReplicationRelationCleansUpOnTaskFailure(t *testing.T) {
+	source := newSourceRelation()
+	source.pollStatus = snapshotreplication.RelationTaskStatus{Finished: true, Success: false, Error: "destination out of space"}
+	dest := newDestRelation()
+	plan, err := planReplicationRelationForTest(t, source, dest, snapshotreplication.RelationCreate{SourceShare: "data", DestVolume: "/volume1"})
+	if err != nil {
+		t.Fatalf("plan error = %v", err)
+	}
+	if _, err := applySnapshotReplicationRelationWithClients(context.Background(), "nas51", source, "nas255", dest, plan); err == nil || !strings.Contains(err.Error(), "out of space") {
+		t.Fatalf("apply error = %v", err)
+	}
+	// A failed async task must still trigger temp-credential cleanup.
+	if len(source.deletedCreds) != 1 || source.deletedCreds[0] != "dest-cred-abc" {
+		t.Fatalf("credential leaked on async task failure: %#v", source.deletedCreds)
+	}
+}
+
+func TestPlanReplicationRelationRejectsSourceFanout(t *testing.T) {
+	source := newSourceRelation()
+	source.plans = []snapshotreplication.ReplicationPlan{{TargetName: "data"}}
+	dest := newDestRelation()
+	if _, err := planReplicationRelationForTest(t, source, dest, snapshotreplication.RelationCreate{SourceShare: "data", DestVolume: "/volume1"}); err == nil || !strings.Contains(err.Error(), "source") {
+		t.Fatalf("expected a source-relation-exists error, got %v", err)
+	}
+}
+
+func TestPlanReplicationRelationCaseInsensitiveCollision(t *testing.T) {
+	source := newSourceRelation()
+	dest := newDestRelation()
+	dest.shares = append(dest.shares, "Data") // case-variant of source share "data"
+	if _, err := planReplicationRelationForTest(t, source, dest, snapshotreplication.RelationCreate{SourceShare: "data", DestVolume: "/volume1"}); err == nil || !strings.Contains(err.Error(), "already has a share named") {
+		t.Fatalf("expected a case-insensitive collision error, got %v", err)
+	}
+}
+
 func TestApplyReplicationRelationCleansUpCredentialOnCheckFailure(t *testing.T) {
 	source := newSourceRelation()
 	source.failCheck = true
@@ -228,7 +285,11 @@ func (c *fakeReplicationRelationClient) StorageState(context.Context) (synology.
 func (c *fakeReplicationRelationClient) SnapshotReplicationPlans(context.Context) (synology.SnapshotReplicationPlans, error) {
 	plans := append([]snapshotreplication.ReplicationPlan(nil), c.plans...)
 	if c.confirmAfterCreate && c.createdWith != nil {
-		plans = append(plans, snapshotreplication.ReplicationPlan{ID: "plan-1", TargetName: c.createdWith.SourceShare})
+		id := c.confirmPlanID
+		if id == "" {
+			id = "plan-1"
+		}
+		plans = append(plans, snapshotreplication.ReplicationPlan{ID: id, TargetName: c.createdWith.SourceShare})
 	}
 	return synology.SnapshotReplicationPlans{Total: len(plans), Plans: plans}, nil
 }

@@ -634,10 +634,31 @@ type SnapshotReplicationRelationObserved struct {
 	DestVolumeExists     bool   `json:"dest_volume_exists" jsonschema:"Whether the destination volume exists"`
 	DestVolumeBtrfs      bool   `json:"dest_volume_btrfs" jsonschema:"Whether the destination volume is btrfs"`
 	DestVolumeWritable   bool   `json:"dest_volume_writable" jsonschema:"Whether the destination volume is writable and idle"`
+	DestVolumeHealthy    bool   `json:"dest_volume_healthy" jsonschema:"Whether the destination volume is in a normal/healthy state"`
 	DestVolumeAvailBytes uint64 `json:"dest_volume_available_bytes" jsonschema:"Destination volume free bytes at planning time"`
 	SourceUsedBytes      uint64 `json:"source_used_bytes" jsonschema:"Source volume used bytes at planning time (space heuristic)"`
 	DestShareCollision   bool   `json:"dest_share_collision" jsonschema:"Whether a share of the same name already exists on the destination"`
 	DestRelationExists   bool   `json:"dest_relation_exists" jsonschema:"Whether the destination already has a replication relation for this target"`
+	SourceRelationExists bool   `json:"source_relation_exists" jsonschema:"Whether the source already has a replication relation for this share"`
+}
+
+// volumeHealthy reports whether a DSM volume is fit to receive a replica. It
+// uses a denylist of genuinely-bad states (crashed, degraded/redundancy-lost,
+// read-only, error) rather than an allowlist, because DSM reports many benign
+// transient states (background_optimizing, scrubbing, expanding, attention…)
+// that must not block a healthy destination.
+func volumeHealthy(status, health string) bool {
+	bad := []string{"crash", "degrade", "error", "read_only", "readonly", "corrupt", "unrecogn"}
+	ok := func(s string) bool {
+		s = strings.ToLower(strings.TrimSpace(s))
+		for _, marker := range bad {
+			if strings.Contains(s, marker) {
+				return false
+			}
+		}
+		return true
+	}
+	return ok(status) && ok(health)
 }
 
 type SnapshotReplicationRelationPlan struct {
@@ -773,6 +794,7 @@ func planSnapshotReplicationRelationWithClients(ctx context.Context, sourceName 
 		if volume.Path == request.DestVolume {
 			observed.DestVolumeExists = true
 			observed.DestVolumeBtrfs = volume.FileSystem == "btrfs"
+			observed.DestVolumeHealthy = volumeHealthy(volume.Status, volume.Health)
 			observed.DestVolumeWritable = volume.Writable && !volume.ReadOnly && !volume.Actioning
 			observed.DestVolumeAvailBytes = volume.AvailableBytes
 		}
@@ -786,32 +808,52 @@ func planSnapshotReplicationRelationWithClients(ctx context.Context, sourceName 
 	if !observed.DestVolumeWritable {
 		return SnapshotReplicationRelationPlan{}, fmt.Errorf("destination volume %q on %q is read-only or busy", request.DestVolume, destName)
 	}
+	if !observed.DestVolumeHealthy {
+		return SnapshotReplicationRelationPlan{}, fmt.Errorf("destination volume %q on %q is not in a normal/healthy state", request.DestVolume, destName)
+	}
 
 	// Never overwrite destination data: refuse a same-named share or an existing
-	// inbound relation for this target on the destination.
+	// relation for this target on the destination. DSM shared-folder names are
+	// case-insensitive, so match case-insensitively.
 	destShares, err := destClient.ShareState(ctx, false)
 	if err != nil {
 		return SnapshotReplicationRelationPlan{}, authenticationError(destName, err)
 	}
 	for _, share := range destShares.Shares {
-		if share.Name == request.SourceShare {
+		if strings.EqualFold(share.Name, request.SourceShare) {
 			observed.DestShareCollision = true
 		}
 	}
 	if observed.DestShareCollision {
-		return SnapshotReplicationRelationPlan{}, fmt.Errorf("destination %q already has a share named %q; refusing to overwrite it", destName, request.SourceShare)
+		return SnapshotReplicationRelationPlan{}, fmt.Errorf("destination %q already has a share named %q (case-insensitive); refusing to overwrite it", destName, request.SourceShare)
 	}
 	destPlans, err := destClient.SnapshotReplicationPlans(ctx)
 	if err != nil {
 		return SnapshotReplicationRelationPlan{}, authenticationError(destName, err)
 	}
 	for _, plan := range destPlans.Plans {
-		if plan.TargetName == request.SourceShare {
+		if strings.EqualFold(plan.TargetName, request.SourceShare) {
 			observed.DestRelationExists = true
 		}
 	}
 	if observed.DestRelationExists {
 		return SnapshotReplicationRelationPlan{}, fmt.Errorf("destination %q already has a replication relation for target %q", destName, request.SourceShare)
+	}
+
+	// Also refuse if the SOURCE already has a relation for this share, so a
+	// fan-out is an explicit, separate decision rather than a silent second copy
+	// that would also defeat the create's confirming read.
+	sourcePlans, err := sourceClient.SnapshotReplicationPlans(ctx)
+	if err != nil {
+		return SnapshotReplicationRelationPlan{}, authenticationError(sourceName, err)
+	}
+	for _, plan := range sourcePlans.Plans {
+		if strings.EqualFold(plan.TargetName, request.SourceShare) {
+			observed.SourceRelationExists = true
+		}
+	}
+	if observed.SourceRelationExists {
+		return SnapshotReplicationRelationPlan{}, fmt.Errorf("source %q already has a replication relation for share %q", sourceName, request.SourceShare)
 	}
 
 	plan := SnapshotReplicationRelationPlan{
@@ -900,12 +942,18 @@ func applySnapshotReplicationRelationWithClients(ctx context.Context, sourceName
 	if err != nil {
 		return SnapshotReplicationRelationApplyResult{}, authenticationError(sourceName, err)
 	}
-	// On any failure past this point, best-effort clean up the temporary cred.
-	committed := false
+	// Best-effort clean up the temporary credential on ANY failure — including an
+	// async task failure/timeout — until the relation is independently confirmed.
+	// The cleanup runs even if ctx was cancelled (WithoutCancel + a bounded
+	// timeout), since a live destination session must not be orphaned.
+	confirmedOK := false
 	defer func() {
-		if !committed {
-			_ = sourceClient.DeleteReplicationCredential(ctx, credID)
+		if confirmedOK {
+			return
 		}
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		_ = sourceClient.DeleteReplicationCredential(cleanupCtx, credID)
 	}()
 
 	if err := sourceClient.CheckReplicationRemoteConn(ctx, pairEndpoint, credID); err != nil {
@@ -916,27 +964,32 @@ func applySnapshotReplicationRelationWithClients(ctx context.Context, sourceName
 	if err != nil {
 		return SnapshotReplicationRelationApplyResult{}, authenticationError(sourceName, err)
 	}
-	committed = true // the create consumed the credential into the plan
 
 	status, err := awaitReplicationCreate(ctx, sourceClient, taskID)
 	if err != nil {
 		return SnapshotReplicationRelationApplyResult{}, err
 	}
+	if status.PlanID == "" {
+		return SnapshotReplicationRelationApplyResult{}, fmt.Errorf("replication create task reported no plan id")
+	}
 
-	// Confirm independently: the relation must be listed on the source.
+	// Confirm independently: the SPECIFIC plan the task created must be listed on
+	// the source. Match on the created plan id, not the share name — a pre-existing
+	// unrelated relation for the same share name must not satisfy this check.
 	confirmed, err := sourceClient.SnapshotReplicationPlans(ctx)
 	if err != nil {
 		return SnapshotReplicationRelationApplyResult{}, fmt.Errorf("verify replication relation: %w", err)
 	}
 	found := false
 	for _, relation := range confirmed.Plans {
-		if relation.TargetName == plan.Request.SourceShare {
+		if relation.ID == status.PlanID {
 			found = true
 		}
 	}
 	if !found {
-		return SnapshotReplicationRelationApplyResult{}, fmt.Errorf("replication relation for %q is not listed on %q after create", plan.Request.SourceShare, sourceName)
+		return SnapshotReplicationRelationApplyResult{}, fmt.Errorf("replication plan %q is not listed on %q after create", status.PlanID, sourceName)
 	}
+	confirmedOK = true
 	return SnapshotReplicationRelationApplyResult{
 		SourceNAS:    sourceName,
 		DestNAS:      destName,
