@@ -23,6 +23,8 @@ type Service struct {
 	credentialStore  CredentialStore
 	remoteApply      RemoteApplyAuthorizer
 	discoveryStore   *discoveryStore
+	provisioner      Provisioner
+	provisionSink    ProvisionSink
 }
 
 type SystemInfoResult struct {
@@ -172,6 +174,7 @@ func NewService(cfg *config.Config, manager *runtime.Manager, options ...Service
 		configSource:     config.StaticSource{Config: cfg},
 		manager:          manager,
 		secretReferences: credentials.NewEnvironmentReferenceResolver(),
+		provisioner:      directProvisioner{},
 	}
 	for _, option := range options {
 		option(service)

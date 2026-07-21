@@ -167,15 +167,16 @@ func TestExecuteProfileRulesDecodesLiveEmptyShape(t *testing.T) {
 	}
 }
 
-// TestExecuteProfileRulesDecodesPopulatedRule exercises the WIRE-UNVERIFIED
-// per-rule decoder against a synthetic populated rule (the lab had none). It
-// documents the best-knowledge field mapping and proves order is preserved.
+// TestExecuteProfileRulesDecodesPopulatedRule exercises the per-rule decoder
+// against the live-confirmed rule field shape (enable, name, policy, protocol,
+// port_direction, port_group, ports, source_ip_group, source_ip, log) and proves
+// order is preserved.
 func TestExecuteProfileRulesDecodesPopulatedRule(t *testing.T) {
 	exec := &recordingExecutor{responses: map[string]json.RawMessage{
 		FirewallProfileAPIName + ".get.custom": json.RawMessage(`{
-			"eth0":{"policy":"deny","total":2,"rules":[
-				{"enable":true,"policy":"allow","proto":"tcp","ip_ver":"ipv4","src_type":"all","port_type":"custom","port":"5000,5001","name":"web"},
-				{"enable":false,"policy":"drop","proto":"udp","src_type":"ip","src":"203.0.113.7","port_type":"all"}
+			"eth0":{"policy":"drop","total":2,"rules":[
+				{"enable":true,"log":false,"name":"web","policy":"allow","protocol":"tcp","port_direction":"destination","port_group":"ports","ports":"5000,5001","source_ip_group":"all","source_ip":"all"},
+				{"enable":false,"log":true,"name":"","policy":"drop","protocol":"udp","port_direction":"destination","port_group":"all","ports":"all","source_ip_group":"ip","source_ip":"203.0.113.7"}
 			]},
 			"name":"custom"
 		}`),
@@ -188,16 +189,16 @@ func TestExecuteProfileRulesDecodesPopulatedRule(t *testing.T) {
 		t.Fatalf("adapters = %#v", rules.Adapters)
 	}
 	adapter := rules.Adapters[0]
-	if adapter.Adapter != "eth0" || adapter.Policy != "deny" || adapter.Total != 2 || len(adapter.Rules) != 2 {
+	if adapter.Adapter != "eth0" || adapter.Policy != "drop" || adapter.Total != 2 || len(adapter.Rules) != 2 {
 		t.Fatalf("adapter = %#v", adapter)
 	}
 	first := adapter.Rules[0]
-	if !first.Enabled || first.Policy != "allow" || first.Protocol != "tcp" || first.IPVersion != "ipv4" ||
-		first.SourceType != "all" || first.PortType != "custom" || first.Ports != "5000,5001" || first.Name != "web" {
+	if !first.Enabled || first.Policy != "allow" || first.Protocol != "tcp" || first.PortDirection != "destination" ||
+		first.SourceGroup != "all" || first.PortGroup != "ports" || first.Ports != "5000,5001" || first.Name != "web" || first.Log {
 		t.Fatalf("first rule = %#v", first)
 	}
 	second := adapter.Rules[1]
-	if second.Enabled || second.Policy != "drop" || second.Source != "203.0.113.7" || second.SourceType != "ip" {
+	if second.Enabled || second.Policy != "drop" || second.Source != "203.0.113.7" || second.SourceGroup != "ip" || !second.Log {
 		t.Fatalf("second rule = %#v", second)
 	}
 }

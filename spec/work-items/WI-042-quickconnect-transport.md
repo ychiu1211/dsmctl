@@ -19,7 +19,7 @@ touches:
 ## Outcome
 
 dsmctl can reach a NAS given only its QuickConnect ID (for example
-`derekchiu3018`) instead of a directly routable `https://host:port` URL, by
+`testnas3018`) instead of a directly routable `https://host:port` URL, by
 resolving the ID to a reachable endpoint before the existing web-login and
 client machinery runs. This is a **connection-layer** capability, distinct from
 the read/write *management* of QuickConnect settings in
@@ -125,7 +125,7 @@ Sliced so the tractable Direct path can ship without the relay/tunnel client.
 - [ ] Opt-in and fail-closed: no silent coordinator calls; a resolution failure
       is a clear, actionable error; the TLS-verification story for QC endpoints
       is decided and enforced.
-- [ ] Live verification: resolve a real QC ID (the lab's `derekchiu3018`) to its
+- [ ] Live verification: resolve a real QC ID (the lab's `testnas3018`) to its
       Direct candidates and complete a `system info` read over the resolved
       endpoint.
 - [ ] Relay/hole-punch explicitly out of this slice, tracked for a follow-up.
@@ -134,7 +134,7 @@ Sliced so the tractable Direct path can ship without the relay/tunnel client.
 
 - Unit tests with recorded coordinator fixtures (validate parsing + candidate
   ordering + rejection of malformed/unsafe addresses).
-- Live resolution against the lab's QuickConnect ID `derekchiu3018` (region
+- Live resolution against the lab's QuickConnect ID `testnas3018` (region
   `tw`), then a read over the resolved endpoint. No mutation, so no special
   write authorization is required.
 

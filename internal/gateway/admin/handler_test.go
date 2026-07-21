@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -43,7 +44,7 @@ func TestAuthenticatedLANDiscovery(t *testing.T) {
 	var received discovery.Query
 	handler.discoverer = discovererFunc(func(_ context.Context, query discovery.Query) (application.DiscoverResult, error) {
 		received = query
-		return application.DiscoverResult{Devices: []discovery.Device{{Hostname: "office-nas", Model: "DS923+", IPAddress: "10.17.32.82", IPv4Addresses: []string{"10.17.32.82"}, State: discovery.StateReady}}}, nil
+		return application.DiscoverResult{Devices: []discovery.Device{{Hostname: "office-nas", Model: "DS923+", IPAddress: "192.0.2.82", IPv4Addresses: []string{"192.0.2.82"}, State: discovery.StateReady}}}, nil
 	})
 
 	unauthorized := performJSON(handler, http.MethodPost, "/admin/api/discovery", `{"timeout_seconds":3}`, "")
@@ -57,7 +58,7 @@ func TestAuthenticatedLANDiscovery(t *testing.T) {
 	if received.Timeout != 3*time.Second {
 		t.Fatalf("discovery timeout = %s", received.Timeout)
 	}
-	if body := response.Body.String(); !strings.Contains(body, `"hostname":"office-nas"`) || !strings.Contains(body, `"ip_address":"10.17.32.82"`) {
+	if body := response.Body.String(); !strings.Contains(body, `"hostname":"office-nas"`) || !strings.Contains(body, `"ip_address":"192.0.2.82"`) {
 		t.Fatalf("discovery response = %s", body)
 	}
 	invalid := performJSON(handler, http.MethodPost, "/admin/api/discovery", `{"timeout_seconds":61}`, token)
@@ -593,6 +594,13 @@ func TestAdminUIHasNoEmbeddedCredential(t *testing.T) {
 		`value="365" selected`, `value="nas.read" checked`, `value="nas.plan" checked`, `value="nas.apply" checked`, `value="lan.discover" checked`,
 		`error.payload=value`, `location.pathname.replace(/\/admin\/?$/,'/mcp')`, `transport:'streamable-http'`, `show(message)`,
 		`id="credentialDialog"`, `id="approvalRequests"`, `id="auditRows"`, `confirm_new_password`,
+		`id="revealDialog"`, `/credentials/password/reveal`, `data-i18n="revealPassword"`,
+		`onclick="copyText(revealedAccount,t('accountCopied'))"`, `data-i18n="copyAccount"`, `{label:t('openNAS'),action:()=>window.open(profile.url,'_blank','noopener')}`,
+		`openNAS:'Open NAS'`, `openNAS:'開啟 NAS'`, `copyAccount:'複製帳號'`,
+		`id="provisionDialog"`, `async function submitProvision(event)`, `/profiles/'+encodeURIComponent(name)+'/provision'`,
+		`if(profile.role!=='target'&&!hasAuthentication)items.push({label:t('provision')`, `provision:'Provision fresh NAS'`, `provision:'安裝全新 NAS'`,
+		`id="exportDialog"`, `onclick="openExportDialog()"`, `data-i18n="exportCredentials"`, `async function submitExport(event)`, `apiBase+'/credentials/export'`, `link.download='dsmctl-nas-credentials.csv'`,
+		`exportCredentials:'Export credentials'`, `exportCredentials:'匯出憑證'`, `downloadCSV:'CSV herunterladen'`,
 	} {
 		if !strings.Contains(recorder.Body.String(), required) {
 			t.Fatalf("UI is missing redesigned application shell marker %q", required)
@@ -942,6 +950,116 @@ func TestPasswordEnrollmentFailureIsLoggedServerSideAndRedacted(t *testing.T) {
 	}
 	if strings.Contains(logText, "wrong-enrollment-password") || strings.Contains(logText, "654321") {
 		t.Fatalf("server log leaked an enrollment secret: %s", logText)
+	}
+}
+
+func TestExportCredentialsRequiresAdministratorReverification(t *testing.T) {
+	handler, repository, manager, adminSession := newTestHandler(t)
+	defer manager.Close(context.Background())
+	ctx := context.Background()
+	if _, err := repository.CreateProfile(ctx, state.ProfileInput{Name: "office", URL: "https://office.example:5001", Username: "operator"}); err != nil {
+		t.Fatal(err)
+	}
+	// A second profile with neither a stored account nor a stored password
+	// exercises the empty-field requirement.
+	if _, err := repository.CreateProfile(ctx, state.ProfileInput{Name: "lab", URL: "https://10.0.0.9:5001"}); err != nil {
+		t.Fatal(err)
+	}
+	const secret = "export-only-with-admin-password"
+	if _, err := repository.SavePassword(ctx, "office", secret); err != nil {
+		t.Fatal(err)
+	}
+
+	if getResp := performJSON(handler, http.MethodGet, "/admin/api/credentials/export", "", adminSession); getResp.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET export status = %d", getResp.Code)
+	}
+
+	unauth := performJSON(handler, http.MethodPost, "/admin/api/credentials/export", `{"password":"correct horse battery staple"}`, "")
+	if unauth.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated export status = %d", unauth.Code)
+	}
+
+	wrong := performJSON(handler, http.MethodPost, "/admin/api/credentials/export", `{"password":"not the admin password"}`, adminSession)
+	if wrong.Code != http.StatusUnauthorized || strings.Contains(wrong.Body.String(), secret) {
+		t.Fatalf("wrong-admin-password export status = %d body=%s", wrong.Code, wrong.Body.String())
+	}
+
+	ok := performJSON(handler, http.MethodPost, "/admin/api/credentials/export", `{"password":"correct horse battery staple"}`, adminSession)
+	if ok.Code != http.StatusOK {
+		t.Fatalf("export status = %d body=%s", ok.Code, ok.Body.String())
+	}
+	if contentType := ok.Header().Get("Content-Type"); !strings.HasPrefix(contentType, "text/csv") {
+		t.Fatalf("export Content-Type = %q", contentType)
+	}
+	if disposition := ok.Header().Get("Content-Disposition"); !strings.Contains(disposition, "dsmctl-nas-credentials.csv") {
+		t.Fatalf("export Content-Disposition = %q", disposition)
+	}
+	body := strings.TrimPrefix(ok.Body.String(), "\ufeff")
+	records, err := csv.NewReader(strings.NewReader(body)).ReadAll()
+	if err != nil {
+		t.Fatalf("parse export CSV: %v", err)
+	}
+	if len(records) != 3 {
+		t.Fatalf("export rows = %d, want header + 2 profiles: %#v", len(records), records)
+	}
+	if got := strings.Join(records[0], ","); got != "name,host,url,account,password" {
+		t.Fatalf("export header = %q", got)
+	}
+	byName := map[string][]string{}
+	for _, row := range records[1:] {
+		byName[row[0]] = row
+	}
+	office, lab := byName["office"], byName["lab"]
+	if office == nil || lab == nil {
+		t.Fatalf("export missing a profile row: %#v", records)
+	}
+	if office[1] != "office.example" || office[2] != "https://office.example:5001" || office[3] != "operator" || office[4] != secret {
+		t.Fatalf("office row = %#v", office)
+	}
+	if lab[1] != "10.0.0.9" || lab[3] != "" || lab[4] != "" {
+		t.Fatalf("lab row must have an empty account and password: %#v", lab)
+	}
+
+	events, err := repository.AuditEvents(ctx, state.AuditQuery{Action: "credential.export", Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var success, denied int
+	for _, event := range events {
+		if strings.Contains(fmt.Sprintf("%v", event), secret) {
+			t.Fatalf("audit event leaked the exported password: %#v", event)
+		}
+		switch event.Outcome {
+		case "success":
+			success++
+		case "denied":
+			denied++
+		}
+	}
+	if success == 0 || denied == 0 {
+		t.Fatalf("expected both success and denied credential.export audit events, got success=%d denied=%d", success, denied)
+	}
+}
+
+func TestExportCredentialsRateLimited(t *testing.T) {
+	handler, repository, manager, adminSession := newTestHandler(t)
+	defer manager.Close(context.Background())
+	if _, err := repository.CreateProfile(context.Background(), state.ProfileInput{Name: "office", URL: "https://office.example:5001", Username: "operator"}); err != nil {
+		t.Fatal(err)
+	}
+	var limited bool
+	for attempt := 1; attempt <= 6; attempt++ {
+		response := performJSON(handler, http.MethodPost, "/admin/api/credentials/export", `{"password":"wrong administrator password"}`, adminSession)
+		if response.Code == http.StatusTooManyRequests {
+			limited = true
+			break
+		}
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("export attempt %d status = %d", attempt, response.Code)
+		}
+	}
+	if !limited {
+		t.Fatal("repeated failed exports were not rate limited")
 	}
 }
 

@@ -424,7 +424,7 @@ unverified field cannot corrupt state. Reaching a NAS *by* its QuickConnect ID i
 a separate connection-layer concern in
 [WI-042](../spec/work-items/WI-042-quickconnect-transport.md).
 
-## Terminal and SNMP (read-only)
+## Terminal and SNMP
 
 DSM's Control Panel → Terminal & SNMP page carries two independent DSM API
 families with independent failure boundaries: the Terminal tab (SSH/Telnet) is
@@ -464,12 +464,51 @@ the Terminal or SNMP configuration.
 Verified live on DSM 7.3: `SYNO.Core.Terminal` v1–v3 (`enable_ssh`,
 `enable_telnet`, `ssh_port`, `forbid_console`) and `SYNO.Core.SNMP` v1
 (`enable_snmp`, `enable_snmp_v1v2`, `enable_snmp_v3`, `location`, `contact`,
-`rocommunity`, `rouser`). The trap-field names are the author's best knowledge
-and are decoded tolerantly, pending a live sample with SNMP and a trap
-configured. Guarded writes (SSH enable / port / Telnet, SNMP enable / versions /
-device info, and the community and SNMPv3 credentials via a credential
-reference) are a deferred follow-on and, like the other guarded modules, will be
-excluded from the read-only gateway.
+`rocommunity`, `rouser`).
+
+### Guarded writes
+
+Both areas take patch-only changes through the hash-bound plan/apply contract,
+merged into a freshly read state so an unspecified switch is never silently
+reset, then re-read to verify the effect. Both plan/apply pairs are excluded
+from the read-only MCP gateway.
+
+```console
+echo '{"ssh_port":2222}' | dsmctl control-panel terminal-snmp terminal-plan --nas office -f -
+dsmctl control-panel terminal-snmp terminal-apply --nas office -f plan.json --approve <hash>
+
+WI071_COMMUNITY=... dsmctl control-panel terminal-snmp snmp-apply --nas office -f plan.json --approve <hash>
+```
+
+- **Terminal** set (`SYNO.Core.Terminal` `set`, v3→v2→v1): `ssh_enabled`,
+  `ssh_port`, `telnet_enabled`, `console_forbidden`. Enabling SSH or Telnet, or
+  disabling SSH, is classified **high** risk — it changes the human remote-shell
+  attack surface (dsmctl itself drives DSM over the WebAPI session, not SSH, so
+  its own access survives). An SSH-port change is medium and warns to verify the
+  matching firewall rule / upstream port forward separately (out of scope here).
+- **SNMP** set (`SYNO.Core.SNMP` `set`, v1): `enabled`, `v1_v2c_enabled`,
+  `v3_enabled` (disable only), `location`, `contact`, and the read community.
+  Every SNMP change is **medium** risk. The read community is a **secret**
+  supplied as `community_credential_ref: env:NAME`, resolved to bytes only at
+  apply time and sent solely in the SNMP `set` request body (as `rocommunity`);
+  the reference NAME — never the community value — is all that enters the plan,
+  the approval hash, the result, or a log line. A request-capture unit test
+  proves the resolved secret rides only the wire request and is zeroized after.
+
+**WIRE-UNVERIFIED (not writable through this module).** Enabling SNMPv3 requires
+a v3 auth passphrase whose DSM `set`-field names could not be confirmed live
+(DSM returns error 2202 for every candidate, and the module admin JS was not
+fetchable); only *disabling* v3 is supported. The SNMP trap target is likewise
+unverified — no trap field appears in the SNMP `get` response even while the
+service is enabled, so a trap write cannot be confirmed by a postcondition
+re-read. Both are left capability-only pending a codesearch/JS confirmation.
+
+DSM quirks confirmed live and handled: SNMP `set` returns code 2202 when a
+required secret is missing (v1/v2c enabled with no community, or v3 enabled with
+no passphrase) — the plan pre-checks the community case; and an empty-string
+`location`/`contact` is applied only while the service is enabled (DSM ignores an
+empty-string write while SNMP is disabled), and DSM has no API to blank a
+configured community once set.
 
 ## Login Portal (read-only)
 
@@ -531,6 +570,339 @@ follow-on. Guarded writes (DSM ports/HSTS/redirect/domain, application portal
 alias/port, reverse-proxy rule CRUD) are a deferred follow-on and are **HIGH
 risk** — each changes how DSM itself is reached — and, like the other guarded
 modules, will be excluded from the read-only gateway.
+
+## DSM Update & Restore (read-only)
+
+DSM's Control Panel → Update & Restore page carries two independent DSM API
+families with independent failure boundaries: the DSM-update family
+(`SYNO.Core.Upgrade`, `SYNO.Core.Upgrade.Server`, `SYNO.Core.Upgrade.Setting`)
+and the configuration-backup family (`SYNO.Backup.Config.AutoBackup`). One being
+absent reports `(not supported)` without disabling the others, and the
+update-server offered-update check — a network egress to Synology's update
+server — reports availability as `(unknown)` rather than erroring the module
+when the server is unreachable.
+
+```console
+dsmctl dsm-update capabilities --nas office
+dsmctl dsm-update status --nas office --json
+dsmctl dsm-update available --nas office --json
+dsmctl dsm-update policy --nas office --json
+dsmctl dsm-update config-backup --nas office --json
+```
+
+- **Update status** reads `SYNO.Core.Upgrade` (`status`) → whether an upgrade is
+  allowed and the local update state (`none`, downloading, downloaded,
+  installing). The installed DSM version/build is merged from the discovered
+  compatibility target, since the status method does not return it.
+- **Available update** checks `SYNO.Core.Upgrade.Server` (`check`, matching the
+  DSM WebUI's `need_auto_smallupdate:true` parameter) → whether the update server
+  offers an update. The response decoder tolerates both the flat v1
+  (`{available}`) and the wrapped v2+ (`{update:{available, rss_result}}`) shapes.
+  When an update is available DSM returns the offered version and its
+  restart/criticality flags inside the nested object; those detail fields were
+  not observable on the lab (no update was pending), so they are surfaced
+  verbatim under `details` by their raw DSM key rather than through a guessed
+  typed decoder — nothing is fabricated and nothing is dropped.
+- **Auto-update policy** reads `SYNO.Core.Upgrade.Setting` (`get`). v2 is
+  selected deliberately: it carries the complete policy (`autoupdate_enable`,
+  `autoupdate_type`, `schedule`, `smart_nano_enabled`, `upgrade_type`), while the
+  v1 fallback only reports the older `auto_download`/`upgrade_type` pair.
+  Version-specific fields are pointer-typed, so "off" is never confused with "not
+  reported by this DSM version".
+- **Configuration backup** reads `SYNO.Backup.Config.AutoBackup` (`get`) → whether
+  the scheduled backup to the Synology account is enabled, the destination
+  account and encryption mode, and the last-backup result, enriched with the
+  stored backup history (`list`) when available. The history enrichment is
+  secondary: a NAS whose `list` method is absent or fails still returns the
+  settings.
+
+**Secret suppression is mandatory on read.** The config-backup settings response
+carries the destination account password (`pwd`); the decoder **never references
+it**, so it cannot be learned or leaked. The destination account identifier is
+surfaced (like an SMTP auth user) so an operator can see where the configuration
+is backed up. A unit test injects a password canary and asserts the re-encoded
+model carries no trace, and a live `--json` grep confirms no password leak.
+
+MCP exposes the same reads through `get_dsm_update_capabilities`,
+`get_dsm_update_status`, `get_dsm_update_available`, `get_dsm_update_policy`, and
+`get_dsm_update_config_backup`. All are read-only.
+
+Verified live on DSM 7.3: `SYNO.Core.Upgrade` v2 `status`
+(`allow_upgrade`, `status`), `SYNO.Core.Upgrade.Server` v3 `check`
+(`update.available`, `update.rss_result`), `SYNO.Core.Upgrade.Setting` v2 `get`
+(the five policy fields above), and `SYNO.Backup.Config.AutoBackup` v1 `get`
+(`enable`, `enc_method`, `last_status`, `myds_account`; `pwd` deliberately never
+read) and `list` (the stored-backup version history). Installing a DSM update
+(`SYNO.Core.Upgrade.Server.Download` / `.Patch`) and restoring a configuration
+(`SYNO.Backup.Config.Restore`) are deliberately **not** implemented: both reboot
+or overwrite the whole system and are deferred with reason (a DSM-update install
+reboots the entire NAS so its plan/apply postcondition cannot be verified in the
+same session; a config restore overwrites the system configuration wholesale and
+can lock the administrator out). No install or restore path is exposed on any
+surface — CLI, MCP, or the read-only gateway.
+
+## Hardware & Power (read-only)
+
+DSM's Control Panel → Hardware & Power page carries four independent DSM API
+families with independent failure boundaries: general hardware comfort settings
+(beep control, fan speed, LED brightness — themselves three independently gated
+sub-areas), the power schedule, power recovery, and the UPS. One being absent
+reports `(not supported)` without disabling the others, and each fails closed
+(no silent empty-success decode) when its API is missing. Every field is **model
+dependent**: presence is taken from the live `get`, and absent fields are
+reported not-supported rather than fabricated.
+
+```console
+dsmctl hardware capabilities --nas office
+dsmctl hardware general --nas office --json
+dsmctl hardware power-schedule --nas office --json
+dsmctl hardware power-recovery --nas office --json
+dsmctl hardware ups --nas office --json
+```
+
+- **General hardware** reads three independently gated sub-areas:
+  `SYNO.Core.Hardware.BeepControl` (`get`) → per-event beep flags, each paired
+  with the model's `support_` capability flag so an unsupported event is reported
+  rather than assumed; `SYNO.Core.Hardware.FanSpeed` (`get`) → the fan-speed mode
+  enum (`dual_fan_speed`, e.g. `quietfan`) plus model descriptors; and
+  `SYNO.Core.Hardware.Led.Brightness` (`get`) → the LED brightness level and the
+  168-character weekly on/off schedule mask. Note the five-segment LED API name
+  (`…Led.Brightness`, not `…Led`).
+- **Power schedule** reads `SYNO.Core.Hardware.PowerSchedule` (`load` — `get` and
+  `list` return DSM code 103) → the power-on and power-off task arrays and the
+  enabled-task count. A power-off task makes the NAS unreachable at its scheduled
+  time.
+- **Power recovery** reads `SYNO.Core.Hardware.PowerRecovery` (`get`) → whether
+  the NAS restores its previous power state after a power loss (`rc_power_config`;
+  false = stay off, manual power-on required) and the per-NIC Wake-on-LAN state.
+- **UPS** reads `SYNO.Core.ExternalDevice.UPS` (`get` — `load` returns code 103)
+  → UPS enabled, mode (local USB / SNMP / network slave), whether a USB UPS is
+  attached with its battery charge/runtime, the safe-shutdown threshold
+  (`delay_time`; the DSM sentinel `-1` = shut down only when the battery reaches
+  low), the network-UPS-server enable and permitted-slave allow-list, and the
+  master IP when this NAS is a slave. The API is present even when no UPS is
+  attached, in which case the no-device path (disabled, not connected, status
+  unknown) is reported.
+
+**Secret suppression is mandatory on read.** The UPS `get` response carries the
+SNMP-UPS community string (`snmp_community`) and auth/privacy key indicators. The
+decoder **never surfaces the community value**: it reports only whether a
+community and the auth/privacy keys are configured (`community_set`,
+`auth_key_set`, `privacy_key_set`). A unit test injects a canary community and
+asserts the re-encoded model carries no trace, and a live `--json` grep confirms
+no leak.
+
+MCP exposes the same reads through `get_hardware_capabilities`,
+`get_hardware_general`, `get_hardware_power_schedule`,
+`get_hardware_power_recovery`, and `get_hardware_ups`. All are read-only and
+never change any hardware, power, or UPS setting.
+
+Verified live on DSM 7.3 (DS3018xs): `SYNO.Core.Hardware.BeepControl` v1 `get`,
+`SYNO.Core.Hardware.FanSpeed` v1 `get`, `SYNO.Core.Hardware.Led.Brightness` v1
+`get`, `SYNO.Core.Hardware.PowerSchedule` v1 `load`,
+`SYNO.Core.Hardware.PowerRecovery` v1 `get`, and `SYNO.Core.ExternalDevice.UPS`
+v1 `get`. The lab had no power-schedule tasks configured, so the two task arrays
+(the envelope) are live-verified but the per-task field mapping is decoded
+tolerantly through DSM's known key alternates (an unknown key yields an
+empty/zero field, never a wrong value); re-verifying a populated task shape is a
+prerequisite of the guarded-write follow-on. Guarded writes (beep/fan/LED
+comfort, power schedule, power recovery, UPS) are a deferred follow-on: the
+comfort scope is low risk while the power-schedule, power-recovery, and UPS
+scopes are **HIGH** risk — each can power the NAS off, keep it from returning
+after an outage, or drop safe shutdown — and, like the other guarded modules,
+will be excluded from the read-only gateway.
+## Directory services — Domain/LDAP (read-only)
+
+DSM's Control Panel → Domain/LDAP page joins the NAS to an existing Active
+Directory domain or binds it to an LDAP server (a *directory client* — this
+module never hosts a directory). Active Directory (`SYNO.Core.Directory.Domain`)
+and LDAP (`SYNO.Core.Directory.LDAP`) are separate API families with independent
+failure boundaries: a NAS in neither mode reports `mode: none` cleanly, and one
+area's API being absent reports `(not supported)` without disabling the other or
+the capabilities surface.
+
+```console
+dsmctl directory capabilities --nas office
+dsmctl directory status --nas office --json
+dsmctl directory users --nas office --json
+dsmctl directory groups --nas office --json
+```
+
+- **Status** derives a stable `mode` (`ad` / `ldap` / `none`) and reports each
+  area's non-secret state. Active Directory reads `SYNO.Core.Directory.Domain`
+  (`get`, v1) — `enable_domain` is the join flag, and the joined identity
+  (domain FQDN, workgroup/NetBIOS, DNS, domain controller, OU, connection status)
+  is populated by DSM only once joined — enriched with the non-secret join
+  options from `SYNO.Core.Directory.Domain.Conf` (`get`) and the periodic
+  user/group sync schedule from `SYNO.Core.Directory.Domain.Schedule` (`get`,
+  v1). LDAP reads `SYNO.Core.Directory.LDAP` (`get`) — `enable_client` is the
+  bind flag — reporting server address, base DN, bind DN, encryption, profile,
+  and schema, enriched with the offered profile list from
+  `SYNO.Core.Directory.LDAP.Profile` (`list`). **v2 of the LDAP `get` is
+  preferred** (it carries `server_address` and `expand_nested_groups`); v1 falls
+  back to the `host` field.
+- **Users / groups** list the synced directory principals through the core
+  `SYNO.Core.User` / `SYNO.Core.Group` (`list`, v1) APIs with a `type` filter
+  (`domain` for AD, `ldap` for LDAP — the dedicated `SYNO.Core.Directory.Domain.User/.Group`
+  APIs do not exist on DSM 7.3), scoped to the NAS's active mode. These
+  principals are owned by the directory server and are **read-only**; only
+  non-secret identity fields (name, uid/gid, description, source) are surfaced.
+  A NAS in `mode: none` returns an empty list without a DSM call, and a DSM
+  "not joined/bound" error is treated as an empty list rather than a failure.
+
+**Secret suppression is mandatory on read.** The AD domain-join password and the
+LDAP bind password are secrets: DSM never returns them on `get`, and the decoders
+read only the explicit non-secret keys (never a whole-object passthrough).
+Synced-principal password hashes, Kerberos keytab bytes, and machine-account
+material are never modeled. A unit test injects `password` / `bind_pw` /
+`keytab` canaries into every decoded shape and asserts the re-encoded models
+carry no trace (`TestDecodersNeverLeakSecrets`), and a live `--json` grep
+confirms it.
+
+MCP exposes the same reads through `get_directory_capabilities`,
+`get_directory_status`, `get_directory_users`, and `get_directory_groups`. All
+are read-only and never change NAS authentication.
+
+Verified live on DSM 7.3 (a lab NAS that is neither AD-joined nor LDAP-bound):
+`SYNO.Core.Directory.Domain` v1 `get` → `{"enable_domain":false}`;
+`SYNO.Core.Directory.Domain.Conf` v1/v2 `get` (`buildDatabaseWithMembership`,
+`direct_connect_trust`, `disable_domain_admins`, `domain_nested_group`,
+`enable_rpc_enum_usergroup`, `enable_sync_time`, `encrypt_ad_ldap`);
+`SYNO.Core.Directory.Domain.Schedule` v1 `get` (`date_type`);
+`SYNO.Core.Directory.LDAP` v2 `get` (`enable_client`, `server_address`,
+`base_dn`, `encryption`, `profile`, `ldap_schema`, `is_syno_server`,
+`expand_nested_groups`, `nested_group_level`, `tls_reqcert`, `update_min`,
+`error`); `SYNO.Core.Directory.LDAP.Profile` v1 `list`
+(`standard`/`mac`/`domino`/`customized`); and `SYNO.Core.User` / `SYNO.Core.Group`
+v1 `list` with `type=domain`/`type=ldap` (`{offset,total,users/groups}`). Because
+the lab is unjoined/unbound, the joined-domain identity fields and the populated
+principal shapes are decoded leniently (an unknown/absent key yields an
+empty/zero field, never a wrong value); the AD `join`/`leave` and LDAP
+`bind`/`unbind` guarded writes are a deferred follow-on and are **HIGH risk**
+(each changes authentication for the whole NAS and can lock out an administrator
+whose only account is a domain account), and — like the other guarded modules —
+will supply the bind/join password via `credential_ref` and be excluded from the
+read-only gateway.
+
+## KMIP key management (read-only)
+
+DSM's Control Panel → Security / Storage Manager KMIP surface configures how
+encryption keys are managed via the Key Management Interoperability Protocol:
+whether this NAS runs a **local KMIP server** (holding keys for other Synology
+devices) and/or acts as a **KMIP client** escrowing its own encrypted-share keys
+to an external KMIP server, plus each role's connection status and bound
+certificate identity.
+
+```console
+dsmctl kmip capabilities --nas office
+dsmctl kmip status --nas office --json
+```
+
+- **One combined config API.** The family is `SYNO.Storage.CGI.KMIP` (v1), whose
+  only read method is `get`; it returns both roles at once. DSM exposes **no**
+  split client/server API families and **no** separate escrowed-key or
+  registered-client list method — every candidate (`list`, `query`, `status`,
+  `list_client`, `list_key`, `test`, …) returns code 103 "method does not exist",
+  so there is no key/object inventory to surface. The family lives under
+  `SYNO.Storage.CGI.*` (Storage Manager) and is **DSM-core** — no package gates
+  it.
+- **Two support signals.** `kmip.read` (the capability) is supported whenever the
+  API family is advertised (normal on DSM 7.x). The separate `support_kmip` field
+  reports whether the NAS model/edition actually offers KMIP; a NAS that reports
+  `support_kmip:"no"` still **reads successfully** as the disabled state (the
+  honest not-configured view) rather than erroring. A DSM build without the family
+  reports `(not supported)` and fails closed.
+- **Status** surfaces the local server (enabled, listening port, key-database
+  location, bound certificate), the client (enabled, target external server
+  address/port, connected-server name, last-connection health, bound
+  certificate), and the raw `kmip_mode`. Ports default to `5696`.
+
+**Secret suppression is mandatory on read.** KMIP handles cryptographic key
+material. The decoder reads an explicit non-secret whitelist only — enable flags,
+hostnames, ports, the key-database path, connection status, and non-secret
+certificate-binding metadata (id, subject/issuer common name, fingerprint,
+not-after). It never reads a private key, escrowed/wrapped/managed key bytes, a
+pre-shared secret, a passphrase, or a client credential, and never a whole-object
+passthrough. A unit test injects `private_key` / `key_material` / `secret` /
+`passphrase` / `password` / `wrapped_key` / `managed_key` / `pre_shared_key`
+canaries into the root and both certificate blocks and asserts the re-encoded
+model carries no trace (`TestDecodersNeverLeakSecrets`), and a live `--json` grep
+confirms it.
+
+MCP exposes the same reads through `get_kmip_capabilities` and `get_kmip_status`.
+Both are read-only and never change DSM.
+
+Verified live on DSM 7.3-81168 (DS3018xs, KMIP unconfigured): the family is
+advertised (`SYNO.Storage.CGI.KMIP`, path `entry.cgi`, v1-1) and `get` returns
+`support_kmip:"no"`, `client_enable:false`, `server_enable:false`,
+`conn_success:false`, string ports `kmip_server_port`/`kmip_conn_server_port`
+(`"5696"`), empty `kmip_server`/`kmip_conn_server_desc`/`kmip_db_loc`/`kmip_mode`,
+and `client_cert_info`/`server_cert_info` `null`. Because the lab is unconfigured,
+the populated `*_cert_info` object shape is wire-unverified — the certificate
+binding decodes leniently from a conservative non-secret metadata whitelist (an
+unknown/absent key yields an empty field, never key material). The enable/disable
+server, configure/clear client, and certificate-bind guarded writes are a
+deferred follow-on and are **HIGH risk** (each changes security posture and can
+render encrypted shares unmountable), will supply the client private key /
+credential via `credential_ref`, and — like the other guarded modules — will be
+excluded from the read-only gateway.
+## External Devices — USB/eSATA storage and printers (read-only)
+
+DSM's Control Panel → External Devices page enumerates attached external disks
+and connected printers. Three independent DSM API families with independent
+failure boundaries back this module: USB external storage, eSATA external
+storage (a separate area — many models have no eSATA port), and printers (with
+the global Bonjour/AirPrint sharing toggle gated independently). One area being
+absent reports `(not supported)` without disabling the others, and each fails
+closed (no silent empty-success decode) when its API is missing.
+
+**UPS is deliberately not part of this module.** Although `SYNO.Core.ExternalDevice.UPS`
+shares the `ExternalDevice` namespace, UPS belongs to the Hardware & Power area
+above and ships in the hardware module (WI-075). This module never touches UPS.
+
+```console
+dsmctl external-device capabilities --nas office
+dsmctl external-device storage --nas office --json
+dsmctl external-device printers --nas office --json
+```
+
+- **External storage** reads both buses independently: `SYNO.Core.ExternalDevice.Storage.USB`
+  and `SYNO.Core.ExternalDevice.Storage.eSATA` (`list` — `get` returns DSM code
+  103) → per-bus `{devices:[…]}`, each device carrying its identity
+  (`dev_id`/`dev_path`), type, title, vendor/product, serial, whole-device size,
+  status, and a partitions array (filesystem, total/used size, mount point, any
+  auto-created share, status). A bus whose API is absent is omitted; a bus with
+  no disk attached reports an empty list.
+- **Printers** read `SYNO.Core.ExternalDevice.Printer` (`list` — `get` returns
+  code 103) → `{printers:[…]}` with each printer's id, name, connection type,
+  status, manager, default flag, and queued-job count. The global
+  Bonjour/AirPrint sharing toggle is read independently from
+  `SYNO.Core.ExternalDevice.Printer.BonjourSharing` (`get` → `enable_bonjour_support`);
+  it is omitted when its API is absent.
+
+The device serial number is model-identifying inventory data, not a secret, and
+is surfaced as-is (sanitized to a fake value in committed fixtures). No
+persistent secret is expected on USB/eSATA disks or local USB printers.
+
+MCP exposes the same reads through `get_external_device_capabilities`,
+`get_external_storage`, and `get_external_printers`. All are read-only and never
+eject, format, or modify any device, change printer settings, or clear a spooler.
+
+Verified live on DSM 7.3 (DS3018xs): `SYNO.Core.ExternalDevice.Storage.USB` v1
+`list`, `SYNO.Core.ExternalDevice.Storage.eSATA` v1 `list`,
+`SYNO.Core.ExternalDevice.Printer` v1 `list`, and
+`SYNO.Core.ExternalDevice.Printer.BonjourSharing` v1 `get`. The lab advertises
+all four families but had no external disk or printer attached, so every list
+returned empty (`{"devices":[]}` / `{"printers":[]}`) and the Bonjour toggle
+read `false` — the graceful no-device path is therefore the live-verified path.
+Because nothing was attached, the per-device, per-partition, and per-printer
+field mappings are decoded tolerantly through DSM's known key alternates (an
+unknown key yields an empty/zero field, never a wrong value); re-verifying a
+populated device/printer shape is a prerequisite of the guarded-write follow-on.
+Guarded writes — **eject** (HIGH risk: unflushed writes and dropped shares can
+lose data), **printer set** (medium), and **spooler clear** (high, destructive)
+— are a deferred follow-on and, like the other guarded modules, will be excluded
+from the read-only gateway.
 
 ## Adding another module
 

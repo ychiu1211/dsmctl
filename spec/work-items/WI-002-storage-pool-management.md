@@ -88,3 +88,29 @@ inventory fields and keep volume mutations in their own operation package.
 - Blockers: none.
 - Temporary resources: none. Discovery was read-only; no live storage
   mutation was executed and no NAS resource was created, changed, or deleted.
+
+## Amendment (2026-07-21) — fresh-NAS / lab-hardware enablement
+
+Enabling storage creation on a *freshly installed* NAS (and on lab hardware with off-HCL
+drives) exposed several validation gates in `internal/application/storage_management.go` that
+were too strict for the fresh-disk case. All are live-verified building an all-disk Btrfs RAID5
+on a fresh DS918+ (DSM 7.3.2, 192.0.2.51) and keeping a reused pool on another (DSM 7.3.1,
+192.0.2.255), and are covered by new unit tests:
+
+- **`sys_partition_normal` disks are eligible.** A free drive on any DSM box carries the
+  mirrored DSM system partition and reports `status: "sys_partition_normal"` until it joins a
+  data pool. `validatePoolCandidateDisk` now accepts it (via `healthyPoolDiskStatus`); `Health`
+  must still be normal/healthy. Without this a fresh NAS could never create its first pool.
+- **Opt-in `allow_unsupported_disks`.** New `storage.PoolChange.AllowUnsupportedDisks` (JSON
+  `allow_unsupported_disks`) relaxes *only* the drive-compatibility gate for drives DSM reports
+  `not_in_support` (lab/unlisted), mirroring DSM's own proceed-with-warning behaviour. It emits
+  a plan warning and is part of the hashed plan, so the approval covers the operator's decision.
+  Health, SMART, selectability, and in-use checks are unchanged.
+- **`background_optimizing` is a success state.** A freshly created RAID5/6 pool runs its
+  initial parity consistency pass (`status: background_optimizing`, `actioning=false`) while
+  already writable and volume-ready. `backgroundStorageStatus` (also raid_syncing/syncing/
+  expanding, disjoint from `failedStorageStatus`) is now accepted by the pool post-status check
+  and by `validateVolumePoolForMutation`, so a volume can be created on the optimizing pool.
+
+Companion volume-side amendment is recorded in WI-003 (blank-first-volume-name postcondition).
+See the `dsm-first-time-storage-setup` memory and the `nas-storage-setup` skill.

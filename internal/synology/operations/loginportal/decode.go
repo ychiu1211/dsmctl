@@ -127,8 +127,10 @@ func decodeReverseProxyRules(data json.RawMessage) (loginportal.ReverseProxyRule
 }
 
 // decodeReverseProxyRule maps one reverse-proxy entry. The per-field key mapping
-// is spec-derived (the lab has zero rules, so it is not live-verified); lenient
-// decoding guarantees an unknown key yields an empty field, never a wrong value.
+// is live-verified on DSM 7.3 (a probe rule was created, read back, and deleted):
+// the stored id key is uppercase "UUID"; frontend/backend protocol is a numeric
+// enum (0=http, 1=https); HSTS lives at frontend.https.hsts; there is no per-rule
+// HTTP/2 field. Lenient decoding still tolerates the older spec-derived shape.
 // Certificate key material is never surfaced (presence only) and header values
 // are never surfaced (count only).
 func decodeReverseProxyRule(item map[string]any) loginportal.ReverseProxyRule {
@@ -144,10 +146,16 @@ func decodeReverseProxyRule(item map[string]any) loginportal.ReverseProxyRule {
 		CertificatePresent: certificatePresent(item),
 		CustomHeaderCount:  headerCount(item),
 	}
-	// HSTS/HTTP2 may live inside the frontend sub-object on some builds.
+	// HSTS/HTTP2 may live inside the frontend sub-object. On DSM 7.3 HSTS is at
+	// frontend.https.hsts; older/other builds may carry it flatter.
 	if frontend, ok := objectValue(item, "frontend"); ok {
 		if v, ok := boolValue(frontend, "hsts", "enable_hsts"); ok {
 			rule.HSTSEnabled = v
+		}
+		if https, ok := objectValue(frontend, "https"); ok {
+			if v, ok := boolValue(https, "hsts", "enable_hsts"); ok {
+				rule.HSTSEnabled = v
+			}
 		}
 		if v, ok := boolValue(frontend, "http2", "enable_http2", "enable_spdy"); ok {
 			rule.HTTP2Enabled = v
@@ -161,16 +169,60 @@ func decodeReverseProxyRule(item map[string]any) loginportal.ReverseProxyRule {
 func decodeEndpoint(item map[string]any, side, prefix string) loginportal.ReverseProxyEndpoint {
 	if nested, ok := objectValue(item, side); ok {
 		return loginportal.ReverseProxyEndpoint{
-			Protocol: stringValue(nested, "protocol", "scheme"),
+			Protocol: protocolString(nested, "protocol", "scheme"),
 			Hostname: stringValue(nested, "fqdn", "hostname", "host", "servername", "server_name"),
 			Port:     intValue(nested, "port"),
 		}
 	}
 	return loginportal.ReverseProxyEndpoint{
-		Protocol: stringValue(item, side+"_protocol", prefix+"_protocol"),
+		Protocol: protocolString(item, side+"_protocol", prefix+"_protocol"),
 		Hostname: stringValue(item, side+"_fqdn", side+"_hostname", side+"_host", prefix+"_fqdn"),
 		Port:     intValue(item, side+"_port", prefix+"_port"),
 	}
+}
+
+// protocolString returns a stable "http"/"https" protocol name. DSM 7.3 stores
+// the protocol as a numeric enum (0=http, 1=https); an already-string value
+// ("http"/"https") is passed through so older shapes still decode.
+func protocolString(values map[string]any, keys ...string) string {
+	for _, key := range keys {
+		value, ok := values[key]
+		if !ok || value == nil {
+			continue
+		}
+		switch typed := value.(type) {
+		case string:
+			if trimmed := strings.TrimSpace(typed); trimmed != "" {
+				return trimmed
+			}
+		case bool:
+			if typed {
+				return "https"
+			}
+			return "http"
+		default:
+			switch intValueFromAny(value) {
+			case 1:
+				return "https"
+			case 0:
+				return "http"
+			}
+		}
+	}
+	return ""
+}
+
+// intValueFromAny extracts an int from a json.Number or float64, or returns -1.
+func intValueFromAny(value any) int {
+	switch typed := value.(type) {
+	case json.Number:
+		if parsed, err := typed.Int64(); err == nil {
+			return int(parsed)
+		}
+	case float64:
+		return int(typed)
+	}
+	return -1
 }
 
 // certificatePresent reports only whether a certificate is referenced; it never

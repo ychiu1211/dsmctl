@@ -27,6 +27,8 @@ type terminalSNMPClient interface {
 	TerminalState(context.Context) (synology.TerminalState, error)
 	SNMPState(context.Context) (synology.SNMPState, error)
 	TerminalSNMPCapabilities(context.Context) (synology.TerminalSNMPCapabilities, synology.CompatibilityReport, error)
+	ApplyTerminalChange(context.Context, synology.TerminalChange) (synology.TerminalSNMPMutationResult, error)
+	ApplySNMPChange(context.Context, synology.SNMPChange, []byte) (synology.TerminalSNMPMutationResult, error)
 }
 
 func (s *Service) GetTerminalState(ctx context.Context, requestedNAS string) (TerminalStateResult, error) {

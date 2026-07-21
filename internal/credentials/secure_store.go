@@ -79,28 +79,19 @@ func (s *SecureStore) Password(ctx context.Context, profileName string, profile 
 	if name == "" {
 		name = DefaultEnvironmentVariable(profileName)
 	}
-	return "", fmt.Errorf("password for NAS %q is unavailable; run 'dsmctl auth login --nas %s' or set %s", profileName, profileName, name)
+	return "", fmt.Errorf("password for NAS %q is unavailable; run 'dsmctl auth login --nas %s', store one with 'dsmctl auth password set --nas %s', or set %s", profileName, profileName, profileName, name)
 }
 
-// ErrNoStoredPassword indicates the OS credential store holds no password for
-// the profile. It is distinct from a backend failure so a reveal command can
-// print a friendly "nothing stored" hint instead of a keychain error.
-var ErrNoStoredPassword = errors.New("no password stored for this NAS in the OS credential store")
-
-// RevealPassword returns the stored plaintext password for a profile from the
-// OS credential store ONLY — never the environment-variable fallback. It is the
-// single method that yields a plaintext password to a human-facing sink and
-// MUST NOT be called from the MCP server, the application service, or any log
-// path; callers gate it behind an interactive-terminal check. A missing entry
-// returns ErrNoStoredPassword.
-func (s *SecureStore) RevealPassword(ctx context.Context, profileName string) (string, error) {
-	return s.RevealPasswordForAccount(ctx, profileName, "")
-}
+// ErrNoStoredPassword reports that the OS credential store holds no password
+// entry for the profile. It deliberately does not consider environment
+// fallbacks: reveal and removal operate on the stored entry only.
+var ErrNoStoredPassword = errors.New("no password is stored in the OS credential store for this NAS")
 
 // RevealPasswordForAccount reveals a specific account's password from a profile's
 // password book. An empty account selects the primary entry (the one auth login
-// writes). It reads the OS credential store only, with the same human-facing
-// gating obligations as RevealPassword. A missing entry returns ErrNoStoredPassword.
+// writes). It reads the OS credential store ONLY — never the environment-variable
+// fallback — with the same human-facing gating obligations as RevealPassword. A
+// missing entry returns ErrNoStoredPassword.
 func (s *SecureStore) RevealPasswordForAccount(ctx context.Context, profileName, account string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
@@ -116,6 +107,27 @@ func (s *SecureStore) RevealPasswordForAccount(ctx context.Context, profileName,
 		return "", ErrNoStoredPassword
 	}
 	return password, nil
+}
+
+// StoredPassword returns the password persisted in the OS credential store for
+// the profile's primary account. Unlike Password it never consults environment
+// variables, so callers that display or audit the stored entry see exactly what
+// the store holds.
+func (s *SecureStore) StoredPassword(ctx context.Context, profileName string) (string, error) {
+	return s.RevealPasswordForAccount(ctx, profileName, "")
+}
+
+// RevealPassword returns the stored plaintext password for a profile from the
+// OS credential store ONLY — never the environment-variable fallback. It is the
+// single method that yields a plaintext password to a human-facing sink and
+// MUST NOT be called from the MCP server, the application service, or any log
+// path; callers gate it behind an interactive-terminal check. A missing entry
+// returns ErrNoStoredPassword.
+func (s *SecureStore) RevealPassword(ctx context.Context, profileName string) (string, error) {
+	// Identical to StoredPassword; kept as a distinct, intention-revealing name
+	// for the human-gated reveal call sites that must never be reachable from the
+	// MCP server or application service.
+	return s.StoredPassword(ctx, profileName)
 }
 
 func (s *SecureStore) SavePassword(ctx context.Context, profileName, password string) error {

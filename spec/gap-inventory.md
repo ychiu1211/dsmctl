@@ -95,24 +95,26 @@ and System Administration groups first** (queued as WI-065…080).
 
 ### Not in this program (recorded for later)
 
-- **Data protection**: Hyper Backup, Active Backup, Cloud Sync, **Synology
-  High Availability (SHA)**, **Shared Folder Sync** (server-to-server
-  replication). Snapshot Replication left this list on 2026-07-21 as
-  **WI-089 (done)** — snapshot reads + guarded snapshot writes shipped and
-  live-verified. Its replication-mutation follow-on is **WI-090 (in_progress)**
-  — guarded relation create source→dest with the destination password
-  vault-brokered at apply time; retention/schedule writes and restore/rollback
+- **Data protection**: Hyper Backup (pulled forward 2026-07-21 as
+  [WI-087](work-items/WI-087-hyper-backup.md): reads + guarded run/cancel +
+  task create; now on main), Active Backup, Cloud Sync, **Synology High
+  Availability (SHA)**, **Shared Folder Sync** (server-to-server replication).
+  Snapshot Replication left this list on 2026-07-21 as **WI-089 (done)** —
+  snapshot reads + guarded snapshot writes shipped and live-verified. Its
+  replication-mutation follow-on is **WI-090 (in_progress)** — headless guarded
+  relation create source→dest, dest password vault-brokered at apply
+  (live-verified nas51→nas255); retention/schedule writes and restore/rollback
   still deferred.
   - **Credential-model seam (2026-07-21):** the destination-credential model
-    now supports a per-NAS password *book* (multiple `{account, password}`
-    entries) and a `role: managed | target` on the profile (a target is a
-    destination you hold credentials for but do not manage). These live on the
-    shared config/vault/credentials layers. When Hyper Backup merges, its
-    destination-credential resolution should call
-    `Repository.PasswordForAccount` / `SecureStore.PasswordForAccount` (account
-    selectable) and must **not** assume `role == managed` — resolve a
-    destination through `Manager.DestinationClient`, not `Client`. See
-    `docs/credentials.md` (Password book / Destination-only / Hyper Backup seam).
+    now supports a per-NAS password *book* (multi-account) and a
+    `role: managed | target` on the profile (a target is a destination you hold
+    credentials for but do not manage), on the shared config/vault/credentials
+    layers. Hyper Backup is now on main (WI-087); its destination-credential
+    resolution should be wired to `Repository.PasswordForAccount` /
+    `SecureStore.PasswordForAccount` (account selectable) and must **not** assume
+    `role == managed` — resolve a destination through `Manager.DestinationClient`,
+    not `Client`. See `docs/credentials.md` (Password book / Destination-only /
+    Hyper Backup seam).
 - **Virtualization/servers**: Container Manager/Docker, Virtual Machine
   Manager, VPN/DNS/DHCP/WebDAV/Web Station/Mail servers.
 - **Collaboration/dev/fleet**: Note Station/Calendar/Contacts/Chat servers,

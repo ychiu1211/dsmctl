@@ -877,7 +877,7 @@ func validateStorageMutationSafety(state storage.State, topology storageTopology
 		selected = change.AddDiskIDs
 	}
 	for _, diskID := range selected {
-		if err := validatePoolCandidateDisk(disks[diskID]); err != nil {
+		if err := validatePoolCandidateDisk(disks[diskID], change.AllowUnsupportedDisks); err != nil {
 			return nil, 0, fmt.Errorf("stable disk ID %q is not eligible for pool mutation: %w", diskID, err)
 		}
 	}
@@ -1026,8 +1026,8 @@ func validateVolumePoolForMutation(pool storage.Pool, create bool) error {
 	if !pool.Writable {
 		return fmt.Errorf("storage pool %q is not writable", pool.ID)
 	}
-	if !healthyStorageStatus(pool.Status) || !healthyStorageStatus(pool.Health) {
-		return fmt.Errorf("storage pool %q status/health is %q/%q, expected normal or healthy", pool.ID, pool.Status, pool.Health)
+	if (!healthyStorageStatus(pool.Status) && !backgroundStorageStatus(pool.Status)) || (!healthyStorageStatus(pool.Health) && !backgroundStorageStatus(pool.Health)) {
+		return fmt.Errorf("storage pool %q status/health is %q/%q, expected normal, healthy, or a benign background state", pool.ID, pool.Status, pool.Health)
 	}
 	if create {
 		if !pool.Compatible {
@@ -1079,7 +1079,7 @@ func checkedAddBytes(left, right uint64) (uint64, error) {
 	return left + right, nil
 }
 
-func validatePoolCandidateDisk(disk storage.Disk) error {
+func validatePoolCandidateDisk(disk storage.Disk, allowUnsupported bool) error {
 	if strings.TrimSpace(disk.ID) == "" {
 		return fmt.Errorf("disk is missing from normalized inventory")
 	}
@@ -1090,16 +1090,30 @@ func validatePoolCandidateDisk(disk storage.Disk) error {
 	if !disk.Selectable {
 		return fmt.Errorf("DSM does not report the disk selectable")
 	}
-	if !healthyStorageStatus(disk.Status) || !healthyStorageStatus(disk.Health) {
+	if !healthyPoolDiskStatus(disk.Status) || !healthyStorageStatus(disk.Health) {
 		return fmt.Errorf("disk status/health is %q/%q, expected normal or healthy", disk.Status, disk.Health)
 	}
 	if value := strings.ToLower(strings.TrimSpace(disk.SMARTStatus)); value != "" && value != "normal" && value != "healthy" && value != "passed" && value != "pass" {
 		return fmt.Errorf("SMART status is %q", disk.SMARTStatus)
 	}
-	if value := strings.ToLower(strings.TrimSpace(disk.Compatibility)); value != "support" && value != "supported" && value != "compatible" {
-		return fmt.Errorf("drive compatibility is %q", disk.Compatibility)
+	if !allowUnsupported {
+		if value := strings.ToLower(strings.TrimSpace(disk.Compatibility)); value != "support" && value != "supported" && value != "compatible" {
+			return fmt.Errorf("drive compatibility is %q; set allow_unsupported_disks to proceed on lab or unlisted drives", disk.Compatibility)
+		}
 	}
 	return nil
+}
+
+// healthyPoolDiskStatus accepts a disk as a pool candidate by overview status. A
+// free drive on a DSM box still carries the mirrored DSM system partition and so
+// reports "sys_partition_normal" until it joins a data pool; that is the normal
+// state of a fresh drive available for a new pool, so it is accepted alongside a
+// plain normal/healthy status. The separate Health field must still be healthy.
+func healthyPoolDiskStatus(value string) bool {
+	if strings.EqualFold(strings.TrimSpace(value), "sys_partition_normal") {
+		return true
+	}
+	return healthyStorageStatus(value)
 }
 
 func applicablePoolRAIDTypes(constraints storage.PoolCreationConstraints, diskCount int) []string {
@@ -1552,7 +1566,12 @@ func verifyStorageVolumePostcondition(plan StoragePlan, before, after storage.St
 			if _, existed := beforeIDs[volume.ID]; existed {
 				continue
 			}
-			if volume.Name != change.Name || volume.PoolID != change.PoolID || !strings.EqualFold(volume.FileSystem, change.FileSystem) {
+			// DSM frequently does not persist a display name for the first volume
+			// on a pool (it reports an empty name), so a freshly created volume is
+			// identified by its new stable ID plus parent pool, filesystem, and
+			// approved capacity below — not by name. Only discriminate on name when
+			// DSM actually reports one, so an unrelated pre-named volume cannot match.
+			if (volume.Name != "" && volume.Name != change.Name) || volume.PoolID != change.PoolID || !strings.EqualFold(volume.FileSystem, change.FileSystem) {
 				continue
 			}
 			if plan.References.PoolLayout == "multiple" && volume.AllocatedBytes != plan.ResolvedCapacityBytes {
@@ -1609,6 +1628,13 @@ func validatePoolPostStatus(pool storage.Pool) error {
 	if pool.Actioning && !failedStorageStatus(pool.Status) && !failedStorageStatus(pool.Health) {
 		return nil
 	}
+	// A freshly created RAID pool runs a background parity/consistency pass and
+	// reports a benign in-progress status (e.g. "background_optimizing") with
+	// actioning=false while already writable and volume-ready; accept it so long
+	// as neither status nor health is a failure state.
+	if backgroundStorageStatus(pool.Status) && !failedStorageStatus(pool.Health) {
+		return nil
+	}
 	return fmt.Errorf("pool %q post-mutation status/health is %q/%q (actioning=%t)", pool.ID, pool.Status, pool.Health, pool.Actioning)
 }
 
@@ -1617,6 +1643,9 @@ func validateVolumePostStatus(volume storage.Volume) error {
 		return nil
 	}
 	if volume.Actioning && !failedStorageStatus(volume.Status) && !failedStorageStatus(volume.Health) {
+		return nil
+	}
+	if backgroundStorageStatus(volume.Status) && !failedStorageStatus(volume.Health) {
 		return nil
 	}
 	return fmt.Errorf("volume %q post-mutation status/health is %q/%q (actioning=%t)", volume.ID, volume.Status, volume.Health, volume.Actioning)
@@ -1628,6 +1657,23 @@ func failedStorageStatus(value string) bool {
 		return true
 	default:
 		return strings.TrimSpace(value) == ""
+	}
+}
+
+// backgroundStorageStatus reports whether a status is a benign in-progress state
+// that DSM reports for a resource that is already writable and usable while it
+// finishes background work — most importantly "background_optimizing", the state
+// of a freshly created RAID5/6 pool running its initial parity consistency pass
+// (DSM reports the pool writable and volume-ready throughout, and the pass
+// completes on its own over the following hours). RAID resync/expand states are
+// included on the same basis. These are strictly disjoint from the
+// failedStorageStatus set, which is never accepted.
+func backgroundStorageStatus(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "background_optimizing", "background_optimize", "raid_syncing", "syncing", "expanding":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -1737,10 +1783,16 @@ func storagePlanEffects(topology storageTopology, request storage.ChangeRequest,
 		case storage.ActionCreate:
 			summary = []string{fmt.Sprintf("Create storage pool %q as %s using stable disks %s.", change.Name, change.RAIDType, strings.Join(change.DiskIDs, ", "))}
 			warnings = append(warnings, "DSM drive checking is enabled for pool creation and may run for an extended period.")
+			if change.AllowUnsupportedDisks {
+				warnings = append(warnings, "allow_unsupported_disks is set: the pool is being created on drives DSM does not list as compatible, which Synology does not validate.")
+			}
 		case storage.ActionUpdate:
 			if len(change.AddDiskIDs) > 0 {
 				summary = append(summary, fmt.Sprintf("Add stable disks %s to storage pool %s.", strings.Join(change.AddDiskIDs, ", "), change.ID))
 				warnings = append(warnings, "Adding disks can start a long-running RAID reshape or rebuild and cannot be represented as a field reset.")
+				if change.AllowUnsupportedDisks {
+					warnings = append(warnings, "allow_unsupported_disks is set: added drives DSM does not list as compatible are being accepted, which Synology does not validate.")
+				}
 			}
 			if change.TargetRAIDType != nil {
 				destructive = true

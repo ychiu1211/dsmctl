@@ -1,9 +1,12 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -13,8 +16,55 @@ import (
 )
 
 func newSystemCommand(opts *options) *cobra.Command {
-	command := &cobra.Command{Use: "system", Short: "Inspect DSM system information"}
-	command.AddCommand(newSystemInfoCommand(opts))
+	command := &cobra.Command{Use: "system", Short: "Inspect and manage DSM system settings"}
+	command.AddCommand(newSystemInfoCommand(opts), newSystemSetHostnameCommand(opts))
+	return command
+}
+
+func newSystemSetHostnameCommand(opts *options) *cobra.Command {
+	var assumeYes bool
+	command := &cobra.Command{
+		Use:   "set-hostname <hostname>",
+		Short: "Set the DSM server name (hostname)",
+		Long: "Change the DSM server name — the hostname shown in Control Panel and on the\n" +
+			"network. It plans the change against the current name (hash-bound), shows the\n" +
+			"summary, applies it after confirmation (--yes to skip), and verifies it by\n" +
+			"re-reading; it fails closed if DSM does not report the requested name.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := strings.TrimSpace(args[0])
+			service, err := loadService(opts)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			out := cmd.OutOrStdout()
+			plan, err := service.PlanSystemHostname(cmd.Context(), opts.nas, application.SystemHostnameChange{Hostname: name})
+			if err != nil {
+				return err
+			}
+			for _, line := range plan.Summary {
+				fmt.Fprintf(out, "Plan: %s\n", line)
+			}
+			for _, warning := range plan.Warnings {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: %s\n", warning)
+			}
+			if !assumeYes {
+				fmt.Fprint(cmd.ErrOrStderr(), "Apply? [y/N]: ")
+				answer, _ := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
+				if answer = strings.ToLower(strings.TrimSpace(answer)); answer != "y" && answer != "yes" {
+					return errors.New("server name was not changed")
+				}
+			}
+			result, err := service.ApplySystemHostnamePlan(cmd.Context(), plan, plan.Hash)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "Server name changed from %q to %q on NAS %q.\n", result.Previous, result.Hostname, result.NAS)
+			return nil
+		},
+	}
+	command.Flags().BoolVar(&assumeYes, "yes", false, "skip the confirmation prompt (for automation)")
 	return command
 }
 

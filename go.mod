@@ -9,7 +9,7 @@ require (
 	github.com/zalando/go-keyring v0.2.8
 	go.etcd.io/bbolt v1.5.0
 	golang.org/x/crypto v0.0.0-20210322153248-0c34fe9e7dc2
-	golang.org/x/term v0.36.0
+	golang.org/x/term v0.45.0
 )
 
 require (

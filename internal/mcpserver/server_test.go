@@ -63,8 +63,8 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools() error = %v", err)
 	}
-	if len(tools.Tools) != 200 {
-		t.Fatalf("ListTools() returned %d tools, want 200", len(tools.Tools))
+	if len(tools.Tools) != 270 {
+		t.Fatalf("ListTools() returned %d tools, want 270", len(tools.Tools))
 	}
 	for _, tool := range tools.Tools {
 		if scope, ok := ToolScope(tool.Name); !ok || scope == "" {
@@ -113,6 +113,7 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"get_storage_state":                     false,
 		"plan_account_change":                   false,
 		"plan_control_panel_time_change":        false,
+		"plan_system_hostname_change":           false,
 		"plan_san_change":                       false,
 		"plan_share_change":                     false,
 		"plan_storage_change":                   false,
@@ -132,6 +133,23 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"get_resource_monitor_history":          false,
 		"get_resource_monitor_setting":          false,
 		"plan_resource_recording_change":        false,
+		"get_disk_smart_capabilities":           false,
+		"get_disk_health":                       false,
+		"get_disk_smart_attributes":             false,
+		"get_universal_search_capabilities":     false,
+		"get_universal_search_folders":          false,
+		"get_universal_search_status":           false,
+		"get_hardware_capabilities":             false,
+		"get_hardware_general":                  false,
+		"get_hardware_power_schedule":           false,
+		"get_hardware_power_recovery":           false,
+		"get_hardware_ups":                      false,
+		"get_directory_capabilities":            false,
+		"get_directory_status":                  false,
+		"get_directory_users":                   false,
+		"get_directory_groups":                  false,
+		"get_kmip_capabilities":                 false,
+		"get_kmip_status":                       false,
 		"get_drive_admin_capabilities":          false,
 		"get_drive_admin_status":                false,
 		"get_drive_admin_connections":           false,
@@ -147,6 +165,8 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"get_terminal_snmp_capabilities":        false,
 		"get_terminal_state":                    false,
 		"get_snmp_state":                        false,
+		"plan_terminal_change":                  false,
+		"plan_snmp_change":                      false,
 		"get_security_advisor_capabilities":     false,
 		"get_security_advisor_status":           false,
 		"get_security_advisor_schedule":         false,
@@ -164,6 +184,13 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"get_firewall_status":                   false,
 		"get_firewall_profiles":                 false,
 		"get_firewall_rules":                    false,
+		"get_network_capabilities":              false,
+		"get_network_general":                   false,
+		"get_network_interfaces":                false,
+		"get_network_bonds":                     false,
+		"get_network_routes":                    false,
+		"plan_firewall_profile_change":          false,
+		"plan_firewall_enable_change":           false,
 		"get_login_portal_capabilities":         false,
 		"get_login_portal_dsm":                  false,
 		"get_login_portal_applications":         false,
@@ -175,10 +202,25 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"get_snapshot_log":                      false,
 		"plan_snapshot_change":                  false,
 		"plan_snapshot_replication_create":      false,
+		"get_hyper_backup_capabilities":         false,
+		"get_hyper_backup_tasks":                false,
+		"get_hyper_backup_task":                 false,
+		"get_hyper_backup_versions":             false,
+		"get_hyper_backup_logs":                 false,
+		"get_hyper_backup_vault":                false,
+		"get_hyper_backup_applications":         false,
+		"get_hyper_backup_luns":                 false,
+		"get_hyper_backup_lun_backups":          false,
+		"plan_hyper_backup_lun_backup_create":   false,
+		"plan_hyper_backup_task_change":         false,
+		"get_task_scheduler_capabilities":       false,
+		"get_task_scheduler_tasks":              false,
+		"get_task_scheduler_triggered":          false,
 	}
 	mutationTools := map[string]bool{
 		"apply_account_plan":                   false,
 		"apply_control_panel_time_plan":        false,
+		"apply_system_hostname_plan":           false,
 		"apply_san_plan":                       false,
 		"apply_share_plan":                     false,
 		"apply_storage_plan":                   false,
@@ -201,6 +243,12 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"apply_account_protection_enforce_2fa_plan":   false,
 		"apply_snapshot_plan":                  false,
 		"apply_snapshot_replication_create":    false,
+		"apply_terminal_plan":                         false,
+		"apply_snmp_plan":                             false,
+		"apply_firewall_profile_plan":                 false,
+		"apply_firewall_enable_plan":                  false,
+		"apply_hyper_backup_task_plan":                false,
+		"apply_hyper_backup_lun_backup_plan":          false,
 	}
 	for _, tool := range tools.Tools {
 		if _, ok := mutationTools[tool.Name]; ok {

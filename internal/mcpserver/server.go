@@ -31,6 +31,9 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/domain/rsyncservice"
 	"github.com/ychiu1211/dsmctl/internal/domain/san"
 	"github.com/ychiu1211/dsmctl/internal/domain/accountprotection"
+	firewalldomain "github.com/ychiu1211/dsmctl/internal/domain/firewall"
+	networkdomain "github.com/ychiu1211/dsmctl/internal/domain/network"
+	"github.com/ychiu1211/dsmctl/internal/domain/loginportal"
 	"github.com/ychiu1211/dsmctl/internal/domain/securityadvisor"
 	"github.com/ychiu1211/dsmctl/internal/domain/servicediscovery"
 	"github.com/ychiu1211/dsmctl/internal/domain/share"
@@ -38,6 +41,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/domain/storage"
 	"github.com/ychiu1211/dsmctl/internal/domain/surveillance"
 	"github.com/ychiu1211/dsmctl/internal/domain/syslog"
+	"github.com/ychiu1211/dsmctl/internal/domain/terminalsnmp"
 	"github.com/ychiu1211/dsmctl/internal/domain/tftpservice"
 	"github.com/ychiu1211/dsmctl/internal/synology"
 )
@@ -443,6 +447,110 @@ type applyDownloadStationSettingsPlanOutput struct {
 	Result application.DownloadStationSettingsApplyResult `json:"result" jsonschema:"Apply outcome including the selected DSM mutation backend"`
 }
 
+type getHyperBackupInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit for the default"`
+}
+
+type getHyperBackupCapabilitiesOutput struct {
+	NAS          string                           `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.HyperBackupCapabilities `json:"capabilities" jsonschema:"Hyper Backup reads and actions currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport     `json:"report" jsonschema:"Discovered APIs and selected Hyper Backup backends"`
+}
+
+type getHyperBackupTasksOutput struct {
+	NAS   string                    `json:"nas" jsonschema:"NAS profile used for the request"`
+	Tasks synology.HyperBackupTasks `json:"tasks" jsonschema:"Backup task list"`
+}
+
+type getHyperBackupTaskInput struct {
+	NAS    string `json:"nas,omitempty" jsonschema:"NAS profile name; omit for the default"`
+	TaskID int    `json:"task_id" jsonschema:"Backup task identifier from get_hyper_backup_tasks"`
+}
+
+type getHyperBackupTaskOutput struct {
+	NAS  string                         `json:"nas" jsonschema:"NAS profile used for the request"`
+	Task synology.HyperBackupTaskDetail `json:"task" jsonschema:"Full task view: repository, transfer options, live status, destination reachability"`
+}
+
+type getHyperBackupVersionsInput struct {
+	NAS    string `json:"nas,omitempty" jsonschema:"NAS profile name; omit for the default"`
+	TaskID int    `json:"task_id" jsonschema:"Backup task identifier from get_hyper_backup_tasks"`
+	Offset int    `json:"offset,omitempty" jsonschema:"Number of versions to skip"`
+	Limit  int    `json:"limit,omitempty" jsonschema:"Maximum versions to return; default 50"`
+}
+
+type getHyperBackupVersionsOutput struct {
+	NAS      string                       `json:"nas" jsonschema:"NAS profile used for the request"`
+	Versions synology.HyperBackupVersions `json:"versions" jsonschema:"Backup versions of the task"`
+}
+
+type getHyperBackupLogsInput struct {
+	NAS    string `json:"nas,omitempty" jsonschema:"NAS profile name; omit for the default"`
+	Offset int    `json:"offset,omitempty" jsonschema:"Number of log entries to skip"`
+	Limit  int    `json:"limit,omitempty" jsonschema:"Maximum log entries to return; default 50"`
+}
+
+type getHyperBackupLogsOutput struct {
+	NAS  string                   `json:"nas" jsonschema:"NAS profile used for the request"`
+	Logs synology.HyperBackupLogs `json:"logs" jsonschema:"Hyper Backup log feed page"`
+}
+
+type getHyperBackupApplicationsOutput struct {
+	NAS          string                           `json:"nas" jsonschema:"NAS profile used for the request"`
+	Applications synology.HyperBackupApplications `json:"applications" jsonschema:"Packages Hyper Backup can include in a backup task, with per-application eligibility"`
+}
+
+type getHyperBackupLunsOutput struct {
+	NAS  string                 `json:"nas" jsonschema:"NAS profile used for the request"`
+	Luns synology.HyperBackupLuns `json:"luns" jsonschema:"LUNs legacy Hyper Backup LUN backup can protect (file/regular LUNs)"`
+}
+
+type getHyperBackupLunBackupsOutput struct {
+	NAS   string                             `json:"nas" jsonschema:"NAS profile used for the request"`
+	Tasks synology.HyperBackupLunBackupTasks `json:"tasks" jsonschema:"Legacy LUN backup tasks"`
+}
+
+type planHyperBackupLunBackupCreateInput struct {
+	NAS     string                             `json:"nas,omitempty" jsonschema:"NAS profile name; omit for the default"`
+	Request synology.HyperBackupLunBackupChange `json:"request" jsonschema:"LUN backup create intent: action create + the LUN, destination share, and optional backup_now"`
+}
+
+type planHyperBackupLunBackupCreateOutput struct {
+	Plan application.HyperBackupLunBackupPlan `json:"plan" jsonschema:"Validated plan bound to the source LUN and existing task names, plus the approval hash"`
+}
+
+type applyHyperBackupLunBackupPlanInput struct {
+	Plan         application.HyperBackupLunBackupPlan `json:"plan" jsonschema:"Approved LUN backup plan from plan_hyper_backup_lun_backup_create"`
+	ApprovalHash string                              `json:"approval_hash" jsonschema:"Exact SHA-256 approval hash from the plan"`
+}
+
+type applyHyperBackupLunBackupPlanOutput struct {
+	Result application.HyperBackupLunBackupApplyResult `json:"result" jsonschema:"Apply outcome including the created task"`
+}
+
+type getHyperBackupVaultOutput struct {
+	NAS   string                    `json:"nas" jsonschema:"NAS profile used for the request"`
+	Vault synology.HyperBackupVault `json:"vault" jsonschema:"Hyper Backup Vault view of this NAS as a backup destination"`
+}
+
+type planHyperBackupTaskChangeInput struct {
+	NAS     string                        `json:"nas,omitempty" jsonschema:"NAS profile name; omit for the default"`
+	Request synology.HyperBackupTaskChange `json:"request" jsonschema:"Task action intent: backup (run now) or cancel, plus the task_id"`
+}
+
+type planHyperBackupTaskChangeOutput struct {
+	Plan application.HyperBackupTaskPlan `json:"plan" jsonschema:"Validated plan bound to the observed task state and approval hash"`
+}
+
+type applyHyperBackupTaskPlanInput struct {
+	Plan         application.HyperBackupTaskPlan `json:"plan" jsonschema:"Approved task plan from plan_hyper_backup_task_change"`
+	ApprovalHash string                          `json:"approval_hash" jsonschema:"Exact SHA-256 approval hash from the plan"`
+}
+
+type applyHyperBackupTaskPlanOutput struct {
+	Result application.HyperBackupTaskApplyResult `json:"result" jsonschema:"Apply outcome including the DSM mutation backend used"`
+}
+
 type planControlPanelTimeChangeInput struct {
 	NAS     string                  `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
 	Request controlpanel.TimeChange `json:"request" jsonschema:"Patch-only time zone, display format, or NTP intent"`
@@ -459,6 +567,24 @@ type applyControlPanelTimePlanInput struct {
 
 type applyControlPanelTimePlanOutput struct {
 	Result application.ControlPanelTimeApplyResult `json:"result" jsonschema:"Time mutation result after stale-state and postcondition checks"`
+}
+
+type planSystemHostnameChangeInput struct {
+	NAS     string                           `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request application.SystemHostnameChange `json:"request" jsonschema:"New DSM server name (hostname)"`
+}
+
+type planSystemHostnameChangeOutput struct {
+	Plan application.SystemHostnamePlan `json:"plan" jsonschema:"Validated plan bound to the observed server name and approval hash"`
+}
+
+type applySystemHostnamePlanInput struct {
+	Plan         application.SystemHostnamePlan `json:"plan" jsonschema:"Unmodified plan returned by plan_system_hostname_change"`
+	ApprovalHash string                         `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved hostname plan"`
+}
+
+type applySystemHostnamePlanOutput struct {
+	Result application.SystemHostnameApplyResult `json:"result" jsonschema:"Hostname change result after stale-state and postcondition checks"`
 }
 
 type getFileServicesInput struct {
@@ -1019,9 +1145,59 @@ type getNotificationHistoryOutput struct {
 	History synology.NotificationHistoryState `json:"history" jsonschema:"One page of the DSM notification history, newest first"`
 }
 
+type getDSMUpdateInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getDSMUpdateCapabilitiesOutput struct {
+	NAS          string                         `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.DSMUpdateCapabilities `json:"capabilities" jsonschema:"Update & Restore read areas currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport   `json:"report" jsonschema:"Discovered APIs and selected DSM update compatibility backends"`
+}
+
+type getDSMUpdateStatusOutput struct {
+	NAS    string                   `json:"nas" jsonschema:"NAS profile used for the request"`
+	Status synology.DSMUpdateStatus `json:"status" jsonschema:"Local DSM update state: installed version, whether an upgrade is allowed, and any in-progress state"`
+}
+
+type getDSMUpdateAvailableOutput struct {
+	NAS       string                      `json:"nas" jsonschema:"NAS profile used for the request"`
+	Available synology.DSMUpdateAvailable `json:"available" jsonschema:"Update-server offered-update check; availability is unknown when the update server is unreachable"`
+}
+
+type getDSMUpdatePolicyOutput struct {
+	NAS    string                   `json:"nas" jsonschema:"NAS profile used for the request"`
+	Policy synology.DSMUpdatePolicy `json:"policy" jsonschema:"DSM auto-update policy"`
+}
+
+type getDSMUpdateConfigBackupOutput struct {
+	NAS          string                        `json:"nas" jsonschema:"NAS profile used for the request"`
+	ConfigBackup synology.DSMUpdateConfigBackup `json:"config_backup" jsonschema:"Configuration-backup status and history without any destination password"`
+}
+
 type getLogsOutput struct {
 	NAS  string            `json:"nas" jsonschema:"NAS profile used for the request"`
 	Logs synology.LogState `json:"logs" jsonschema:"Normalized DSM system log entries and severity counts"`
+}
+
+type getTaskSchedulerInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getTaskSchedulerCapabilitiesOutput struct {
+	NAS          string                             `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.TaskSchedulerCapabilities `json:"capabilities" jsonschema:"Task Scheduler read areas currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport       `json:"report" jsonschema:"Discovered APIs and selected Task Scheduler compatibility backends"`
+}
+
+type getTaskSchedulerTasksOutput struct {
+	NAS   string                               `json:"nas" jsonschema:"NAS profile used for the request"`
+	Tasks synology.TaskSchedulerScheduledTasks `json:"tasks" jsonschema:"Scheduled-task inventory metadata; never a task's command or script body"`
+}
+
+type getTaskSchedulerTriggeredOutput struct {
+	NAS   string                               `json:"nas" jsonschema:"NAS profile used for the request"`
+	Tasks synology.TaskSchedulerTriggeredTasks `json:"tasks" jsonschema:"Triggered-task inventory metadata; never a task's command or script body"`
 }
 
 type getResourceMonitorInput struct {
@@ -1053,6 +1229,136 @@ type getResourceMonitorCapabilitiesOutput struct {
 	NAS          string                               `json:"nas" jsonschema:"NAS profile used for the request"`
 	Capabilities synology.ResourceMonitorCapabilities `json:"capabilities" jsonschema:"Resource Monitor operations currently exposed by dsmctl"`
 	Report       synology.CompatibilityReport         `json:"report" jsonschema:"Discovered APIs and selected Resource Monitor compatibility backends"`
+}
+
+type getDiskSMARTInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getDiskSMARTCapabilitiesOutput struct {
+	NAS          string                        `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.DiskSMARTCapabilities `json:"capabilities" jsonschema:"Disk-SMART read areas currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport  `json:"report" jsonschema:"Discovered APIs and selected disk-SMART compatibility backends"`
+}
+
+type getDiskHealthOutput struct {
+	NAS    string                   `json:"nas" jsonschema:"NAS profile used for the request"`
+	Health synology.DiskHealthState `json:"health" jsonschema:"Per-disk health, lifespan, and coarse self-test state plus global warning thresholds"`
+}
+
+type getDiskSMARTAttributesOutput struct {
+	NAS   string                  `json:"nas" jsonschema:"NAS profile used for the request"`
+	SMART synology.DiskSMARTState `json:"smart" jsonschema:"Per-disk SMART attribute tables, summaries, and self-test status"`
+}
+
+type getUniversalSearchInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getUniversalSearchCapabilitiesOutput struct {
+	NAS          string                               `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.UniversalSearchCapabilities `json:"capabilities" jsonschema:"Universal Search read areas currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport         `json:"report" jsonschema:"Discovered APIs and selected Universal Search compatibility backends"`
+}
+
+type getUniversalSearchFoldersOutput struct {
+	NAS     string                                 `json:"nas" jsonschema:"NAS profile used for the request"`
+	Folders synology.UniversalSearchIndexedFolders `json:"folders" jsonschema:"Universal Search indexed-folder list"`
+}
+
+type getUniversalSearchStatusOutput struct {
+	NAS    string                              `json:"nas" jsonschema:"NAS profile used for the request"`
+	Status synology.UniversalSearchIndexStatus `json:"status" jsonschema:"Overall Universal Search index daemon status"`
+}
+
+type getHardwareInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getHardwareCapabilitiesOutput struct {
+	NAS          string                        `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.HardwareCapabilities `json:"capabilities" jsonschema:"Hardware & Power read areas currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport  `json:"report" jsonschema:"Discovered APIs and selected Hardware & Power compatibility backends"`
+}
+
+type getHardwareGeneralOutput struct {
+	NAS     string                        `json:"nas" jsonschema:"NAS profile used for the request"`
+	General synology.HardwareGeneralState `json:"general" jsonschema:"Beep control, fan-speed mode, and LED brightness/schedule; model-absent areas are omitted"`
+}
+
+type getHardwarePowerScheduleOutput struct {
+	NAS      string                              `json:"nas" jsonschema:"NAS profile used for the request"`
+	Schedule synology.HardwarePowerScheduleState `json:"schedule" jsonschema:"Scheduled power on/off tasks"`
+}
+
+type getHardwarePowerRecoveryOutput struct {
+	NAS      string                              `json:"nas" jsonschema:"NAS profile used for the request"`
+	Recovery synology.HardwarePowerRecoveryState `json:"recovery" jsonschema:"After-power-loss behavior and per-NIC Wake-on-LAN state"`
+}
+
+type getHardwareUPSOutput struct {
+	NAS string                    `json:"nas" jsonschema:"NAS profile used for the request"`
+	UPS synology.HardwareUPSState `json:"ups" jsonschema:"UPS configuration and live status; reports the no-device path when no UPS is attached"`
+}
+
+type getExternalDeviceInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getExternalDeviceCapabilitiesOutput struct {
+	NAS          string                              `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.ExternalDeviceCapabilities `json:"capabilities" jsonschema:"External Devices read areas currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport        `json:"report" jsonschema:"Discovered APIs and selected External Devices compatibility backends"`
+}
+
+type getExternalStorageOutput struct {
+	NAS     string                        `json:"nas" jsonschema:"NAS profile used for the request"`
+	Storage synology.ExternalStorageState `json:"storage" jsonschema:"Attached USB and eSATA external disks; a bus whose API is absent is omitted"`
+}
+
+type getExternalPrintersOutput struct {
+	NAS      string                        `json:"nas" jsonschema:"NAS profile used for the request"`
+	Printers synology.ExternalPrinterState `json:"printers" jsonschema:"Connected printers and the Bonjour/AirPrint sharing toggle"`
+}
+
+type getDirectoryInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getDirectoryCapabilitiesOutput struct {
+	NAS          string                         `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.DirectoryCapabilities `json:"capabilities" jsonschema:"Directory (Domain/LDAP) read areas currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport   `json:"report" jsonschema:"Discovered APIs and selected directory compatibility backends"`
+}
+
+type getDirectoryStatusOutput struct {
+	NAS    string                   `json:"nas" jsonschema:"NAS profile used for the request"`
+	Status synology.DirectoryStatus `json:"status" jsonschema:"Directory-client status: AD domain membership and/or LDAP bind, with non-secret configuration"`
+}
+
+type getDirectoryUsersOutput struct {
+	NAS   string                  `json:"nas" jsonschema:"NAS profile used for the request"`
+	Users synology.DirectoryUsers `json:"users" jsonschema:"Synced domain/LDAP users, scoped to the active mode"`
+}
+
+type getDirectoryGroupsOutput struct {
+	NAS    string                   `json:"nas" jsonschema:"NAS profile used for the request"`
+	Groups synology.DirectoryGroups `json:"groups" jsonschema:"Synced domain/LDAP groups, scoped to the active mode"`
+}
+
+type getKMIPInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getKMIPCapabilitiesOutput struct {
+	NAS          string                       `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.KMIPCapabilities    `json:"capabilities" jsonschema:"KMIP read surface currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport `json:"report" jsonschema:"Discovered APIs and the selected KMIP compatibility backend"`
+}
+
+type getKMIPStatusOutput struct {
+	NAS    string              `json:"nas" jsonschema:"NAS profile used for the request"`
+	Status synology.KMIPStatus `json:"status" jsonschema:"KMIP role/status: local server and external client configuration with non-secret certificate bindings"`
 }
 
 type planResourceRecordingChangeInput struct {
@@ -1261,8 +1567,40 @@ type getSNMPStateOutput struct {
 
 type getTerminalSNMPCapabilitiesOutput struct {
 	NAS          string                            `json:"nas" jsonschema:"NAS profile used for the request"`
-	Capabilities synology.TerminalSNMPCapabilities `json:"capabilities" jsonschema:"Terminal and SNMP reads currently exposed by dsmctl"`
+	Capabilities synology.TerminalSNMPCapabilities `json:"capabilities" jsonschema:"Terminal and SNMP reads and guarded writes currently exposed by dsmctl"`
 	Report       synology.CompatibilityReport      `json:"report" jsonschema:"Discovered APIs and selected Terminal/SNMP backends"`
+}
+
+type planTerminalChangeInput struct {
+	NAS     string                      `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request terminalsnmp.TerminalChange `json:"request" jsonschema:"Patch-only Terminal intent (ssh_enabled, ssh_port, telnet_enabled, console_forbidden)"`
+}
+
+type planTerminalChangeOutput struct {
+	Plan application.TerminalChangePlan `json:"plan" jsonschema:"Validated plan bound to the complete observed Terminal state and approval hash"`
+}
+
+type applyTerminalPlanInput struct {
+	Plan         application.TerminalChangePlan `json:"plan" jsonschema:"Unmodified plan returned by plan_terminal_change"`
+	ApprovalHash string                         `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved plan"`
+}
+
+type terminalSNMPApplyOutput struct {
+	Result application.TerminalSNMPApplyResult `json:"result" jsonschema:"Mutation result after stale-state and postcondition checks; carries no secret"`
+}
+
+type planSNMPChangeInput struct {
+	NAS     string                  `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request terminalsnmp.SNMPChange `json:"request" jsonschema:"Patch-only SNMP intent. The read community is a secret referenced by community_credential_ref (env:NAME) and resolved only at apply time"`
+}
+
+type planSNMPChangeOutput struct {
+	Plan application.SNMPChangePlan `json:"plan" jsonschema:"Validated plan bound to the complete observed SNMP state and approval hash; carries no community string or SNMPv3 password"`
+}
+
+type applySNMPPlanInput struct {
+	Plan         application.SNMPChangePlan `json:"plan" jsonschema:"Unmodified plan returned by plan_snmp_change"`
+	ApprovalHash string                     `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved plan"`
 }
 
 type planCertificateChangeInput struct {
@@ -1451,8 +1789,102 @@ type getFirewallRulesOutput struct {
 
 type getFirewallCapabilitiesOutput struct {
 	NAS          string                        `json:"nas" jsonschema:"NAS profile used for the request"`
-	Capabilities synology.FirewallCapabilities `json:"capabilities" jsonschema:"Firewall reads currently exposed by dsmctl"`
+	Capabilities synology.FirewallCapabilities `json:"capabilities" jsonschema:"Firewall reads and guarded writes currently exposed by dsmctl"`
 	Report       synology.CompatibilityReport  `json:"report" jsonschema:"Discovered APIs and selected firewall backends"`
+}
+
+type planFirewallProfileChangeInput struct {
+	NAS     string                 `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request firewalldomain.ProfileChange `json:"request" jsonschema:"Full-desired-state firewall profile change: the target profile, the desired adapter sections (default policy plus complete ordered rule list), whether to activate it, and the never-lockout override/keep_reachable"`
+}
+
+type planFirewallProfileChangeOutput struct {
+	Plan application.FirewallProfilePlan `json:"plan" jsonschema:"Validated plan bound to the complete observed state, the management tuple, the guard decision, and the approval hash"`
+}
+
+type applyFirewallProfilePlanInput struct {
+	Plan         application.FirewallProfilePlan `json:"plan" jsonschema:"Unmodified plan returned by plan_firewall_profile_change"`
+	ApprovalHash string                          `json:"approval_hash" jsonschema:"Exact approval hash from the plan"`
+}
+
+type planFirewallEnableChangeInput struct {
+	NAS     string                `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request firewalldomain.EnableChange `json:"request" jsonschema:"Firewall enable/disable intent: the desired enabled state, the profile to make active when enabling, and the never-lockout override/keep_reachable"`
+}
+
+type planFirewallEnableChangeOutput struct {
+	Plan application.FirewallEnablePlan `json:"plan" jsonschema:"Validated plan bound to the complete observed state, the management tuple, the guard decision, and the approval hash"`
+}
+
+type applyFirewallEnablePlanInput struct {
+	Plan         application.FirewallEnablePlan `json:"plan" jsonschema:"Unmodified plan returned by plan_firewall_enable_change"`
+	ApprovalHash string                         `json:"approval_hash" jsonschema:"Exact approval hash from the plan"`
+}
+
+type firewallApplyOutput struct {
+	Result application.FirewallApplyResult `json:"result" jsonschema:"Mutation result after stale-state, never-lockout, and postcondition checks"`
+}
+
+type networkInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getNetworkGeneralOutput struct {
+	NAS     string                  `json:"nas" jsonschema:"NAS profile used for the request"`
+	General synology.NetworkGeneral `json:"general" jsonschema:"General network settings: hostname, default gateway, DNS, and outbound proxy (the proxy password is never surfaced)"`
+}
+
+type getNetworkInterfacesOutput struct {
+	NAS        string                      `json:"nas" jsonschema:"NAS profile used for the request"`
+	Interfaces []synology.NetworkInterface `json:"interfaces" jsonschema:"Per-interface configuration and link status"`
+}
+
+type getNetworkBondsOutput struct {
+	NAS   string                 `json:"nas" jsonschema:"NAS profile used for the request"`
+	Bonds []synology.NetworkBond `json:"bonds" jsonschema:"Link-aggregation bonds with their mode and member NICs"`
+}
+
+type getNetworkRoutesOutput struct {
+	NAS    string                     `json:"nas" jsonschema:"NAS profile used for the request"`
+	Routes synology.NetworkRouteTable `json:"routes" jsonschema:"Static-route table; configured is false when advanced routing is not set up on the NAS"`
+}
+
+type getNetworkCapabilitiesOutput struct {
+	NAS          string                       `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.NetworkCapabilities `json:"capabilities" jsonschema:"Network reads and guarded writes currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport `json:"report" jsonschema:"Discovered APIs and selected network backends"`
+}
+
+type planNetworkGeneralChangeInput struct {
+	NAS     string                      `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request networkdomain.GeneralChange `json:"request" jsonschema:"Patch-only general network change: any of hostname, default_gateway_v4, dns_primary, dns_secondary, ipv4_first, plus the allow_connectivity_break override. Omitted fields are preserved"`
+}
+
+type planNetworkGeneralChangeOutput struct {
+	Plan application.NetworkGeneralPlan `json:"plan" jsonschema:"Validated plan bound to the complete observed general block, the resolved management path, the never-sever guard decision, and the approval hash"`
+}
+
+type applyNetworkGeneralPlanInput struct {
+	Plan         application.NetworkGeneralPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_network_general_change"`
+	ApprovalHash string                         `json:"approval_hash" jsonschema:"Exact approval hash from the plan"`
+}
+
+type planNetworkInterfaceChangeInput struct {
+	NAS     string                        `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request networkdomain.InterfaceChange `json:"request" jsonschema:"Patch-only interface change: the interface name plus any of ipv4, netmask, gateway_v4, use_dhcp, mtu, plus the allow_connectivity_break override. Omitted fields are preserved"`
+}
+
+type planNetworkInterfaceChangeOutput struct {
+	Plan application.NetworkInterfacePlan `json:"plan" jsonschema:"Validated plan with the never-sever guard decision. NOTE: the interface-set wire is unverified, so the apply is refused"`
+}
+
+type applyNetworkInterfacePlanInput struct {
+	Plan         application.NetworkInterfacePlan `json:"plan" jsonschema:"Unmodified plan returned by plan_network_interface_change"`
+	ApprovalHash string                           `json:"approval_hash" jsonschema:"Exact approval hash from the plan"`
+}
+
+type networkApplyOutput struct {
+	Result application.NetworkApplyResult `json:"result" jsonschema:"Mutation result after stale-state, never-sever, and postcondition checks"`
 }
 
 type loginPortalInput struct {
@@ -1476,8 +1908,59 @@ type getReverseProxyRulesOutput struct {
 
 type getLoginPortalCapabilitiesOutput struct {
 	NAS          string                           `json:"nas" jsonschema:"NAS profile used for the request"`
-	Capabilities synology.LoginPortalCapabilities `json:"capabilities" jsonschema:"Login Portal reads currently exposed by dsmctl"`
+	Capabilities synology.LoginPortalCapabilities `json:"capabilities" jsonschema:"Login Portal reads and guarded writes currently exposed by dsmctl"`
 	Report       synology.CompatibilityReport     `json:"report" jsonschema:"Discovered APIs and selected Login Portal backends"`
+}
+
+type planDSMWebServiceChangeInput struct {
+	NAS     string                          `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request loginportal.DSMWebServiceChange `json:"request" jsonschema:"Patch-only DSM web-service intent; a change that would sever the current dsmctl transport needs allow_connectivity_break"`
+}
+
+type planDSMWebServiceChangeOutput struct {
+	Plan application.DSMWebServicePlan `json:"plan" jsonschema:"Validated plan bound to the complete observed settings, current transport, and approval hash"`
+}
+
+type applyDSMWebServicePlanInput struct {
+	Plan         application.DSMWebServicePlan `json:"plan" jsonschema:"Unmodified plan returned by plan_login_portal_dsm_change"`
+	ApprovalHash string                       `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved plan"`
+}
+
+type loginPortalApplyOutput struct {
+	Result application.LoginPortalApplyResult `json:"result" jsonschema:"Mutation result after stale-state and postcondition checks"`
+}
+
+type planApplicationPortalChangeInput struct {
+	NAS     string                              `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request loginportal.ApplicationPortalChange `json:"request" jsonschema:"Patch-only application-portal intent keyed by app_id"`
+}
+
+type planApplicationPortalChangeOutput struct {
+	Plan application.ApplicationPortalPlan `json:"plan" jsonschema:"Validated plan bound to the observed portal and approval hash"`
+}
+
+type applyApplicationPortalPlanInput struct {
+	Plan         application.ApplicationPortalPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_login_portal_application_change"`
+	ApprovalHash string                           `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved plan"`
+}
+
+type planReverseProxyCreateInput struct {
+	NAS     string                             `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request loginportal.ReverseProxyRuleCreate `json:"request" jsonschema:"Reverse-proxy rule to create; secret header values use credential_ref (env:NAME)"`
+}
+
+type planReverseProxyDeleteInput struct {
+	NAS     string                             `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request loginportal.ReverseProxyRuleDelete `json:"request" jsonschema:"Reverse-proxy rule to delete, keyed by uuid"`
+}
+
+type planReverseProxyOutput struct {
+	Plan application.ReverseProxyPlan `json:"plan" jsonschema:"Validated plan bound to the complete observed rule set and approval hash"`
+}
+
+type applyReverseProxyPlanInput struct {
+	Plan         application.ReverseProxyPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_login_portal_reverse_proxy_create or plan_login_portal_reverse_proxy_delete"`
+	ApprovalHash string                       `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved plan"`
 }
 
 type getDriveAdminCapabilitiesOutput struct {
@@ -1762,6 +2245,42 @@ func New(service *application.Service, version string, opts ...Option) *mcp.Serv
 			return nil, getAuthStatusOutput{}, err
 		}
 		return nil, getAuthStatusOutput{Statuses: result.Statuses}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "provision_nas",
+		Title:       "Provision a fresh NAS (create first administrator)",
+		Description: "Create the first administrator on a factory-fresh NAS that is in its DSM setup window, behind an already-added, credential-less NAS profile. The administrator password is generated on the server and stored in the credential store; it is NEVER returned, logged, or accepted as input — retrieve it afterward only through the human-gated reveal. Refuses a profile that already holds a stored credential (so a grant cannot re-provision a set-up NAS). Remote callers need the nas.provision scope and the target NAS in their allowlist.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input application.ProvisionRequest) (*mcp.CallToolResult, application.ProvisionResult, error) {
+		result, err := service.ProvisionNAS(ctx, input)
+		if err != nil {
+			return nil, application.ProvisionResult{}, err
+		}
+		return nil, result, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "provision_discovered_nas",
+		Title:       "Provision a discovered, un-enrolled fresh NAS",
+		Description: "Provision a factory-fresh NAS that has NO profile yet, by its LAN url (for example one just returned by discover_lan_devices). The server restricts the target to a private/loopback/link-local address, trusts the certificate it observes on first contact, creates a pinned profile, then creates the first administrator. The generated password is stored in the credential store and is NEVER returned or logged — retrieve it only through the human-gated reveal. The new profile is not added to any token's allowlist. Remote callers need the nas.provision scope; this is a LAN/VPN bootstrap and sends a generated password to the device, so grant it only to a trusted provisioning client.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input application.ProvisionRequest) (*mcp.CallToolResult, application.ProvisionResult, error) {
+		result, err := service.ProvisionDiscoveredNAS(ctx, input)
+		if err != nil {
+			return nil, application.ProvisionResult{}, err
+		}
+		return nil, result, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "install_discovered_nas",
+		Title:       "Detect and online-install DSM on a discovered device",
+		Description: "Detect the DSM install state of a discovered LAN device (never installed, crashed, or migratable) by its Web Assistant url, and — with trigger=true — start an ONLINE DSM install (the device downloads DSM from Synology and reboots). This is DESTRUCTIVE: it erases the device's disks. It does not wait for the multi-minute install/reboot; re-call to check state, then create the first administrator with provision_discovered_nas. The offline .pat path (host downloads the image) is CLI-only. Remote callers need the nas.provision scope; the target is bounded to LAN/VPN addresses.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input application.InstallRequest) (*mcp.CallToolResult, application.InstallStatus, error) {
+		result, err := service.InstallDiscoveredNAS(ctx, input)
+		if err != nil {
+			return nil, application.InstallStatus{}, err
+		}
+		return nil, result, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -2394,6 +2913,175 @@ func New(service *application.Service, version string, opts ...Option) *mcp.Serv
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_hyper_backup_capabilities",
+		Title:       "Get Hyper Backup capabilities",
+		Description: "Report which Hyper Backup reads and guarded actions are available for a NAS, the installed HyperBackup and HyperBackupVault package evidence, and the DSM backend selected for each. Fails closed when a package is not installed.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getHyperBackupInput) (*mcp.CallToolResult, getHyperBackupCapabilitiesOutput, error) {
+		result, err := service.GetHyperBackupCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getHyperBackupCapabilitiesOutput{}, err
+		}
+		return nil, getHyperBackupCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_hyper_backup_tasks",
+		Title:       "List Hyper Backup tasks",
+		Description: "List the Hyper Backup tasks with state, live activity, last backup time and result, next scheduled run, and backed-up source folders. Requires the HyperBackup package.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getHyperBackupInput) (*mcp.CallToolResult, getHyperBackupTasksOutput, error) {
+		result, err := service.GetHyperBackupTasks(ctx, input.NAS)
+		if err != nil {
+			return nil, getHyperBackupTasksOutput{}, err
+		}
+		return nil, getHyperBackupTasksOutput{NAS: result.NAS, Tasks: result.Tasks}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_hyper_backup_task",
+		Title:       "Get one Hyper Backup task",
+		Description: "Read one backup task's destination repository, transfer options, live status with progress while a run is active, and destination reachability.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getHyperBackupTaskInput) (*mcp.CallToolResult, getHyperBackupTaskOutput, error) {
+		result, err := service.GetHyperBackupTaskDetail(ctx, input.NAS, input.TaskID)
+		if err != nil {
+			return nil, getHyperBackupTaskOutput{}, err
+		}
+		return nil, getHyperBackupTaskOutput{NAS: result.NAS, Task: result.Task}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_hyper_backup_versions",
+		Title:       "List Hyper Backup versions",
+		Description: "List the backup versions one task has produced, newest first, with completion status and rotation-lock state.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getHyperBackupVersionsInput) (*mcp.CallToolResult, getHyperBackupVersionsOutput, error) {
+		result, err := service.GetHyperBackupVersions(ctx, input.NAS, input.TaskID, input.Offset, input.Limit)
+		if err != nil {
+			return nil, getHyperBackupVersionsOutput{}, err
+		}
+		return nil, getHyperBackupVersionsOutput{NAS: result.NAS, Versions: result.Versions}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_hyper_backup_logs",
+		Title:       "Get Hyper Backup logs",
+		Description: "Read a page of the Hyper Backup log feed (task runs, results, and configuration events) plus the feed-wide error/warning/info counts.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getHyperBackupLogsInput) (*mcp.CallToolResult, getHyperBackupLogsOutput, error) {
+		result, err := service.GetHyperBackupLogs(ctx, input.NAS, input.Offset, input.Limit)
+		if err != nil {
+			return nil, getHyperBackupLogsOutput{}, err
+		}
+		return nil, getHyperBackupLogsOutput{NAS: result.NAS, Logs: result.Logs}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_hyper_backup_applications",
+		Title:       "List Hyper Backup backupable applications",
+		Description: "List the packages Hyper Backup can include in a backup task, with per-application eligibility (backupable or the reason it is not) and the identifiers a create request's applications list accepts.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getHyperBackupInput) (*mcp.CallToolResult, getHyperBackupApplicationsOutput, error) {
+		result, err := service.GetHyperBackupApplications(ctx, input.NAS)
+		if err != nil {
+			return nil, getHyperBackupApplicationsOutput{}, err
+		}
+		return nil, getHyperBackupApplicationsOutput{NAS: result.NAS, Applications: result.Applications}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_hyper_backup_luns",
+		Title:       "List LUNs Hyper Backup can back up",
+		Description: "List the LUNs the legacy Hyper Backup LUN-backup engine can protect (file/regular LUNs; each name is a lun_source for a create). Block-level LUNs are not covered.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getHyperBackupInput) (*mcp.CallToolResult, getHyperBackupLunsOutput, error) {
+		result, err := service.GetHyperBackupLuns(ctx, input.NAS)
+		if err != nil {
+			return nil, getHyperBackupLunsOutput{}, err
+		}
+		return nil, getHyperBackupLunsOutput{NAS: result.NAS, Luns: result.Luns}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_hyper_backup_lun_backups",
+		Title:       "List Hyper Backup LUN backup tasks",
+		Description: "List the legacy LUN backup tasks (loclunbkp local / netlunbkp remote) with their activity and last result. Separate from the image backup tasks.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getHyperBackupInput) (*mcp.CallToolResult, getHyperBackupLunBackupsOutput, error) {
+		result, err := service.GetHyperBackupLunBackupTasks(ctx, input.NAS)
+		if err != nil {
+			return nil, getHyperBackupLunBackupsOutput{}, err
+		}
+		return nil, getHyperBackupLunBackupsOutput{NAS: result.NAS, Tasks: result.Tasks}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_hyper_backup_lun_backup_create",
+		Title:       "Plan a Hyper Backup LUN backup create",
+		Description: "Validate a local LUN backup create (back up one file/regular LUN to a shared folder on this NAS) and return an approval plan bound to the source LUN and existing task names (an apply fails if the LUN disappeared or the name collides). This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planHyperBackupLunBackupCreateInput) (*mcp.CallToolResult, planHyperBackupLunBackupCreateOutput, error) {
+		plan, err := service.PlanHyperBackupLunBackupCreate(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planHyperBackupLunBackupCreateOutput{}, err
+		}
+		return nil, planHyperBackupLunBackupCreateOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_hyper_backup_lun_backup_plan",
+		Title:       "Apply an approved Hyper Backup LUN backup plan",
+		Description: "Apply an unmodified LUN backup create plan only while its approval hash and the observed source LUN + task names still match, then verify the task exists (and, if backup_now was set, that the first backup started). Creates a legacy loclunbkp task via apply_lun.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyHyperBackupLunBackupPlanInput) (*mcp.CallToolResult, applyHyperBackupLunBackupPlanOutput, error) {
+		result, err := service.ApplyHyperBackupLunBackupPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applyHyperBackupLunBackupPlanOutput{}, err
+		}
+		return nil, applyHyperBackupLunBackupPlanOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_hyper_backup_vault",
+		Title:       "Get the Hyper Backup Vault view",
+		Description: "Read the Hyper Backup Vault view of this NAS as a backup destination: the inbound targets stored here and the parallel-session limit. Requires the HyperBackupVault package.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getHyperBackupInput) (*mcp.CallToolResult, getHyperBackupVaultOutput, error) {
+		result, err := service.GetHyperBackupVault(ctx, input.NAS)
+		if err != nil {
+			return nil, getHyperBackupVaultOutput{}, err
+		}
+		return nil, getHyperBackupVaultOutput{NAS: result.NAS, Vault: result.Vault}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_hyper_backup_task_change",
+		Title:       "Plan a Hyper Backup task action",
+		Description: "Validate a run-backup-now or cancel request for one backup task, or a create request for a new folder-backup task (destination: a local shared folder, another NAS known to dsmctl via target_nas, or an explicit host with a password_ref), and return an approval plan bound to the observed task state. Destination credentials are resolved only at apply and never enter the plan. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planHyperBackupTaskChangeInput) (*mcp.CallToolResult, planHyperBackupTaskChangeOutput, error) {
+		plan, err := service.PlanHyperBackupTaskChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planHyperBackupTaskChangeOutput{}, err
+		}
+		return nil, planHyperBackupTaskChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_hyper_backup_task_plan",
+		Title:       "Apply an approved Hyper Backup task plan",
+		Description: "Apply an unmodified task plan only while its approval hash and the observed task state still match, then verify the postcondition (the run started, the running backup stopped, or the created task exists). Running a backup writes a new version to the destination; canceling records the interrupted run with result cancel; creating registers a repository, creates the destination directory, and stores the destination credential in Hyper Backup's configuration on the source NAS.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyHyperBackupTaskPlanInput) (*mcp.CallToolResult, applyHyperBackupTaskPlanOutput, error) {
+		result, err := service.ApplyHyperBackupTaskPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applyHyperBackupTaskPlanOutput{}, err
+		}
+		return nil, applyHyperBackupTaskPlanOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name:        "plan_control_panel_time_change",
 		Title:       "Plan a Control Panel time change",
 		Description: "Validate a patch-only time zone, display format, or NTP request and return an approval plan bound to the complete observed module state. Manual synchronization mode and wall-clock changes are rejected, and ntp_servers always replaces the whole ordered list. This tool never mutates DSM.",
@@ -2417,6 +3105,32 @@ func New(service *application.Service, version string, opts ...Option) *mcp.Serv
 			return nil, applyControlPanelTimePlanOutput{}, err
 		}
 		return nil, applyControlPanelTimePlanOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_system_hostname_change",
+		Title:       "Plan a DSM server-name (hostname) change",
+		Description: "Validate a new DSM server name (hostname) against the current name and return a hash-bound approval plan. A no-op rename is refused. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planSystemHostnameChangeInput) (*mcp.CallToolResult, planSystemHostnameChangeOutput, error) {
+		plan, err := service.PlanSystemHostname(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planSystemHostnameChangeOutput{}, err
+		}
+		return nil, planSystemHostnameChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_system_hostname_plan",
+		Title:       "Apply an approved DSM server-name plan",
+		Description: "Apply an unmodified hostname plan only while its approval hash and the observed server name still match, then verify DSM reports the requested name.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applySystemHostnamePlanInput) (*mcp.CallToolResult, applySystemHostnamePlanOutput, error) {
+		result, err := service.ApplySystemHostnamePlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applySystemHostnamePlanOutput{}, err
+		}
+		return nil, applySystemHostnamePlanOutput{Result: result}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -3178,6 +3892,110 @@ func New(service *application.Service, version string, opts ...Option) *mcp.Serv
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_task_scheduler_capabilities",
+		Title:       "Get Task Scheduler capabilities",
+		Description: "Report which DSM Task Scheduler read areas (scheduled tasks, triggered tasks) are available for a NAS and the DSM API backend selected for each. Scheduled and triggered tasks are independent DSM API families. Read-only.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getTaskSchedulerInput) (*mcp.CallToolResult, getTaskSchedulerCapabilitiesOutput, error) {
+		result, err := service.GetTaskSchedulerCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getTaskSchedulerCapabilitiesOutput{}, err
+		}
+		return nil, getTaskSchedulerCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_task_scheduler_tasks",
+		Title:       "List scheduled tasks",
+		Description: "List DSM scheduled tasks (Control Panel > Task Scheduler): for each task its id, name, normalized type, enabled state, run-as identity (flagged when privileged/root), schedule, next run time, and last-run status. Inventory metadata only: a task's command or script body is never returned by this tool. This tool never creates, edits, enables, runs, or deletes a task.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getTaskSchedulerInput) (*mcp.CallToolResult, getTaskSchedulerTasksOutput, error) {
+		result, err := service.GetTaskSchedulerScheduled(ctx, input.NAS)
+		if err != nil {
+			return nil, getTaskSchedulerTasksOutput{}, err
+		}
+		return nil, getTaskSchedulerTasksOutput{NAS: result.NAS, Tasks: result.Tasks}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_task_scheduler_triggered",
+		Title:       "List triggered tasks",
+		Description: "List DSM triggered tasks (boot-up, shutdown, and event-triggered tasks): for each its name, trigger event, enabled state, and run-as identity (flagged when privileged/root). Inventory metadata only: a task's command or script body is never returned. This tool never creates, edits, enables, runs, or deletes a task.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getTaskSchedulerInput) (*mcp.CallToolResult, getTaskSchedulerTriggeredOutput, error) {
+		result, err := service.GetTaskSchedulerTriggered(ctx, input.NAS)
+		if err != nil {
+			return nil, getTaskSchedulerTriggeredOutput{}, err
+		}
+		return nil, getTaskSchedulerTriggeredOutput{NAS: result.NAS, Tasks: result.Tasks}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_dsm_update_capabilities",
+		Title:       "Get DSM Update & Restore capabilities",
+		Description: "Report which DSM Update & Restore read areas (local update status, update-server offered-update check, auto-update policy, configuration backup) are available for a NAS and the DSM API backend selected for each. Each area is independent. This tool never installs a DSM update or restores a configuration.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDSMUpdateInput) (*mcp.CallToolResult, getDSMUpdateCapabilitiesOutput, error) {
+		result, err := service.GetDSMUpdateCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getDSMUpdateCapabilitiesOutput{}, err
+		}
+		return nil, getDSMUpdateCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_dsm_update_status",
+		Title:       "Get DSM update status",
+		Description: "Read the installed DSM version/build and the local update state (whether an upgrade is allowed and any in-progress download/install state). Side-effect-free: this does not contact the update server, install an update, or change any setting.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDSMUpdateInput) (*mcp.CallToolResult, getDSMUpdateStatusOutput, error) {
+		result, err := service.GetDSMUpdateStatus(ctx, input.NAS)
+		if err != nil {
+			return nil, getDSMUpdateStatusOutput{}, err
+		}
+		return nil, getDSMUpdateStatusOutput{NAS: result.NAS, Status: result.Status}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_dsm_update_available",
+		Title:       "Check for an available DSM update",
+		Description: "Check the update server for an offered DSM update and report whether one is available, plus any offered-version and restart/criticality details DSM returns. This performs a network egress to Synology's update server; if the server is unreachable, availability is reported as unknown rather than failing. It never downloads or installs an update.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDSMUpdateInput) (*mcp.CallToolResult, getDSMUpdateAvailableOutput, error) {
+		result, err := service.GetDSMUpdateAvailable(ctx, input.NAS)
+		if err != nil {
+			return nil, getDSMUpdateAvailableOutput{}, err
+		}
+		return nil, getDSMUpdateAvailableOutput{NAS: result.NAS, Available: result.Available}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_dsm_update_policy",
+		Title:       "Get DSM auto-update policy",
+		Description: "Read the DSM auto-update policy: whether automatic update is enabled, which updates are auto-installed (such as important/security only), whether updates auto-download, the update channel, and the scheduled maintenance window. This tool never changes the policy.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDSMUpdateInput) (*mcp.CallToolResult, getDSMUpdatePolicyOutput, error) {
+		result, err := service.GetDSMUpdatePolicy(ctx, input.NAS)
+		if err != nil {
+			return nil, getDSMUpdatePolicyOutput{}, err
+		}
+		return nil, getDSMUpdatePolicyOutput{NAS: result.NAS, Policy: result.Policy}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_dsm_update_config_backup",
+		Title:       "Get DSM configuration-backup status",
+		Description: "Read the DSM configuration-backup status: whether scheduled backup to the Synology account is enabled, the destination account and encryption mode, the last-backup result, and the stored backup history (times, DSM versions, host/model). The destination account password is never returned. This tool never runs, changes, or restores a backup.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDSMUpdateInput) (*mcp.CallToolResult, getDSMUpdateConfigBackupOutput, error) {
+		result, err := service.GetDSMUpdateConfigBackup(ctx, input.NAS)
+		if err != nil {
+			return nil, getDSMUpdateConfigBackupOutput{}, err
+		}
+		return nil, getDSMUpdateConfigBackupOutput{NAS: result.NAS, ConfigBackup: result.ConfigBackup}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_resource_monitor_capabilities",
 		Title:       "Get Resource Monitor capabilities",
 		Description: "Report whether current utilization and recorded history can be read and whether history recording can be toggled, plus the DSM backend selected for each operation.",
@@ -3227,6 +4045,266 @@ func New(service *application.Service, version string, opts ...Option) *mcp.Serv
 			return nil, getResourceRecordingSettingOutput{}, err
 		}
 		return nil, getResourceRecordingSettingOutput{NAS: result.NAS, Setting: result.Setting}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_disk_smart_capabilities",
+		Title:       "Get disk SMART capabilities",
+		Description: "Report which per-disk health and S.M.A.R.T. read areas (disk health/lifespan, SMART attribute tables, global warning thresholds) are available for a NAS and the DSM API backend selected for each. Each area is gated independently.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDiskSMARTInput) (*mcp.CallToolResult, getDiskSMARTCapabilitiesOutput, error) {
+		result, err := service.GetDiskSMARTCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getDiskSMARTCapabilitiesOutput{}, err
+		}
+		return nil, getDiskSMARTCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_disk_health",
+		Title:       "Get per-disk health",
+		Description: "Read Storage Manager's per-physical-disk health: overall health status, SSD remaining-life/wear, spare-block/bad-sector detail, temperature, whether a SMART self-test is running, and the global disk-health warning thresholds. This complements storage inventory, which carries no per-disk lifespan or self-test detail. This tool never changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDiskSMARTInput) (*mcp.CallToolResult, getDiskHealthOutput, error) {
+		result, err := service.GetDiskHealth(ctx, input.NAS)
+		if err != nil {
+			return nil, getDiskHealthOutput{}, err
+		}
+		return nil, getDiskHealthOutput{NAS: result.NAS, Health: result.Health}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_disk_smart_attributes",
+		Title:       "Get disk SMART attributes",
+		Description: "Read the full S.M.A.R.T. attribute table (id, name, current/worst/threshold/raw values, pass-fail status) for each installed disk, plus a per-disk health summary and self-test status. A disk that exposes no attribute table (many enterprise SSDs, NVMe/SATADOM/M.2, and USB devices) is reported as having no SMART data rather than erroring. This tool never starts a SMART test or changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDiskSMARTInput) (*mcp.CallToolResult, getDiskSMARTAttributesOutput, error) {
+		result, err := service.GetDiskSMARTAttributes(ctx, input.NAS)
+		if err != nil {
+			return nil, getDiskSMARTAttributesOutput{}, err
+		}
+		return nil, getDiskSMARTAttributesOutput{NAS: result.NAS, SMART: result.SMART}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_universal_search_capabilities",
+		Title:       "Get Universal Search capabilities",
+		Description: "Report which Universal Search (SynoFinder) file-index reads (indexed-folder list, overall index status) are available for a NAS and the DSM API backend selected for each, with package evidence (installed / version / running). The module is gated on the installed Universal Search package and fails closed when it is absent.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getUniversalSearchInput) (*mcp.CallToolResult, getUniversalSearchCapabilitiesOutput, error) {
+		result, err := service.GetUniversalSearchCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getUniversalSearchCapabilitiesOutput{}, err
+		}
+		return nil, getUniversalSearchCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_universal_search_folders",
+		Title:       "Get Universal Search indexed folders",
+		Description: "List the folders in the Synology Universal Search file index: each folder's path (identifier), display name, owning app, paused state, and which content categories (audio/video/photo/document) are indexed. Requires the Universal Search package to be installed. This tool never changes the index or DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getUniversalSearchInput) (*mcp.CallToolResult, getUniversalSearchFoldersOutput, error) {
+		result, err := service.GetUniversalSearchFolders(ctx, input.NAS)
+		if err != nil {
+			return nil, getUniversalSearchFoldersOutput{}, err
+		}
+		return nil, getUniversalSearchFoldersOutput{NAS: result.NAS, Folders: result.Folders}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_universal_search_status",
+		Title:       "Get Universal Search index status",
+		Description: "Read the overall Synology Universal Search index daemon status: whether the file-content and search-term indexes are idle (finished) or currently working, plus a progress percentage when the running index reports one. Requires the Universal Search package to be installed. This tool never changes the index or DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getUniversalSearchInput) (*mcp.CallToolResult, getUniversalSearchStatusOutput, error) {
+		result, err := service.GetUniversalSearchStatus(ctx, input.NAS)
+		if err != nil {
+			return nil, getUniversalSearchStatusOutput{}, err
+		}
+		return nil, getUniversalSearchStatusOutput{NAS: result.NAS, Status: result.Status}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_hardware_capabilities",
+		Title:       "Get Hardware & Power capabilities",
+		Description: "Report which Control Panel Hardware & Power read areas (beep control, fan-speed mode, LED brightness, power schedule, power recovery, UPS) are available for a NAS and the DSM API backend selected for each. Each area is model dependent and gated independently.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getHardwareInput) (*mcp.CallToolResult, getHardwareCapabilitiesOutput, error) {
+		result, err := service.GetHardwareCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getHardwareCapabilitiesOutput{}, err
+		}
+		return nil, getHardwareCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_hardware_general",
+		Title:       "Get general hardware settings",
+		Description: "Read the general Hardware & Power comfort settings: the per-event beep-control flags (fan failure, power on/off, volume/cache crash, and so on with each event's model-support flag), the fan-speed mode, and the LED brightness and weekly schedule. Every field is model dependent; areas the model does not expose are omitted, not invented. This tool never changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getHardwareInput) (*mcp.CallToolResult, getHardwareGeneralOutput, error) {
+		result, err := service.GetHardwareGeneral(ctx, input.NAS)
+		if err != nil {
+			return nil, getHardwareGeneralOutput{}, err
+		}
+		return nil, getHardwareGeneralOutput{NAS: result.NAS, General: result.General}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_hardware_power_schedule",
+		Title:       "Get scheduled power on/off tasks",
+		Description: "Read the Control Panel Hardware & Power scheduled power-on and power-off tasks (enable flag, time of day, and weekday mask) and how many are enabled. A power-off task makes the NAS unreachable at its scheduled time. This tool reads the schedule only and never changes it.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getHardwareInput) (*mcp.CallToolResult, getHardwarePowerScheduleOutput, error) {
+		result, err := service.GetHardwarePowerSchedule(ctx, input.NAS)
+		if err != nil {
+			return nil, getHardwarePowerScheduleOutput{}, err
+		}
+		return nil, getHardwarePowerScheduleOutput{NAS: result.NAS, Schedule: result.Schedule}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_hardware_power_recovery",
+		Title:       "Get power-recovery behavior",
+		Description: "Read the after-power-loss behavior (whether the NAS restores its previous power state or stays off and needs a manual power-on) and the per-NIC Wake-on-LAN enable state. This tool reads the policy only and never changes it.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getHardwareInput) (*mcp.CallToolResult, getHardwarePowerRecoveryOutput, error) {
+		result, err := service.GetHardwarePowerRecovery(ctx, input.NAS)
+		if err != nil {
+			return nil, getHardwarePowerRecoveryOutput{}, err
+		}
+		return nil, getHardwarePowerRecoveryOutput{NAS: result.NAS, Recovery: result.Recovery}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_hardware_ups",
+		Title:       "Get UPS configuration and status",
+		Description: "Read the uninterruptible-power-supply configuration and live status: whether UPS integration is enabled, the mode (local USB, SNMP, or network slave), whether a USB UPS is attached with its battery charge/runtime, the safe-shutdown threshold, and the network-UPS-server enable and permitted-slave allow-list. The API is present even with no UPS attached, in which case the no-device path is reported. UPS authentication material is reported only as configured or not, never as a value. This tool never changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getHardwareInput) (*mcp.CallToolResult, getHardwareUPSOutput, error) {
+		result, err := service.GetHardwareUPS(ctx, input.NAS)
+		if err != nil {
+			return nil, getHardwareUPSOutput{}, err
+		}
+		return nil, getHardwareUPSOutput{NAS: result.NAS, UPS: result.UPS}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_external_device_capabilities",
+		Title:       "Get External Devices capabilities",
+		Description: "Report which Control Panel External Devices read areas (USB external storage, eSATA external storage, printers, and the Bonjour/AirPrint printer-sharing toggle) are available for a NAS and the DSM API backend selected for each. Each area is gated independently; a model with no eSATA port or no printer support reports that area unsupported without disabling the others. UPS is not part of this module (it is Hardware & Power).",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getExternalDeviceInput) (*mcp.CallToolResult, getExternalDeviceCapabilitiesOutput, error) {
+		result, err := service.GetExternalDeviceCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getExternalDeviceCapabilitiesOutput{}, err
+		}
+		return nil, getExternalDeviceCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_external_storage",
+		Title:       "Get attached external disks",
+		Description: "Read the attached external storage devices on both buses — USB and eSATA — with each device's identity, size, and status and its partitions (filesystem, size, usage, mount point, and any auto-created share). Each bus is gated independently; a bus whose DSM API is absent is omitted and a bus with no disk attached reports an empty list. This tool reads inventory only and never ejects, formats, or modifies any device.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getExternalDeviceInput) (*mcp.CallToolResult, getExternalStorageOutput, error) {
+		result, err := service.GetExternalStorage(ctx, input.NAS)
+		if err != nil {
+			return nil, getExternalStorageOutput{}, err
+		}
+		return nil, getExternalStorageOutput{NAS: result.NAS, Storage: result.Storage}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_external_printers",
+		Title:       "Get connected printers",
+		Description: "Read the printers DSM has enumerated (id, name, connection type, status, default flag, and queued-job count) and the global Bonjour/AirPrint printer-sharing toggle. The printer API is present even when no printer is attached, in which case the list is empty. This tool reads printer state only and never changes printer settings or clears the spooler.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getExternalDeviceInput) (*mcp.CallToolResult, getExternalPrintersOutput, error) {
+		result, err := service.GetExternalPrinters(ctx, input.NAS)
+		if err != nil {
+			return nil, getExternalPrintersOutput{}, err
+		}
+		return nil, getExternalPrintersOutput{NAS: result.NAS, Printers: result.Printers}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_directory_capabilities",
+		Title:       "Get directory service capabilities",
+		Description: "Report which Control Panel Domain/LDAP (directory-client) read areas (AD domain status, LDAP client status, synced users, synced groups) are available for a NAS and the DSM API backend selected for each. AD and LDAP are gated independently; a missing API family is reported as not supported without disabling the others.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDirectoryInput) (*mcp.CallToolResult, getDirectoryCapabilitiesOutput, error) {
+		result, err := service.GetDirectoryCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getDirectoryCapabilitiesOutput{}, err
+		}
+		return nil, getDirectoryCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_directory_status",
+		Title:       "Get directory service status",
+		Description: "Read the Control Panel Domain/LDAP directory-client status: whether the NAS is joined to an Active Directory domain or bound to an LDAP server (mode ad/ldap/none), and each area's non-secret configuration (joined domain, workgroup, DNS/domain controller, LDAP server address, base DN, encryption, profile). Bind/join passwords, password hashes, and Kerberos keytab material are never surfaced. This tool never changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDirectoryInput) (*mcp.CallToolResult, getDirectoryStatusOutput, error) {
+		result, err := service.GetDirectoryStatus(ctx, input.NAS)
+		if err != nil {
+			return nil, getDirectoryStatusOutput{}, err
+		}
+		return nil, getDirectoryStatusOutput{NAS: result.NAS, Status: result.Status}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_directory_users",
+		Title:       "Get synced directory users",
+		Description: "List the synced Active Directory / LDAP users, scoped to the NAS's active directory mode (empty when the NAS is neither joined nor bound). These principals are owned by the directory server and are read-only here; only non-secret identity fields (name, uid, description) are returned. This tool never changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDirectoryInput) (*mcp.CallToolResult, getDirectoryUsersOutput, error) {
+		result, err := service.GetDirectoryUsers(ctx, input.NAS)
+		if err != nil {
+			return nil, getDirectoryUsersOutput{}, err
+		}
+		return nil, getDirectoryUsersOutput{NAS: result.NAS, Users: result.Users}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_directory_groups",
+		Title:       "Get synced directory groups",
+		Description: "List the synced Active Directory / LDAP groups, scoped to the NAS's active directory mode (empty when the NAS is neither joined nor bound). Read-only; only non-secret identity fields (name, gid, description) are returned. This tool never changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDirectoryInput) (*mcp.CallToolResult, getDirectoryGroupsOutput, error) {
+		result, err := service.GetDirectoryGroups(ctx, input.NAS)
+		if err != nil {
+			return nil, getDirectoryGroupsOutput{}, err
+		}
+		return nil, getDirectoryGroupsOutput{NAS: result.NAS, Groups: result.Groups}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_kmip_capabilities",
+		Title:       "Get KMIP capabilities",
+		Description: "Report whether the KMIP (Key Management Interoperability Protocol) status read is available for a NAS and the DSM API backend selected, plus whether the NAS itself advertises KMIP support (DSM support_kmip). KMIP is DSM-core (Storage Manager, SYNO.Storage.CGI.KMIP); a DSM build without the family is reported as not supported without disabling other modules. This tool never changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getKMIPInput) (*mcp.CallToolResult, getKMIPCapabilitiesOutput, error) {
+		result, err := service.GetKMIPCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getKMIPCapabilitiesOutput{}, err
+		}
+		return nil, getKMIPCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_kmip_status",
+		Title:       "Get KMIP status",
+		Description: "Read the Control Panel / Storage Manager KMIP status: whether this NAS runs a local KMIP server (holding keys for other Synology devices) and/or acts as a KMIP client escrowing its own keys to an external KMIP server, the external server it targets, last-connection health, and the non-secret certificate identities bound to each role. Private keys, escrowed/wrapped key material, pre-shared secrets, and client credentials are never surfaced. A NAS that reports KMIP as unsupported reads successfully as the disabled state. This tool never changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getKMIPInput) (*mcp.CallToolResult, getKMIPStatusOutput, error) {
+		result, err := service.GetKMIPStatus(ctx, input.NAS)
+		if err != nil {
+			return nil, getKMIPStatusOutput{}, err
+		}
+		return nil, getKMIPStatusOutput{NAS: result.NAS, Status: result.Status}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -3563,6 +4641,58 @@ func New(service *application.Service, version string, opts ...Option) *mcp.Serv
 			return nil, getSNMPStateOutput{}, err
 		}
 		return nil, getSNMPStateOutput{NAS: result.NAS, SNMP: result.SNMP}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_terminal_change",
+		Title:       "Plan a Terminal (SSH/Telnet/console) change",
+		Description: "Validate a patch-only Terminal change (ssh_enabled, ssh_port, telnet_enabled, console_forbidden) and return an approval plan bound to the complete observed Terminal state. Enabling SSH or Telnet, or disabling SSH, changes the remote-shell attack surface and is classified high risk; an SSH-port change warns to verify the matching firewall/port forward separately. dsmctl drives DSM over the WebAPI session (not SSH), so its own access survives. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planTerminalChangeInput) (*mcp.CallToolResult, planTerminalChangeOutput, error) {
+		plan, err := service.PlanTerminalChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planTerminalChangeOutput{}, err
+		}
+		return nil, planTerminalChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_terminal_plan",
+		Title:       "Apply an approved Terminal plan",
+		Description: "Apply an unmodified Terminal plan only while its approval hash and the complete observed state still match, then re-read to verify every requested field took effect. The write is patch-only: unspecified switches are preserved by merging into a freshly read state.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyTerminalPlanInput) (*mcp.CallToolResult, terminalSNMPApplyOutput, error) {
+		result, err := service.ApplyTerminalPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, terminalSNMPApplyOutput{}, err
+		}
+		return nil, terminalSNMPApplyOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_snmp_change",
+		Title:       "Plan an SNMP change",
+		Description: "Validate a patch-only SNMP change (enabled, v1_v2c_enabled, v3_enabled, location, contact, and the read community via community_credential_ref) and return an approval plan bound to the complete observed SNMP state. The read community is a SECRET supplied as community_credential_ref (env:NAME): only the reference name enters the plan and approval hash, never the community value. Every SNMP change is medium risk. Enabling SNMPv3 is not supported (its DSM credential write wire is unverified); only disabling v3 is available. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planSNMPChangeInput) (*mcp.CallToolResult, planSNMPChangeOutput, error) {
+		plan, err := service.PlanSNMPChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planSNMPChangeOutput{}, err
+		}
+		return nil, planSNMPChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_snmp_plan",
+		Title:       "Apply an approved SNMP plan",
+		Description: "Apply an unmodified SNMP plan only while its approval hash and the complete observed state still match, then re-read to verify. When the plan sets the read community, the secret is resolved from its env:NAME reference only now and rides solely the SNMP set request body — never the plan, hash, result, or logs. The write is patch-only: unspecified fields are preserved by merging into a freshly read state.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applySNMPPlanInput) (*mcp.CallToolResult, terminalSNMPApplyOutput, error) {
+		result, err := service.ApplySNMPPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, terminalSNMPApplyOutput{}, err
+		}
+		return nil, terminalSNMPApplyOutput{Result: result}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -3904,6 +5034,175 @@ func New(service *application.Service, version string, opts ...Option) *mcp.Serv
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_network_capabilities",
+		Title:       "Get network capabilities",
+		Description: "Report which Control Panel > Network reads dsmctl supports on the selected NAS (general settings, per-interface config, bonds, static routes, outbound proxy, and traffic-control presence) and the backend for each. Each area is an independent boundary: one being absent leaves the others usable. Some areas are wire-unverified (bond mode/members, static-route fields, per-interface IPv6) because the lab lacked a bond, static routes, and IPv6; traffic-control is capability-detected only. This slice is read-only; the connectivity-affecting writes are a deferred, guarded follow-on.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input networkInput) (*mcp.CallToolResult, getNetworkCapabilitiesOutput, error) {
+		result, err := service.GetNetworkCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getNetworkCapabilitiesOutput{}, err
+		}
+		return nil, getNetworkCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_network_general",
+		Title:       "Get network general settings",
+		Description: "Read the Control Panel > Network > General settings: hostname, IPv4/IPv6 default gateway (and the interface that carries it), configured DNS nameservers (and whether DNS is DHCP-supplied or manual), and the outbound HTTP/HTTPS proxy configuration. The proxy password is never surfaced. This tool never changes settings.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input networkInput) (*mcp.CallToolResult, getNetworkGeneralOutput, error) {
+		result, err := service.GetNetworkGeneral(ctx, input.NAS)
+		if err != nil {
+			return nil, getNetworkGeneralOutput{}, err
+		}
+		return nil, getNetworkGeneralOutput{NAS: result.NAS, General: result.General}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_network_interfaces",
+		Title:       "Get network interfaces",
+		Description: "Read each network interface's configuration and link status (Control Panel > Network > Network Interface): logical name, type, IPv4 address/netmask/gateway, DHCP-vs-static, MTU (9000 indicates jumbo frames), negotiated speed and duplex, link status, whether it carries the default gateway, VLAN, and any IPv6 assignments. This tool never changes settings.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input networkInput) (*mcp.CallToolResult, getNetworkInterfacesOutput, error) {
+		result, err := service.GetNetworkInterfaces(ctx, input.NAS)
+		if err != nil {
+			return nil, getNetworkInterfacesOutput{}, err
+		}
+		return nil, getNetworkInterfacesOutput{NAS: result.NAS, Interfaces: result.Interfaces}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_network_bonds",
+		Title:       "Get network bonds",
+		Description: "Read the link-aggregation (bonding) interfaces: each bond's name, address, status, bonding mode, and member NICs. Note: the per-bond mode and member field names are wire-unverified because the lab had no bond to confirm them against. This tool never changes settings.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input networkInput) (*mcp.CallToolResult, getNetworkBondsOutput, error) {
+		result, err := service.GetNetworkBonds(ctx, input.NAS)
+		if err != nil {
+			return nil, getNetworkBondsOutput{}, err
+		}
+		return nil, getNetworkBondsOutput{NAS: result.NAS, Bonds: result.Bonds}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_network_routes",
+		Title:       "Get network static routes",
+		Description: "Read the static-route table: destination network, netmask/prefix, next-hop gateway, egress interface, and address family. On a NAS without advanced routing configured DSM reports no route table (configured is false). Note: the per-route field names are wire-unverified until confirmed against a NAS with static routes. This tool never changes settings.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input networkInput) (*mcp.CallToolResult, getNetworkRoutesOutput, error) {
+		result, err := service.GetNetworkRoutes(ctx, input.NAS)
+		if err != nil {
+			return nil, getNetworkRoutesOutput{}, err
+		}
+		return nil, getNetworkRoutesOutput{NAS: result.NAS, Routes: result.Routes}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_network_general_change",
+		Title:       "Plan a general network change (hostname, DNS, default gateway)",
+		Description: "Validate a patch-only change to the Control Panel > Network > General settings (hostname, DNS nameservers, default gateway, IPv4-first) and return an approval plan bound to the complete observed general block and the resolved management path. The management path is the NIC whose IPv4 equals the address dsmctl connects to. A default-gateway change can sever the management path and is run through the mandatory never-sever guard: the plan is REFUSED unless allow_connectivity_break is set. Hostname and DNS changes are medium risk; a default-gateway change is high risk. Omitted fields are preserved (patch-only). This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planNetworkGeneralChangeInput) (*mcp.CallToolResult, planNetworkGeneralChangeOutput, error) {
+		plan, err := service.PlanNetworkGeneralChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planNetworkGeneralChangeOutput{}, err
+		}
+		return nil, planNetworkGeneralChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_network_general_plan",
+		Title:       "Apply an approved general network plan",
+		Description: "Apply an unmodified general network plan only while its approval hash and the complete observed state (the general block and the resolved management path) still match, merging the patch into a freshly read general block (patch-only), then re-read to verify the named fields took effect. The never-sever guard is re-run before the write; a default-gateway change whose result would sever the management path is refused unless the plan carried allow_connectivity_break.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyNetworkGeneralPlanInput) (*mcp.CallToolResult, networkApplyOutput, error) {
+		result, err := service.ApplyNetworkGeneralPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, networkApplyOutput{}, err
+		}
+		return nil, networkApplyOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_network_interface_change",
+		Title:       "Plan a per-interface network change (plan-only; apply is wire-unverified)",
+		Description: "Validate a patch-only change to one network interface (IPv4, netmask, gateway, DHCP, MTU) and return an approval plan. The mandatory never-sever guard identifies the management NIC as the interface whose IPv4 equals the address dsmctl connects to and REFUSES any change to it (IP/netmask/DHCP/MTU) — or ANY interface change when the connection is ambiguous (a hostname/DDNS/QuickConnect/NATed path where the on-NAS egress cannot be resolved) — unless allow_connectivity_break is set; a change to a non-management NIC is permitted (medium risk). NOTE: the DSM interface-set request shape is wire-unverified (SYNO.Core.Network.Ethernet set returns code 4302 for every probed body), so the apply is REFUSED; the plan and the guard still work. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planNetworkInterfaceChangeInput) (*mcp.CallToolResult, planNetworkInterfaceChangeOutput, error) {
+		plan, err := service.PlanNetworkInterfaceChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planNetworkInterfaceChangeOutput{}, err
+		}
+		return nil, planNetworkInterfaceChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_network_interface_plan",
+		Title:       "Apply a per-interface network plan (refused: wire unverified)",
+		Description: "Validate an unmodified interface plan (hash, stale-state, and never-sever guard) and then REFUSE the live write: the SYNO.Core.Network.Ethernet set request shape is wire-unverified (DSM returns code 4302 for every known body), so interface reconfiguration is plan-only in this build. This tool is registered for surface completeness; it never mutates DSM.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyNetworkInterfacePlanInput) (*mcp.CallToolResult, networkApplyOutput, error) {
+		result, err := service.ApplyNetworkInterfacePlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, networkApplyOutput{}, err
+		}
+		return nil, networkApplyOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_firewall_profile_change",
+		Title:       "Plan a firewall profile change (rules + default policy)",
+		Description: "Validate a full-desired-state change to a firewall profile's adapter sections (each adapter's default no-match policy and complete ordered rule list, expressing rule create/delete/reorder) and return an approval plan bound to the complete observed state and the operator's management connection tuple. A change that would take effect — activating a profile, or editing the active profile while the firewall is enabled — is run through the mandatory never-lockout guard: the resulting ruleset is evaluated (first-match, then adapter default, deferring an adapter's 'none' default to the all-interfaces section) against {the source IP the NAS sees for the current session, the DSM port, tcp}, and the plan is REFUSED if that would not provably ALLOW the session, unless allow_connectivity_break is set. When the source cannot be read from an active connection, keep_reachable must supply it or the guard fails closed. Every effect-taking firewall change is high risk. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planFirewallProfileChangeInput) (*mcp.CallToolResult, planFirewallProfileChangeOutput, error) {
+		plan, err := service.PlanFirewallProfileChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planFirewallProfileChangeOutput{}, err
+		}
+		return nil, planFirewallProfileChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_firewall_profile_plan",
+		Title:       "Apply an approved firewall profile plan",
+		Description: "Apply an unmodified firewall profile plan only while its approval hash and the complete observed state (including the management connection tuple) still match, then re-read to verify the written profile matches the desired state. The never-lockout guard is re-run before the write; a change whose resulting active ruleset would deny the current session is refused unless the plan carried allow_connectivity_break. The write is full-desired-state for the target profile; untouched adapters are preserved by merging into a freshly read profile.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyFirewallProfilePlanInput) (*mcp.CallToolResult, firewallApplyOutput, error) {
+		result, err := service.ApplyFirewallProfilePlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, firewallApplyOutput{}, err
+		}
+		return nil, firewallApplyOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_firewall_enable_change",
+		Title:       "Plan a firewall enable/disable or active-profile switch",
+		Description: "Validate a change to the global firewall enable flag and/or the active profile and return an approval plan bound to the complete observed state and the operator's management connection tuple. Enabling the firewall (or switching the active profile while enabled) runs the mandatory never-lockout guard against the profile that would become active: the plan is REFUSED if the resulting ruleset would deny the operator's session and allow_connectivity_break is not set, or if the session source cannot be determined and no keep_reachable is supplied (fail closed). Enabling or switching the active profile is high risk; disabling removes all filtering, cannot lock the operator out, and is medium risk. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planFirewallEnableChangeInput) (*mcp.CallToolResult, planFirewallEnableChangeOutput, error) {
+		plan, err := service.PlanFirewallEnableChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planFirewallEnableChangeOutput{}, err
+		}
+		return nil, planFirewallEnableChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_firewall_enable_plan",
+		Title:       "Apply an approved firewall enable/disable plan",
+		Description: "Apply an unmodified firewall enable/disable plan only while its approval hash and the complete observed state (including the management connection tuple) still match, then re-read to verify the enable flag and active profile took effect. When enabling, the never-lockout guard is re-run before the write and refuses a change whose resulting active ruleset would deny the current session unless the plan carried allow_connectivity_break.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyFirewallEnablePlanInput) (*mcp.CallToolResult, firewallApplyOutput, error) {
+		result, err := service.ApplyFirewallEnablePlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, firewallApplyOutput{}, err
+		}
+		return nil, firewallApplyOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_login_portal_capabilities",
 		Title:       "Get Login Portal capabilities",
 		Description: "Report which Control Panel > Login Portal reads dsmctl supports on the selected NAS (the DSM web-service access settings, the customized external hostname, the per-application portal list, and the reverse-proxy rule list) and the backend for each. Each area is an independent boundary: one being absent leaves the others usable. This slice is read-only; guarded writes are deferred.",
@@ -3953,6 +5252,97 @@ func New(service *application.Service, version string, opts ...Option) *mcp.Serv
 			return nil, getReverseProxyRulesOutput{}, err
 		}
 		return nil, getReverseProxyRulesOutput{NAS: result.NAS, Rules: result.Rules}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_login_portal_dsm_change",
+		Title:       "Plan a DSM web-service change",
+		Description: "Validate a patch-only DSM web-service change (http_port, https_port, https_enabled, http_redirect_enabled, hsts_enabled, http2_enabled, custom_domain_enabled, custom_domain, external_hostname) and return an approval plan bound to the complete observed settings and the transport dsmctl is connected on. Every DSM web-service change is high risk because it changes how DSM itself is reached. The never-break-the-current-session guard refuses, without allow_connectivity_break, any change that would sever the current transport (moving/disabling the current HTTPS port or scheme, forcing a redirect that bounces the current HTTP session, or enabling HSTS which browsers cache). This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planDSMWebServiceChangeInput) (*mcp.CallToolResult, planDSMWebServiceChangeOutput, error) {
+		plan, err := service.PlanDSMWebServiceChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planDSMWebServiceChangeOutput{}, err
+		}
+		return nil, planDSMWebServiceChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_login_portal_dsm_plan",
+		Title:       "Apply an approved DSM web-service plan",
+		Description: "Apply an unmodified DSM web-service plan only while its approval hash and the complete observed state (settings plus the current transport) still match, then re-read to verify every requested field took effect. The write is patch-only: unspecified fields are preserved by merging into a freshly read state. A change that would sever the transport dsmctl is connected on is refused unless the plan carried allow_connectivity_break, in which case the postcondition re-read fails loudly if DSM becomes unreachable.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyDSMWebServicePlanInput) (*mcp.CallToolResult, loginPortalApplyOutput, error) {
+		result, err := service.ApplyDSMWebServicePlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, loginPortalApplyOutput{}, err
+		}
+		return nil, loginPortalApplyOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_login_portal_application_change",
+		Title:       "Plan an application-portal change",
+		Description: "Validate a patch-only application-portal change (redirect_https, alias, http_port, https_port) keyed by app_id and return an approval plan bound to the observed portal. Classified medium risk: an alias or custom port changes how (and whether) the application is reached. The write is patch-only; sibling fields are preserved. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planApplicationPortalChangeInput) (*mcp.CallToolResult, planApplicationPortalChangeOutput, error) {
+		plan, err := service.PlanApplicationPortalChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planApplicationPortalChangeOutput{}, err
+		}
+		return nil, planApplicationPortalChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_login_portal_application_plan",
+		Title:       "Apply an approved application-portal plan",
+		Description: "Apply an unmodified application-portal plan only while its approval hash and the observed portal still match, then re-read to verify every requested field took effect. The write is patch-only: sibling fields are preserved by merging into a freshly read portal.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyApplicationPortalPlanInput) (*mcp.CallToolResult, loginPortalApplyOutput, error) {
+		result, err := service.ApplyApplicationPortalPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, loginPortalApplyOutput{}, err
+		}
+		return nil, loginPortalApplyOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_login_portal_reverse_proxy_create",
+		Title:       "Plan a reverse-proxy rule creation",
+		Description: "Validate a reverse-proxy rule to create (description, frontend, backend, and optional custom headers) and return an approval plan bound to the COMPLETE observed rule set, so a concurrent edit invalidates a stale plan. A secret header value must use credential_ref (env:NAME or vault:<id>); it is resolved only at apply time and never stored in the plan or hash. Classified medium risk: a new rule can publish an internal service to callers that reach the frontend. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planReverseProxyCreateInput) (*mcp.CallToolResult, planReverseProxyOutput, error) {
+		plan, err := service.PlanReverseProxyCreate(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planReverseProxyOutput{}, err
+		}
+		return nil, planReverseProxyOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_login_portal_reverse_proxy_delete",
+		Title:       "Plan a reverse-proxy rule deletion",
+		Description: "Validate a reverse-proxy rule to delete (keyed by uuid) and return an approval plan bound to the COMPLETE observed rule set, so a concurrent create/delete/reorder by another session invalidates a stale plan. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planReverseProxyDeleteInput) (*mcp.CallToolResult, planReverseProxyOutput, error) {
+		plan, err := service.PlanReverseProxyDelete(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planReverseProxyOutput{}, err
+		}
+		return nil, planReverseProxyOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_login_portal_reverse_proxy_plan",
+		Title:       "Apply an approved reverse-proxy plan",
+		Description: "Apply an unmodified reverse-proxy create or delete plan only while its approval hash and the COMPLETE observed rule set still match, then re-read to verify the rule was created (a rule now listens on the frontend) or deleted (the uuid is gone). Secret header values are resolved from their credential_ref only now, at apply time.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyReverseProxyPlanInput) (*mcp.CallToolResult, loginPortalApplyOutput, error) {
+		result, err := service.ApplyReverseProxyPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, loginPortalApplyOutput{}, err
+		}
+		return nil, loginPortalApplyOutput{Result: result}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

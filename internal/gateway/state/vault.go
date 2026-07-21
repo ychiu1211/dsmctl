@@ -290,6 +290,15 @@ func (r *Repository) RevealPasswordForAccount(ctx context.Context, profileName, 
 	return password, nil
 }
 
+// StoredPassword returns only the vault-enrolled primary password. Unlike
+// Password it never consults the environment fallback, so administrator reveal
+// exposes exactly what the Admin UI stored; a profile without a vault entry
+// reports ErrNotFound. It is an alias for the primary account of the password
+// book (RevealPasswordForAccount with an empty account).
+func (r *Repository) StoredPassword(ctx context.Context, profileName string) (string, error) {
+	return r.RevealPasswordForAccount(ctx, profileName, "")
+}
+
 func (r *Repository) SavePassword(ctx context.Context, profileName, password string) (uint64, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err

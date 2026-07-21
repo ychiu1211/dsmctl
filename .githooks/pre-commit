@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Block commits that add real internal-lab data (see scripts/check-no-lab-data.sh).
+# Enable once per clone:  git config core.hooksPath .githooks
+# Scans STAGED content only; CI scans the whole tree as the authoritative guard.
+set -euo pipefail
+
+pattern='10\.17\.[0-9]|[Dd]erek|deryck'
+
+staged=$(git diff --cached --name-only --diff-filter=ACM -- '*.go' '*.md' \
+	| grep -v '^scripts/check-no-lab-data.sh$' || true)
+[ -z "$staged" ] && exit 0
+
+if hits=$(git grep --cached -nIE "$pattern" -- $staged 2>/dev/null); then
+	echo "pre-commit: real internal-lab data in staged files — use RFC 5737 doc IPs / generic names:" >&2
+	echo "$hits" >&2
+	exit 1
+fi

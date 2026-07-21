@@ -13,13 +13,12 @@ func loadService(opts *options) (*application.Service, error) {
 		return nil, err
 	}
 	// The SecureStore is the runtime's password resolver. It resolves the account
-	// password keyring-first — including one stored by 'dsmctl provision' — and
-	// falls back to the profile's password environment variable, so a provisioned
-	// NAS is usable by every command without a separate 'dsmctl auth login'. It
-	// declines with a message pointing at both recovery paths when neither is
-	// available. The runtime still prefers a resumable web-login session and only
-	// consults this resolver when no session exists or a seeded one can no longer
-	// be resumed.
+	// password keyring-first — including one stored by 'dsmctl provision' or
+	// 'dsmctl auth password set' — and falls back to the profile's password
+	// environment variable, so a provisioned NAS is usable by every command
+	// without a separate 'dsmctl auth login'. The runtime still prefers a
+	// resumable web-login session and only consults this resolver when no session
+	// exists or a seeded one can no longer be resumed.
 	secrets := credentials.NewSecureStore()
 	managerOptions := []runtime.Option{
 		runtime.WithDeviceStore(secrets),

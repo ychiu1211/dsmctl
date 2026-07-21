@@ -6,8 +6,9 @@ two-factor, passkey, or approve-sign-in step) stays. What dsmctl stores, per
 NAS profile, is the resulting session: the live SID and SynoToken, the
 renewal keys that will allow refreshing the session without a browser, the
 DSM device ID, and non-secret metadata such as the account name and issue
-time. Passwords are never stored by this release. This guide covers
-inspecting and removing stored sessions. No command in this guide ever
+time. A DSM account password can additionally be stored on purpose with
+`auth password set` (see below) as an automatic re-login fallback. Except for
+the deliberate `auth password reveal` command, no command in this guide ever
 prints a secret value.
 
 Before the browser opens, dsmctl verifies the NAS with the system CA store,
@@ -53,14 +54,49 @@ dsmctl auth status --nas office --json
 ```
 
 The table reports, per profile, whether a web-login session is stored,
-whether it carries renewal keys, and the account it belongs to. The command
+whether it carries renewal keys, where an automatic password sign-in would
+come from (`stored` in the OS credential store, `env:NAME` from the
+environment fallback, or `none`), and the account it belongs to. The command
 is fully offline: it never reveals secrets and never contacts a NAS, so a
 reported session may still have expired server-side. JSON output adds the
-legacy password/trusted-device presence fields, the password environment
-variable name and set state (the automation fallback), and `client_cached` /
+separate password/trusted-device presence booleans, the password environment
+variable name and set state, and `client_cached` /
 `session_held`, which describe the calling process only; in a fresh CLI
 process they are always `false`, while a long-running MCP server reports its
 real cached session state through the same model.
+
+## Storing, removing, and revealing a password
+
+```console
+dsmctl auth password set --nas office
+dsmctl auth password set --nas office --password-stdin < secret.txt
+dsmctl auth password remove --nas office
+dsmctl auth password reveal --nas office
+```
+
+A stored web-login session is the primary credential; a stored password is an
+optional fallback so dsmctl (and the stdio MCP server) can re-authenticate
+automatically when no session can be resumed, without keeping the password in
+an environment variable. `auth password set` prompts for the password with
+hidden input, **verifies it by signing in to the NAS once** (answering an OTP
+challenge registers this machine as a trusted device so later sign-ins skip
+the OTP), and only then writes it to the OS credential store. `--password-stdin`
+reads the password from standard input for automation; that path does not
+prompt, so the NAS certificate must already be trusted and any OTP must be
+supplied with `--otp`. The account name defaults to the profile's configured
+username; `--account` overrides it and updates the profile.
+
+`auth password remove` deletes the stored password (removing a missing entry
+is not an error); add `--trusted-device` to also drop the trusted-device
+registration. `auth status` then shows the password source fall back to
+`env:NAME` or `none`.
+
+`auth password reveal` prints the stored password in clear text. Because the
+output is a secret, it runs **only when standard input and output are both
+interactive terminals** — pipes, files, and captured sessions are refused —
+and it asks you to retype the NAS name first. It shows the stored entry only;
+environment-variable fallbacks are never printed. This is the sole CLI command
+that reveals a secret, matching the gateway's human-gated reveal.
 
 A `store_error` value means the OS credential store could not be probed for
 that profile (for example, a locked keychain); other profiles still report
@@ -98,9 +134,10 @@ example when the same profile name will be re-added later.
 
 ## MCP
 
-The MCP server reuses the same stored web-login sessions as the CLI, and the
-password environment variable (`DSMCTL_PASSWORD_<NAME>` or the profile's
-`password_env`) remains a non-interactive fallback for automation. When the
+The MCP server reuses the same stored web-login sessions as the CLI, a
+password stored with `auth password set`, and the password environment
+variable (`DSMCTL_PASSWORD_<NAME>` or the profile's `password_env`) as
+non-interactive fallbacks for automation, in that order. When the
 session a long-running MCP server started with expires, the server recovers
 on the next call without a restart: it re-reads the store (picking up a
 fresh `dsmctl auth login`) or renews the session with its stored renewal

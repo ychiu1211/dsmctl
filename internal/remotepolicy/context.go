@@ -14,6 +14,11 @@ const (
 	ScopePlan        = "nas.plan"
 	ScopeApply       = "nas.apply"
 	ScopeLANDiscover = "lan.discover"
+	// ScopeProvision admits creating a fresh NAS's first administrator (WI-086).
+	// It is deliberately distinct from ScopeApply: provisioning mints a new
+	// credential rather than mutating an enrolled resource, so it is never a
+	// sub-privilege of apply and is never granted to a token by default.
+	ScopeProvision = "nas.provision"
 )
 
 var ErrDenied = errors.New("remote request is not authorized")

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -55,15 +56,17 @@ type DeviceDiscoverer interface {
 }
 
 type Handler struct {
-	repository    *state.Repository
-	manager       *runtime.Manager
-	discoverer    DeviceDiscoverer
-	publicURL     string
-	logger        *slog.Logger
-	now           func() time.Time
-	setupDeadline time.Time
-	setupAttempts *attemptLimiter
-	loginAttempts *attemptLimiter
+	repository     *state.Repository
+	manager        *runtime.Manager
+	discoverer     DeviceDiscoverer
+	publicURL      string
+	logger         *slog.Logger
+	now            func() time.Time
+	setupDeadline  time.Time
+	setupAttempts  *attemptLimiter
+	loginAttempts  *attemptLimiter
+	revealAttempts *attemptLimiter
+	exportAttempts *attemptLimiter
 
 	pendingMu sync.Mutex
 	pending   map[string]pendingEnrollment
@@ -128,9 +131,11 @@ func New(options Options) (*Handler, error) {
 	return &Handler{
 		repository: options.Repository, manager: options.Manager, discoverer: discoverer, publicURL: publicURL, logger: logger,
 		now: now, setupDeadline: startedAt.Add(setupWindow),
-		setupAttempts: newAttemptLimiter(now, 10, time.Minute),
-		loginAttempts: newAttemptLimiter(now, 5, time.Minute),
-		pending:       make(map[string]pendingEnrollment),
+		setupAttempts:  newAttemptLimiter(now, 10, time.Minute),
+		loginAttempts:  newAttemptLimiter(now, 5, time.Minute),
+		revealAttempts: newAttemptLimiter(now, 5, time.Minute),
+		exportAttempts: newAttemptLimiter(now, 5, time.Minute),
+		pending:        make(map[string]pendingEnrollment),
 	}, nil
 }
 
@@ -237,6 +242,10 @@ func (h *Handler) serveAuthenticated(w http.ResponseWriter, req *http.Request) {
 	}
 	if req.URL.Path == "/admin/api/audit" || req.URL.Path == "/admin/api/audit/export" {
 		h.audit(w, req)
+		return
+	}
+	if req.URL.Path == "/admin/api/credentials/export" {
+		h.exportCredentials(w, req)
 		return
 	}
 	if req.URL.Path == "/admin/api/orphan-secrets" || strings.HasPrefix(req.URL.Path, "/admin/api/orphan-secrets/") {
@@ -455,6 +464,8 @@ func (h *Handler) profile(w http.ResponseWriter, req *http.Request) {
 		h.passwordEnrollment(w, req, name)
 	case "credentials/password/reveal":
 		h.revealPassword(w, req, name)
+	case "provision":
+		h.provisionProfile(w, req, name)
 	case "credentials/session":
 		h.removeSession(w, req, name)
 	case "credentials/trusted-device":
@@ -1094,6 +1105,82 @@ func (h *Handler) passwordEnrollment(w http.ResponseWriter, req *http.Request, n
 	writeJSON(w, http.StatusOK, map[string]any{"nas": name, "account": strings.TrimSpace(input.Account), "validated": true, "password_stored": true, "trusted_device_stored": device.ID != ""})
 }
 
+// exportCredentials downloads every NAS profile's connection identity and its
+// vault-stored DSM password as a single CSV. It reuses the WI-084 reveal
+// human-gate at bulk scope: the administrator re-enters their own password,
+// the attempt is rate limited, and the action is audited as credential.export
+// with counts only — never any revealed value. A profile without a stored
+// account or password exports an empty field for it, and the environment
+// password fallback is deliberately not exported (StoredPassword only). The
+// CSV is never logged and carries Cache-Control: no-store.
+func (h *Handler) exportCredentials(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		methodNotAllowed(w, http.MethodPost)
+		return
+	}
+	var input struct {
+		Password string `json:"password"`
+	}
+	if err := decodeJSON(req, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	defer func() { input.Password = "" }()
+	attemptKey := remoteAttemptKey(req, "export")
+	if !h.exportAttempts.Allow(attemptKey) {
+		writeError(w, http.StatusTooManyRequests, "too many export attempts")
+		return
+	}
+	actor := administratorActor(req.Context())
+	username := strings.TrimPrefix(actor, "local:")
+	if _, err := h.repository.VerifyAdministratorCredentials(req.Context(), username, input.Password); err != nil {
+		_ = h.repository.AppendAudit(req.Context(), state.AuditEvent{CorrelationID: correlationID(req), ActorType: "gateway_admin", ActorID: actor, Action: "credential.export", Outcome: "denied", Reason: "administrator reauthentication denied"})
+		writeError(w, http.StatusUnauthorized, "administrator password verification failed")
+		return
+	}
+	profiles, err := h.repository.Profiles(req.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "list profiles")
+		return
+	}
+	h.exportAttempts.Reset(attemptKey)
+	rows := make([][]string, 0, len(profiles)+1)
+	rows = append(rows, []string{"name", "host", "url", "account", "password"})
+	withPassword := 0
+	for _, profile := range profiles {
+		password := ""
+		if profile.PasswordStored {
+			stored, err := h.repository.StoredPassword(req.Context(), profile.Name)
+			if err != nil && !errors.Is(err, state.ErrNotFound) {
+				h.logger.ErrorContext(req.Context(), "vault password export failed",
+					"request_id", correlationID(req), "nas", profile.Name, "error", err)
+				writeError(w, http.StatusInternalServerError, "read stored password")
+				return
+			}
+			if stored != "" {
+				password = stored
+				withPassword++
+			}
+		}
+		host := profile.URL
+		if parsed, perr := url.Parse(profile.URL); perr == nil && parsed.Host != "" {
+			host = parsed.Hostname()
+		}
+		rows = append(rows, []string{profile.Name, host, profile.URL, profile.Username, password})
+	}
+	_ = h.repository.AppendAudit(req.Context(), state.AuditEvent{CorrelationID: correlationID(req), ActorType: "gateway_admin", ActorID: actor, Action: "credential.export", Outcome: "success", Reason: fmt.Sprintf("exported %d profiles, %d with stored passwords", len(profiles), withPassword)})
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="dsmctl-nas-credentials.csv"`)
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	// UTF-8 BOM so spreadsheet applications detect the encoding of non-ASCII
+	// account or password characters.
+	_, _ = w.Write([]byte{0xEF, 0xBB, 0xBF})
+	writer := csv.NewWriter(w)
+	writer.UseCRLF = true
+	_ = writer.WriteAll(rows)
+}
+
 func (h *Handler) removeSession(w http.ResponseWriter, req *http.Request, name string) {
 	if req.Method != http.MethodDelete {
 		methodNotAllowed(w, http.MethodDelete)
@@ -1510,8 +1597,12 @@ func adminAuditAction(req *http.Request) string {
 		return "approval.lifecycle"
 	case strings.HasPrefix(path, "/admin/api/audit"):
 		return "audit.query"
+	case path == "/admin/api/credentials/export":
+		return "credential.export"
 	case strings.HasSuffix(path, "/credentials/password/reveal"):
 		return "credential.reveal"
+	case strings.HasSuffix(path, "/provision"):
+		return "profile.provision"
 	case strings.Contains(path, "/credentials/") || strings.Contains(path, "/weblogin/"):
 		return "credential.manage"
 	case strings.Contains(path, "/secrets") || strings.HasPrefix(path, "/admin/api/orphan-secrets"):

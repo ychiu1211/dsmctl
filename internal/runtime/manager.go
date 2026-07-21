@@ -12,6 +12,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"strings"
 	"sync"
@@ -57,6 +58,34 @@ type Client interface {
 	NotificationDesktopState(ctx context.Context) (synology.NotificationDesktopState, error)
 	NotificationHistory(ctx context.Context, query synology.NotificationHistoryQuery) (synology.NotificationHistoryState, error)
 	NotificationCapabilities(ctx context.Context) (synology.NotificationCapabilities, synology.CompatibilityReport, error)
+	TaskSchedulerScheduled(ctx context.Context) (synology.TaskSchedulerScheduledTasks, error)
+	TaskSchedulerTriggered(ctx context.Context) (synology.TaskSchedulerTriggeredTasks, error)
+	TaskSchedulerCapabilities(ctx context.Context) (synology.TaskSchedulerCapabilities, synology.CompatibilityReport, error)
+	DSMUpdateStatus(ctx context.Context) (synology.DSMUpdateStatus, error)
+	DSMUpdateAvailable(ctx context.Context) (synology.DSMUpdateAvailable, error)
+	DSMUpdatePolicy(ctx context.Context) (synology.DSMUpdatePolicy, error)
+	DSMUpdateConfigBackup(ctx context.Context) (synology.DSMUpdateConfigBackup, error)
+	DSMUpdateCapabilities(ctx context.Context) (synology.DSMUpdateCapabilities, synology.CompatibilityReport, error)
+	DiskHealth(ctx context.Context) (synology.DiskHealthState, error)
+	DiskSMARTAttributes(ctx context.Context) (synology.DiskSMARTState, error)
+	DiskSMARTCapabilities(ctx context.Context) (synology.DiskSMARTCapabilities, synology.CompatibilityReport, error)
+	UniversalSearchIndexedFolders(ctx context.Context) (synology.UniversalSearchIndexedFolders, error)
+	UniversalSearchIndexStatus(ctx context.Context) (synology.UniversalSearchIndexStatus, error)
+	UniversalSearchCapabilities(ctx context.Context) (synology.UniversalSearchCapabilities, synology.CompatibilityReport, error)
+	HardwareGeneral(ctx context.Context) (synology.HardwareGeneralState, error)
+	HardwarePowerSchedule(ctx context.Context) (synology.HardwarePowerScheduleState, error)
+	HardwarePowerRecovery(ctx context.Context) (synology.HardwarePowerRecoveryState, error)
+	HardwareUPS(ctx context.Context) (synology.HardwareUPSState, error)
+	HardwareCapabilities(ctx context.Context) (synology.HardwareCapabilities, synology.CompatibilityReport, error)
+	ExternalStorage(ctx context.Context) (synology.ExternalStorageState, error)
+	ExternalPrinters(ctx context.Context) (synology.ExternalPrinterState, error)
+	ExternalDeviceCapabilitiesState(ctx context.Context) (synology.ExternalDeviceCapabilities, synology.CompatibilityReport, error)
+	DirectoryStatusState(ctx context.Context) (synology.DirectoryStatus, error)
+	DirectoryUsersList(ctx context.Context) (synology.DirectoryUsers, error)
+	DirectoryGroupsList(ctx context.Context) (synology.DirectoryGroups, error)
+	DirectoryCapabilitiesState(ctx context.Context) (synology.DirectoryCapabilities, synology.CompatibilityReport, error)
+	KMIPStatusState(ctx context.Context) (synology.KMIPStatus, error)
+	KMIPCapabilitiesState(ctx context.Context) (synology.KMIPCapabilities, synology.CompatibilityReport, error)
 	ResourceMonitorState(ctx context.Context) (synology.ResourceUtilization, error)
 	ResourceMonitorHistory(ctx context.Context, query resmon.HistoryQuery) (synology.ResourceHistory, error)
 	ResourceMonitorSetting(ctx context.Context) (synology.ResourceRecordingSetting, error)
@@ -95,6 +124,19 @@ type Client interface {
 	ApplyDownloadStationTaskChange(ctx context.Context, change synology.DownloadStationTaskChange) (synology.DownloadStationTaskMutationResult, error)
 	DownloadStationSettingsGroup(ctx context.Context, group string) (json.RawMessage, error)
 	ApplyDownloadStationSettingsChange(ctx context.Context, change synology.DownloadStationSettingsChange, secrets synology.DownloadStationSettingsSecrets) (synology.DownloadStationSettingsMutationResult, error)
+	HyperBackupTasks(ctx context.Context) (synology.HyperBackupTasks, error)
+	HyperBackupTaskDetail(ctx context.Context, taskID int) (synology.HyperBackupTaskDetail, error)
+	HyperBackupTaskStatus(ctx context.Context, taskID int) (synology.HyperBackupTaskStatus, error)
+	HyperBackupVersions(ctx context.Context, taskID, offset, limit int) (synology.HyperBackupVersions, error)
+	HyperBackupLogs(ctx context.Context, offset, limit int) (synology.HyperBackupLogs, error)
+	HyperBackupVault(ctx context.Context) (synology.HyperBackupVault, error)
+	HyperBackupApplications(ctx context.Context) (synology.HyperBackupApplications, error)
+	HyperBackupCapabilities(ctx context.Context) (synology.HyperBackupCapabilities, synology.CompatibilityReport, error)
+	ApplyHyperBackupTaskChange(ctx context.Context, change synology.HyperBackupTaskChange, secrets synology.HyperBackupTaskSecrets) (synology.HyperBackupTaskMutationResult, error)
+	HyperBackupLuns(ctx context.Context) (synology.HyperBackupLuns, error)
+	HyperBackupLunBackupTasks(ctx context.Context) (synology.HyperBackupLunBackupTasks, error)
+	HyperBackupLunBackupTaskStatus(ctx context.Context, taskName string) (synology.HyperBackupLunBackupTask, error)
+	ApplyHyperBackupLunBackupCreate(ctx context.Context, spec synology.HyperBackupLunBackupCreate) (synology.HyperBackupLunBackupMutationResult, error)
 }
 
 type Option func(*Manager)
@@ -174,6 +216,37 @@ func NewManager(cfg *config.Config, resolver credentials.Resolver, options ...Op
 		option(manager)
 	}
 	return manager
+}
+
+// OutboundCredential resolves one profile's connection identity — host,
+// username, and password — for use as an OUTBOUND credential: one NAS
+// authenticating to another (for example a Hyper Backup destination). The
+// password comes from the same keyring-first resolver logins use and is
+// returned for immediate in-process use inside a DSM call, never for display.
+func (m *Manager) OutboundCredential(ctx context.Context, requested string) (name, host, username, password string, err error) {
+	m.profileGate.RLock()
+	defer m.profileGate.RUnlock()
+
+	cfg, err := m.snapshot(ctx)
+	if err != nil {
+		return "", "", "", "", err
+	}
+	name, profile, err := cfg.Resolve(requested)
+	if err != nil {
+		return "", "", "", "", err
+	}
+	parsed, err := neturl.Parse(profile.URL)
+	if err != nil || parsed.Hostname() == "" {
+		return "", "", "", "", fmt.Errorf("profile %q has no usable URL to derive a destination host from", name)
+	}
+	if m.credentials == nil {
+		return "", "", "", "", fmt.Errorf("no credential resolver is configured")
+	}
+	password, err = m.credentials.Password(ctx, name, profile)
+	if err != nil {
+		return "", "", "", "", fmt.Errorf("resolve the stored password for profile %q: %w", name, err)
+	}
+	return name, parsed.Hostname(), profile.Username, password, nil
 }
 
 // Client resolves a NAS profile and lazily creates one reusable authenticated
@@ -536,6 +609,13 @@ func defaultDeviceName() string {
 		return "dsmctl"
 	}
 	return "dsmctl@" + strings.TrimSpace(hostname)
+}
+
+// DefaultDeviceName is the DSM trusted-device name this host registers under.
+// Enrollment flows outside the manager (for example 'auth password set') use
+// it so a device registered there is recognized by later manager logins.
+func DefaultDeviceName() string {
+	return defaultDeviceName()
 }
 
 func (m *Manager) Close(ctx context.Context) error {

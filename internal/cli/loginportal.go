@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/ychiu1211/dsmctl/internal/application"
 	"github.com/ychiu1211/dsmctl/internal/domain/loginportal"
 )
 
@@ -13,17 +14,241 @@ func newControlPanelLoginPortalCommand(opts *options) *cobra.Command {
 	command := &cobra.Command{
 		Use:     "login-portal",
 		Aliases: []string{"loginportal"},
-		Short:   "Inspect the Login Portal (DSM access, application portals, reverse proxy)",
-		Long: "Read the Control Panel > Login Portal surface: the DSM web-service access settings (ports, HTTPS, " +
-			"HTTP->HTTPS redirect, HSTS, HTTP/2, customized domain), the per-application portals, and the " +
-			"reverse-proxy rules. This slice is read-only; guarded writes are a deferred follow-on.",
+		Short:   "Inspect and manage the Login Portal (DSM access, application portals, reverse proxy)",
+		Long: "Read and change the Control Panel > Login Portal surface: the DSM web-service access settings (ports, " +
+			"HTTPS, HTTP->HTTPS redirect, HSTS, HTTP/2, customized domain), the per-application portals, and the " +
+			"reverse-proxy rules. Reads are safe; every change goes through the guarded plan/apply contract. A " +
+			"DSM-access change is high risk and refuses, without an explicit override, any change that would sever " +
+			"the transport dsmctl is connected on.",
 	}
 	command.AddCommand(
 		newLoginPortalCapabilitiesCommand(opts),
 		newLoginPortalDSMCommand(opts),
 		newLoginPortalApplicationsCommand(opts),
 		newLoginPortalReverseProxyCommand(opts),
+		newLoginPortalDSMPlanCommand(opts),
+		newLoginPortalDSMApplyCommand(opts),
+		newLoginPortalApplicationPlanCommand(opts),
+		newLoginPortalApplicationApplyCommand(opts),
+		newLoginPortalReverseProxyCreatePlanCommand(opts),
+		newLoginPortalReverseProxyDeletePlanCommand(opts),
+		newLoginPortalReverseProxyApplyCommand(opts),
 	)
+	return command
+}
+
+func newLoginPortalDSMPlanCommand(opts *options) *cobra.Command {
+	var inputPath, outputPath string
+	command := &cobra.Command{
+		Use:   "dsm-plan",
+		Short: "Validate a DSM web-service change and emit an approval plan as JSON",
+		Long: "Validate a patch-only DSM web-service change (http_port, https_port, https_enabled, " +
+			"http_redirect_enabled, hsts_enabled, http2_enabled, custom_domain_enabled, custom_domain, " +
+			"external_hostname) and return an approval plan bound to the complete observed settings and the current " +
+			"dsmctl transport. Every DSM web-service change is high risk. A change that would sever the transport " +
+			"dsmctl is connected on (moving/disabling the current HTTPS port or scheme, forcing a redirect that " +
+			"bounces the current session, or enabling HSTS) is refused without allow_connectivity_break. This command " +
+			"never mutates DSM.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var request loginportal.DSMWebServiceChange
+			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
+				return fmt.Errorf("read DSM web-service change: %w", err)
+			}
+			service, err := loadService(opts)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			plan, err := service.PlanDSMWebServiceChange(cmd.Context(), opts.nas, request)
+			if err != nil {
+				return err
+			}
+			return encodeJSONOutput(cmd, outputPath, plan)
+		},
+	}
+	command.Flags().StringVarP(&inputPath, "file", "f", "-", "DSM web-service change JSON file, or - for stdin")
+	command.Flags().StringVarP(&outputPath, "output", "o", "-", "plan JSON file, or - for stdout")
+	return command
+}
+
+func newLoginPortalDSMApplyCommand(opts *options) *cobra.Command {
+	var inputPath, approvalHash string
+	command := &cobra.Command{
+		Use:   "dsm-apply",
+		Short: "Apply a DSM web-service plan after hash and stale-state validation",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var plan application.DSMWebServicePlan
+			if err := decodeJSONInput(cmd, inputPath, &plan); err != nil {
+				return fmt.Errorf("read DSM web-service plan: %w", err)
+			}
+			service, err := loadService(opts)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.ApplyDSMWebServicePlan(cmd.Context(), plan, approvalHash)
+			if err != nil {
+				return err
+			}
+			return encodeIndentedJSON(cmd.OutOrStdout(), result)
+		},
+	}
+	command.Flags().StringVarP(&inputPath, "file", "f", "-", "DSM web-service plan JSON file, or - for stdin")
+	command.Flags().StringVar(&approvalHash, "approve", "", "exact SHA-256 hash printed by login-portal dsm-plan")
+	_ = command.MarkFlagRequired("approve")
+	return command
+}
+
+func newLoginPortalApplicationPlanCommand(opts *options) *cobra.Command {
+	var inputPath, outputPath string
+	command := &cobra.Command{
+		Use:   "application-plan",
+		Short: "Validate an application-portal change and emit an approval plan as JSON",
+		Long: "Validate a patch-only application-portal change (redirect_https, alias, http_port, https_port) keyed by " +
+			"app_id and return an approval plan bound to the observed portal. Classified medium risk. This command " +
+			"never mutates DSM.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var request loginportal.ApplicationPortalChange
+			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
+				return fmt.Errorf("read application portal change: %w", err)
+			}
+			service, err := loadService(opts)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			plan, err := service.PlanApplicationPortalChange(cmd.Context(), opts.nas, request)
+			if err != nil {
+				return err
+			}
+			return encodeJSONOutput(cmd, outputPath, plan)
+		},
+	}
+	command.Flags().StringVarP(&inputPath, "file", "f", "-", "application portal change JSON file, or - for stdin")
+	command.Flags().StringVarP(&outputPath, "output", "o", "-", "plan JSON file, or - for stdout")
+	return command
+}
+
+func newLoginPortalApplicationApplyCommand(opts *options) *cobra.Command {
+	var inputPath, approvalHash string
+	command := &cobra.Command{
+		Use:   "application-apply",
+		Short: "Apply an application-portal plan after hash and stale-state validation",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var plan application.ApplicationPortalPlan
+			if err := decodeJSONInput(cmd, inputPath, &plan); err != nil {
+				return fmt.Errorf("read application portal plan: %w", err)
+			}
+			service, err := loadService(opts)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.ApplyApplicationPortalPlan(cmd.Context(), plan, approvalHash)
+			if err != nil {
+				return err
+			}
+			return encodeIndentedJSON(cmd.OutOrStdout(), result)
+		},
+	}
+	command.Flags().StringVarP(&inputPath, "file", "f", "-", "application portal plan JSON file, or - for stdin")
+	command.Flags().StringVar(&approvalHash, "approve", "", "exact SHA-256 hash printed by login-portal application-plan")
+	_ = command.MarkFlagRequired("approve")
+	return command
+}
+
+func newLoginPortalReverseProxyCreatePlanCommand(opts *options) *cobra.Command {
+	var inputPath, outputPath string
+	command := &cobra.Command{
+		Use:   "reverse-proxy-create-plan",
+		Short: "Validate a reverse-proxy rule creation and emit an approval plan as JSON",
+		Long: "Validate a reverse-proxy rule to create (description, frontend, backend, and optional custom headers) " +
+			"and return an approval plan bound to the COMPLETE observed rule set. A secret header value must use " +
+			"credential_ref (env:NAME); it is resolved only at apply time and never stored in the plan. Classified " +
+			"medium risk. This command never mutates DSM.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var request loginportal.ReverseProxyRuleCreate
+			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
+				return fmt.Errorf("read reverse proxy create: %w", err)
+			}
+			service, err := loadService(opts)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			plan, err := service.PlanReverseProxyCreate(cmd.Context(), opts.nas, request)
+			if err != nil {
+				return err
+			}
+			return encodeJSONOutput(cmd, outputPath, plan)
+		},
+	}
+	command.Flags().StringVarP(&inputPath, "file", "f", "-", "reverse proxy create JSON file, or - for stdin")
+	command.Flags().StringVarP(&outputPath, "output", "o", "-", "plan JSON file, or - for stdout")
+	return command
+}
+
+func newLoginPortalReverseProxyDeletePlanCommand(opts *options) *cobra.Command {
+	var inputPath, outputPath string
+	command := &cobra.Command{
+		Use:   "reverse-proxy-delete-plan",
+		Short: "Validate a reverse-proxy rule deletion and emit an approval plan as JSON",
+		Long: "Validate a reverse-proxy rule to delete (keyed by uuid) and return an approval plan bound to the " +
+			"COMPLETE observed rule set, so a concurrent edit invalidates a stale plan. This command never mutates DSM.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var request loginportal.ReverseProxyRuleDelete
+			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
+				return fmt.Errorf("read reverse proxy delete: %w", err)
+			}
+			service, err := loadService(opts)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			plan, err := service.PlanReverseProxyDelete(cmd.Context(), opts.nas, request)
+			if err != nil {
+				return err
+			}
+			return encodeJSONOutput(cmd, outputPath, plan)
+		},
+	}
+	command.Flags().StringVarP(&inputPath, "file", "f", "-", "reverse proxy delete JSON file, or - for stdin")
+	command.Flags().StringVarP(&outputPath, "output", "o", "-", "plan JSON file, or - for stdout")
+	return command
+}
+
+func newLoginPortalReverseProxyApplyCommand(opts *options) *cobra.Command {
+	var inputPath, approvalHash string
+	command := &cobra.Command{
+		Use:   "reverse-proxy-apply",
+		Short: "Apply a reverse-proxy create/delete plan after hash and stale-state validation",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var plan application.ReverseProxyPlan
+			if err := decodeJSONInput(cmd, inputPath, &plan); err != nil {
+				return fmt.Errorf("read reverse proxy plan: %w", err)
+			}
+			service, err := loadService(opts)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.ApplyReverseProxyPlan(cmd.Context(), plan, approvalHash)
+			if err != nil {
+				return err
+			}
+			return encodeIndentedJSON(cmd.OutOrStdout(), result)
+		},
+	}
+	command.Flags().StringVarP(&inputPath, "file", "f", "-", "reverse proxy plan JSON file, or - for stdin")
+	command.Flags().StringVar(&approvalHash, "approve", "", "exact SHA-256 hash printed by login-portal reverse-proxy-*-plan")
+	_ = command.MarkFlagRequired("approve")
 	return command
 }
 
@@ -53,6 +278,10 @@ func newLoginPortalCapabilitiesCommand(opts *options) *cobra.Command {
 			fmt.Fprintf(writer, "external domain read\t%s\n", yesNo(result.Capabilities.ExternalDomainRead))
 			fmt.Fprintf(writer, "application portal read\t%s\n", yesNo(result.Capabilities.ApplicationPortalRead))
 			fmt.Fprintf(writer, "reverse proxy read\t%s\n", yesNo(result.Capabilities.ReverseProxyRead))
+			fmt.Fprintf(writer, "dsm web service write\t%s\n", yesNo(result.Capabilities.DSMWebServiceWrite))
+			fmt.Fprintf(writer, "external domain write\t%s\n", yesNo(result.Capabilities.ExternalDomainWrite))
+			fmt.Fprintf(writer, "application portal write\t%s\n", yesNo(result.Capabilities.ApplicationPortalWrite))
+			fmt.Fprintf(writer, "reverse proxy write\t%s\n", yesNo(result.Capabilities.ReverseProxyWrite))
 			fmt.Fprintln(writer, "\nOPERATION\tSUPPORTED\tBACKEND\tAPI\tVERSION")
 			for _, op := range result.Report.Operations {
 				fmt.Fprintf(writer, "%s\t%s\t%s\t%s\tv%d\n", op.Operation, yesNo(op.Supported), valueOrDash(op.Backend), valueOrDash(op.API), op.Version)

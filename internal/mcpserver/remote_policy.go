@@ -38,6 +38,8 @@ func ToolScope(name string) (string, bool) {
 	switch {
 	case name == "discover_lan_devices":
 		return remotepolicy.ScopeLANDiscover, true
+	case strings.HasPrefix(name, "provision_"), strings.HasPrefix(name, "install_"):
+		return remotepolicy.ScopeProvision, true
 	case name == "run_security_scan":
 		// A load-heavy NAS action with no plan/apply cycle. It mutates no
 		// configuration but must not be reachable by a read-only token, so it is
@@ -69,6 +71,7 @@ type remotePlanResult struct {
 
 type remoteToolTarget struct {
 	NAS  string `json:"nas"`
+	URL  string `json:"url"`
 	Plan struct {
 		NAS             string `json:"nas"`
 		ProfileRevision uint64 `json:"profile_revision"`
@@ -124,6 +127,23 @@ func remotePolicyMiddleware(service *application.Service, auditor remotepolicy.A
 			nas := target.NAS
 			if strings.HasPrefix(params.Name, "apply_") {
 				nas = target.Plan.NAS
+			}
+			// provision_discovered_nas / install_discovered_nas target a
+			// not-yet-enrolled device by url, so they have no profile to resolve
+			// against the allowlist; the nas.provision scope (already checked above)
+			// is their authorization and the application layer restricts them to LAN
+			// addresses. Audit by url.
+			if params.Name == "provision_discovered_nas" || params.Name == "install_discovered_nas" {
+				result, err := next(ctx, method, request)
+				outcome := "success"
+				if err != nil {
+					outcome = "failure"
+				}
+				if callResult, ok := result.(*mcp.CallToolResult); ok && callResult != nil && callResult.IsError {
+					outcome = "failure"
+				}
+				auditRemote(ctx, auditor, principal, params.Name, target.URL, outcome, "")
+				return result, err
 			}
 			needsTarget := params.Name != "list_nas" && params.Name != "discover_lan_devices" && !(params.Name == "get_auth_status" && nas == "")
 			if needsTarget {

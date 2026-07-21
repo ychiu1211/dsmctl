@@ -86,7 +86,7 @@ on a DS918+ (DSM 7.3.1-86009).
 
 ## Acceptance criteria
 
-- [x] `dsmctl provision ds918 --admin-user deryck --url https://…:5001 --insecure-skip-tls-verify`
+- [x] `dsmctl provision ds918 --admin-user testuser --url https://…:5001 --insecure-skip-tls-verify`
       on a setup-window NAS creates the admin, stores a generated password, finishes the wizard,
       and prints a reveal hint but never the value. (Live-verified on a DS918+.)
 - [x] `dsmctl auth reveal-password --nas <name>` copies the password to the clipboard for a human

@@ -208,3 +208,23 @@ func TestSecureStoreUnavailablePasswordHasActionableError(t *testing.T) {
 		t.Fatalf("Password() exposed backend not-found error: %v", err)
 	}
 }
+
+func TestStoredPasswordIgnoresEnvironmentFallback(t *testing.T) {
+	store := &SecureStore{
+		keyring: newMemoryKeyring(),
+		environment: &Environment{lookup: func(string) (string, bool) {
+			return "environment-password", true
+		}},
+	}
+
+	if _, err := store.StoredPassword(context.Background(), "office"); !errors.Is(err, ErrNoStoredPassword) {
+		t.Fatalf("StoredPassword() error = %v, want ErrNoStoredPassword", err)
+	}
+	if err := store.SavePassword(context.Background(), "office", "keyring-password"); err != nil {
+		t.Fatalf("SavePassword() error = %v", err)
+	}
+	password, err := store.StoredPassword(context.Background(), "office")
+	if err != nil || password != "keyring-password" {
+		t.Fatalf("StoredPassword() = %q, %v", password, err)
+	}
+}

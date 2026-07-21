@@ -15,6 +15,13 @@ func NewReadOnly(service *application.Service, version string) *mcp.Server {
 	server := New(service, version)
 	server.RemoveTools(
 		"discover_lan_devices",
+		// provision_nas / provision_discovered_nas mint a NAS's first administrator
+		// credential; they are mutations and belong only on the authorized managed
+		// surface (WI-086), never on the developer read-only gateway.
+		"provision_nas",
+		"provision_discovered_nas",
+		// install_discovered_nas triggers a destructive OS install on a LAN device.
+		"install_discovered_nas",
 		// FileStation content transfer and mutations never reach the read-only
 		// gateway: get_filestation_file_content / get_filestation_thumbnail would
 		// exfiltrate file bytes to a remote caller, and the plan/apply pair
@@ -40,14 +47,50 @@ func NewReadOnly(service *application.Service, version string) *mcp.Server {
 		"apply_account_protection_thresholds_plan",
 		"plan_account_protection_enforce_2fa_change",
 		"apply_account_protection_enforce_2fa_plan",
+		// Firewall guarded writes (WI-066). Every effect-taking firewall change can
+		// deny the management port and lock out the shared box; the never-lockout
+		// guard runs in the planner/apply, but the whole plan/apply pair is stripped
+		// from the read-only gateway.
+		"plan_firewall_profile_change",
+		"apply_firewall_profile_plan",
+		"plan_firewall_enable_change",
+		"apply_firewall_enable_plan",
+		// Network guarded writes (WI-069). A general change can alter the default
+		// gateway (management-path severing); an interface change targets the very
+		// NIC that carries the session. The never-sever guard runs in the planner,
+		// but the whole plan/apply pair is stripped from the read-only gateway.
+		"plan_network_general_change",
+		"apply_network_general_plan",
+		"plan_network_interface_change",
+		"apply_network_interface_plan",
+		// Terminal & SNMP guarded writes (WI-071). Enabling SSH/Telnet or disabling
+		// SSH is high risk; the SNMP set carries the community secret. Both pairs are
+		// stripped from the read-only gateway.
+		"plan_terminal_change",
+		"apply_terminal_plan",
+		"plan_snmp_change",
+		"apply_snmp_plan",
+		// Login Portal guarded writes (WI-070). A DSM web-service change changes how
+		// DSM itself is reached (high risk); the application-portal and reverse-proxy
+		// writes change external exposure. All are stripped from the read-only gateway.
+		"plan_login_portal_dsm_change",
+		"apply_login_portal_dsm_plan",
+		"plan_login_portal_application_change",
+		"apply_login_portal_application_plan",
+		"plan_login_portal_reverse_proxy_create",
+		"plan_login_portal_reverse_proxy_delete",
+		"apply_login_portal_reverse_proxy_plan",
 		"plan_certificate_change",
 		"apply_certificate_plan",
 		"plan_filestation_change",
 		"apply_filestation_plan",
 		"plan_account_change",
 		"plan_control_panel_time_change",
+		"plan_system_hostname_change",
 		"plan_download_station_settings_change",
 		"plan_download_station_task_change",
+		"plan_hyper_backup_task_change",
+		"plan_hyper_backup_lun_backup_create",
 		"plan_drive_config_change",
 		"plan_drive_connection_kick",
 		"plan_drive_restore",
@@ -77,8 +120,11 @@ func NewReadOnly(service *application.Service, version string) *mcp.Server {
 		"plan_tftp_service_change",
 		"apply_account_plan",
 		"apply_control_panel_time_plan",
+		"apply_system_hostname_plan",
 		"apply_download_station_settings_plan",
 		"apply_download_station_task_plan",
+		"apply_hyper_backup_task_plan",
+		"apply_hyper_backup_lun_backup_plan",
 		"apply_drive_config_plan",
 		"apply_drive_connection_kick_plan",
 		"apply_drive_restore_plan",

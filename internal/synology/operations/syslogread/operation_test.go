@@ -52,8 +52,8 @@ func TestListRequestAndDecode(t *testing.T) {
 		t.Fatalf("counts = %#v", state)
 	}
 	want := []syslog.Entry{
-		{Time: "2026/07/17 13:35:55", Level: syslog.LevelInfo, Type: "system", Who: "deryck", Message: "System successfully removed the SSD cache from [Volume 1]."},
-		{Time: "2026/07/17 13:00:12", Level: syslog.LevelInfo, Type: "connection", Who: "deryck", Message: "User [deryck] from [10.17.36.69] signed in to DSM successfully via [DSM]."},
+		{Time: "2026/07/17 13:35:55", Level: syslog.LevelInfo, Type: "system", Who: "testuser", Message: "System successfully removed the SSD cache from [Volume 1]."},
+		{Time: "2026/07/17 13:00:12", Level: syslog.LevelInfo, Type: "connection", Who: "testuser", Message: "User [testuser] from [192.0.2.69] signed in to DSM successfully via [DSM]."},
 		{Time: "2026/07/16 09:14:03", Level: syslog.LevelWarning, Type: "system", Who: "system", Message: "Volume [1] has entered read-only mode."},
 	}
 	if !reflect.DeepEqual(state.Entries, want) {

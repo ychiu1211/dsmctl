@@ -153,13 +153,13 @@ func TestExecuteIPListEditRejectsUnknownKind(t *testing.T) {
 func TestExecuteActiveConnectionsBestEffort(t *testing.T) {
 	// Live-verified shape (SYNO.Core.CurrentConnection list): items[].from.
 	exec := &recordingExecutor{responses: map[string]json.RawMessage{
-		ActiveConnectionsAPIName + ".list": json.RawMessage(`{"items":[{"from":"10.17.36.69","who":"deryck","is_current_connected":false},{"from":"","who":"blank"}],"total":2}`),
+		ActiveConnectionsAPIName + ".list": json.RawMessage(`{"items":[{"from":"192.0.2.69","who":"testuser","is_current_connected":false},{"from":"","who":"blank"}],"total":2}`),
 	}}
 	connections, err := ExecuteActiveConnections(context.Background(), apTarget(), exec)
 	if err != nil {
 		t.Fatalf("ExecuteActiveConnections() error = %v", err)
 	}
-	if len(connections) != 1 || connections[0].From != "10.17.36.69" || connections[0].Who != "deryck" {
+	if len(connections) != 1 || connections[0].From != "192.0.2.69" || connections[0].Who != "testuser" {
 		t.Fatalf("connections = %#v", connections)
 	}
 	// A NAS without the API yields no connections and no error (best-effort).

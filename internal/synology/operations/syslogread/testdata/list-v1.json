@@ -10,15 +10,15 @@
       "logtype": "系統",
       "orginalLogType": "system",
       "time": "2026/07/17 13:35:55",
-      "who": "deryck"
+      "who": "testuser"
     },
     {
-      "descr": "User [deryck] from [10.17.36.69] signed in to DSM successfully via [DSM].",
+      "descr": "User [testuser] from [192.0.2.69] signed in to DSM successfully via [DSM].",
       "level": "info",
       "logtype": "連線",
       "orginalLogType": "connection",
       "time": "2026/07/17 13:00:12",
-      "who": "deryck"
+      "who": "testuser"
     },
     {
       "descr": "Volume [1] has entered read-only mode.",

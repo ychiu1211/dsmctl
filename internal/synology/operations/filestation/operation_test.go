@@ -47,10 +47,10 @@ func fsTarget() compatibility.Target {
 // is returned as a quoted string to exercise flexInt64.
 const (
 	listBody = `{"total":2,"offset":0,"files":[
-		{"path":"/home/dir","isdir":true,"name":"dir","additional":{"real_path":"/volume1/home/dir","size":0,"time":{"atime":1600000000,"mtime":1600000100,"ctime":1600000200,"crtime":1600000300},"owner":{"user":"deryck","group":"users","uid":1024,"gid":100},"perm":{"posix":755,"is_acl_mode":false},"type":"dir"}},
-		{"path":"/home/file.txt","isdir":false,"name":"file.txt","additional":{"real_path":"/volume1/home/file.txt","size":"1048576","time":{"mtime":1600000100},"owner":{"user":"deryck"},"perm":{"posix":644,"is_acl_mode":false},"type":"text"}}
+		{"path":"/home/dir","isdir":true,"name":"dir","additional":{"real_path":"/volume1/home/dir","size":0,"time":{"atime":1600000000,"mtime":1600000100,"ctime":1600000200,"crtime":1600000300},"owner":{"user":"testuser","group":"users","uid":1024,"gid":100},"perm":{"posix":755,"is_acl_mode":false},"type":"dir"}},
+		{"path":"/home/file.txt","isdir":false,"name":"file.txt","additional":{"real_path":"/volume1/home/file.txt","size":"1048576","time":{"mtime":1600000100},"owner":{"user":"testuser"},"perm":{"posix":644,"is_acl_mode":false},"type":"text"}}
 	]}`
-	listShareBody = `{"total":1,"offset":0,"shares":[{"path":"/home","isdir":true,"name":"home","additional":{"real_path":"/volume1/home","perm":{"share_right":"RW","posix":777,"is_acl_mode":false,"is_share_readonly":false},"mount_point_type":"","owner":{"user":"deryck"}}}]}`
+	listShareBody = `{"total":1,"offset":0,"shares":[{"path":"/home","isdir":true,"name":"home","additional":{"real_path":"/volume1/home","perm":{"share_right":"RW","posix":777,"is_acl_mode":false,"is_share_readonly":false},"mount_point_type":"","owner":{"user":"testuser"}}}]}`
 	vfolderBody   = `{"total":1,"offset":0,"folders":[{"path":"/mnt/remote","isdir":true,"name":"remote","additional":{"mount_point_type":"cifs"}}]}`
 	searchStart   = `{"taskid":"FileStation_search_1"}`
 	searchList    = `{"total":1,"offset":0,"finished":true,"files":[{"path":"/home/file.txt","isdir":false,"name":"file.txt","additional":{"size":10}}]}`
@@ -79,7 +79,7 @@ func TestListDecodesEntriesWithAdditional(t *testing.T) {
 	if !dir.IsDir || dir.Name != "dir" || dir.RealPath != "/volume1/home/dir" {
 		t.Fatalf("dir entry = %#v", dir)
 	}
-	if dir.Time == nil || dir.Time.Modified != 1600000100 || dir.Owner == nil || dir.Owner.User != "deryck" || dir.Owner.UID != 1024 {
+	if dir.Time == nil || dir.Time.Modified != 1600000100 || dir.Owner == nil || dir.Owner.User != "testuser" || dir.Owner.UID != 1024 {
 		t.Fatalf("dir metadata = %#v", dir)
 	}
 	if dir.Permission == nil || dir.Permission.POSIX != 755 {

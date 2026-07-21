@@ -48,6 +48,11 @@ MCP server --+                                               |
 - Passwords, OTPs, encryption keys, recovery material, SIDs, and SynoTokens do
   not enter display models, plans, logs, or MCP tool arguments.
 - Secrets are referenced and resolved only at apply time.
+- The only sanctioned password-reveal surfaces are human-gated (WI-084): the
+  Gateway Admin UI after administrator password re-verification (rate-limited
+  and audited), and the CLI on an interactive terminal after an explicit typed
+  confirmation. Reveal is never an MCP tool, never remote-callable with a
+  bearer token, and revealed values never enter logs or audit records.
 - Built-in or current-session principals require an explicit protection policy.
 - Fan-out inventory is opt-in and supports focused principal/target filters.
 

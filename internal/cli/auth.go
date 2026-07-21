@@ -27,6 +27,7 @@ func newAuthCommand(opts *options) *cobra.Command {
 		newAuthLoginCommand(opts),
 		newAuthStatusCommand(opts),
 		newAuthLogoutCommand(opts),
+		newAuthPasswordCommand(opts),
 		newAuthRevealPasswordCommand(opts),
 	)
 	return command
@@ -297,7 +298,7 @@ func writeLogoutResult(cmd *cobra.Command, result application.LogoutResult) {
 
 func writeAuthStatus(cmd *cobra.Command, result application.AuthStatusResult) error {
 	writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-	fmt.Fprintln(writer, "DEFAULT\tNAME\tSESSION\tRENEWABLE\tACCOUNT")
+	fmt.Fprintln(writer, "DEFAULT\tNAME\tSESSION\tRENEWABLE\tPASSWORD\tACCOUNT")
 	for _, status := range result.Statuses {
 		marker := ""
 		if status.Default {
@@ -308,10 +309,11 @@ func writeAuthStatus(cmd *cobra.Command, result application.AuthStatusResult) er
 		if !status.SessionStored {
 			renewable = "-"
 		}
+		password := passwordSourceLabel(status)
 		if status.StoreError != "" {
-			session, renewable = "error", "error"
+			session, renewable, password = "error", "error", "error"
 		}
-		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\n", marker, status.NAS, session, renewable, status.Account)
+		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%s\n", marker, status.NAS, session, renewable, password, status.Account)
 	}
 	if err := writer.Flush(); err != nil {
 		return err
@@ -327,6 +329,18 @@ func writeAuthStatus(cmd *cobra.Command, result application.AuthStatusResult) er
 func storedOrNone(stored bool) string {
 	if stored {
 		return "stored"
+	}
+	return "none"
+}
+
+// passwordSourceLabel names where an automatic password sign-in would come
+// from: the OS credential store, the environment fallback, or nowhere.
+func passwordSourceLabel(status application.AuthStatus) string {
+	if status.PasswordStored {
+		return "stored"
+	}
+	if status.PasswordEnvSet {
+		return "env:" + status.PasswordEnv
 	}
 	return "none"
 }
