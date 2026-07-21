@@ -65,7 +65,6 @@ type Handler struct {
 	setupDeadline  time.Time
 	setupAttempts  *attemptLimiter
 	loginAttempts  *attemptLimiter
-	revealAttempts *attemptLimiter
 	exportAttempts *attemptLimiter
 
 	pendingMu sync.Mutex
@@ -133,7 +132,6 @@ func New(options Options) (*Handler, error) {
 		now: now, setupDeadline: startedAt.Add(setupWindow),
 		setupAttempts:  newAttemptLimiter(now, 10, time.Minute),
 		loginAttempts:  newAttemptLimiter(now, 5, time.Minute),
-		revealAttempts: newAttemptLimiter(now, 5, time.Minute),
 		exportAttempts: newAttemptLimiter(now, 5, time.Minute),
 		pending:        make(map[string]pendingEnrollment),
 	}, nil
