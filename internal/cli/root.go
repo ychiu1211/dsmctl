@@ -47,6 +47,7 @@ func New(version string) *cobra.Command {
 		newCertificateCommand(opts),
 		newDriveCommand(opts),
 		newExternalAccessCommand(opts),
+		newExternalDeviceCommand(opts),
 		newFileCommand(opts),
 		newHardwareCommand(opts),
 		newInstallCommand(opts),

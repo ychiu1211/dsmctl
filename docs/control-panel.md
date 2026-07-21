@@ -846,6 +846,63 @@ deferred follow-on and are **HIGH risk** (each changes security posture and can
 render encrypted shares unmountable), will supply the client private key /
 credential via `credential_ref`, and — like the other guarded modules — will be
 excluded from the read-only gateway.
+## External Devices — USB/eSATA storage and printers (read-only)
+
+DSM's Control Panel → External Devices page enumerates attached external disks
+and connected printers. Three independent DSM API families with independent
+failure boundaries back this module: USB external storage, eSATA external
+storage (a separate area — many models have no eSATA port), and printers (with
+the global Bonjour/AirPrint sharing toggle gated independently). One area being
+absent reports `(not supported)` without disabling the others, and each fails
+closed (no silent empty-success decode) when its API is missing.
+
+**UPS is deliberately not part of this module.** Although `SYNO.Core.ExternalDevice.UPS`
+shares the `ExternalDevice` namespace, UPS belongs to the Hardware & Power area
+above and ships in the hardware module (WI-075). This module never touches UPS.
+
+```console
+dsmctl external-device capabilities --nas office
+dsmctl external-device storage --nas office --json
+dsmctl external-device printers --nas office --json
+```
+
+- **External storage** reads both buses independently: `SYNO.Core.ExternalDevice.Storage.USB`
+  and `SYNO.Core.ExternalDevice.Storage.eSATA` (`list` — `get` returns DSM code
+  103) → per-bus `{devices:[…]}`, each device carrying its identity
+  (`dev_id`/`dev_path`), type, title, vendor/product, serial, whole-device size,
+  status, and a partitions array (filesystem, total/used size, mount point, any
+  auto-created share, status). A bus whose API is absent is omitted; a bus with
+  no disk attached reports an empty list.
+- **Printers** read `SYNO.Core.ExternalDevice.Printer` (`list` — `get` returns
+  code 103) → `{printers:[…]}` with each printer's id, name, connection type,
+  status, manager, default flag, and queued-job count. The global
+  Bonjour/AirPrint sharing toggle is read independently from
+  `SYNO.Core.ExternalDevice.Printer.BonjourSharing` (`get` → `enable_bonjour_support`);
+  it is omitted when its API is absent.
+
+The device serial number is model-identifying inventory data, not a secret, and
+is surfaced as-is (sanitized to a fake value in committed fixtures). No
+persistent secret is expected on USB/eSATA disks or local USB printers.
+
+MCP exposes the same reads through `get_external_device_capabilities`,
+`get_external_storage`, and `get_external_printers`. All are read-only and never
+eject, format, or modify any device, change printer settings, or clear a spooler.
+
+Verified live on DSM 7.3 (DS3018xs): `SYNO.Core.ExternalDevice.Storage.USB` v1
+`list`, `SYNO.Core.ExternalDevice.Storage.eSATA` v1 `list`,
+`SYNO.Core.ExternalDevice.Printer` v1 `list`, and
+`SYNO.Core.ExternalDevice.Printer.BonjourSharing` v1 `get`. The lab advertises
+all four families but had no external disk or printer attached, so every list
+returned empty (`{"devices":[]}` / `{"printers":[]}`) and the Bonjour toggle
+read `false` — the graceful no-device path is therefore the live-verified path.
+Because nothing was attached, the per-device, per-partition, and per-printer
+field mappings are decoded tolerantly through DSM's known key alternates (an
+unknown key yields an empty/zero field, never a wrong value); re-verifying a
+populated device/printer shape is a prerequisite of the guarded-write follow-on.
+Guarded writes — **eject** (HIGH risk: unflushed writes and dropped shares can
+lose data), **printer set** (medium), and **spooler clear** (high, destructive)
+— are a deferred follow-on and, like the other guarded modules, will be excluded
+from the read-only gateway.
 
 ## Adding another module
 
