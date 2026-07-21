@@ -217,9 +217,9 @@ func decodeUPSSNMP(root map[string]any) (hardware.UPSSNMP, bool) {
 		MIB:           stringValue(root, "snmp_mib"),
 		AuthType:      stringValue(root, "snmp_auth_type"),
 		PrivacyType:   stringValue(root, "snmp_privacy_type"),
-		CommunitySet:  strings.TrimSpace(stringValue(root, "snmp_community")) != "",
-		AuthKeySet:    boolValue(root, "snmp_auth_key"),
-		PrivacyKeySet: boolValue(root, "snmp_privacy_key"),
+		CommunitySet:  secretSet(root, "snmp_community"),
+		AuthKeySet:    secretSet(root, "snmp_auth_key"),
+		PrivacyKeySet: secretSet(root, "snmp_privacy_key"),
 	}, true
 }
 
@@ -332,6 +332,33 @@ func boolValue(values map[string]any, keys ...string) bool {
 		case string:
 			result, _ := strconv.ParseBool(typed)
 			return result || typed == "1"
+		}
+	}
+	return false
+}
+
+// secretSet reports whether a secret-bearing field (SNMP community / auth key /
+// privacy key) indicates a configured secret, tolerating either wire shape DSM
+// might use: a boolean presence flag (observed: false when unset) or the raw
+// secret string itself (non-empty => set). It only ever returns whether a
+// secret is present — the raw value is never read into the model, so no wire
+// shape can leak the secret regardless of how DSM encodes it.
+func secretSet(values map[string]any, keys ...string) bool {
+	for _, key := range keys {
+		value, ok := values[key]
+		if !ok || value == nil {
+			continue
+		}
+		switch typed := value.(type) {
+		case bool:
+			return typed
+		case string:
+			s := strings.TrimSpace(typed)
+			return s != "" && s != "0" && !strings.EqualFold(s, "false")
+		case json.Number:
+			return typed.String() != "0" && typed.String() != ""
+		case float64:
+			return typed != 0
 		}
 	}
 	return false

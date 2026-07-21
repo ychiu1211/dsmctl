@@ -239,3 +239,36 @@ func TestDecodeUPSRedactsSecrets(t *testing.T) {
 		t.Fatalf("fixed delay = %#v", ups.SafeShutdownDelaySeconds)
 	}
 }
+
+// TestDecodeUPSRedactsSecretStrings covers the wire-unverified case where DSM
+// returns the SNMPv3 auth/privacy keys as raw secret strings (rather than the
+// observed boolean flags). The set-flags must report configured, and the raw
+// key material must never appear in the serialized model.
+func TestDecodeUPSRedactsSecretStrings(t *testing.T) {
+	raw := `{
+		"enable": true, "mode": "SNMP", "usb_ups_connect": false,
+		"snmp_server_ip": "192.0.2.10", "snmp_version": "3", "snmp_user": "monitor",
+		"snmp_community": "s3cr3t-community",
+		"snmp_auth_key": "s3cr3t-auth-key", "snmp_privacy_key": "s3cr3t-priv-key",
+		"snmp_auth_type": "SHA", "snmp_privacy_type": "AES"
+	}`
+	ups, err := decodeUPS(json.RawMessage(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ups.SNMP == nil {
+		t.Fatal("expected SNMP section")
+	}
+	if !ups.SNMP.CommunitySet || !ups.SNMP.AuthKeySet || !ups.SNMP.PrivacyKeySet {
+		t.Fatalf("string-valued secrets must set the flags, got %#v", ups.SNMP)
+	}
+	blob, err := json.Marshal(ups)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"s3cr3t-community", "s3cr3t-auth-key", "s3cr3t-priv-key"} {
+		if strings.Contains(string(blob), secret) {
+			t.Fatalf("serialized UPS leaks %q: %s", secret, blob)
+		}
+	}
+}
