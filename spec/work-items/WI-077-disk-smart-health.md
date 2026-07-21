@@ -1,7 +1,7 @@
 ---
 id: WI-077
 title: Disk SMART and health
-status: proposed
+status: in_progress
 priority: P2
 owner: ""
 depends_on: [WI-006]
@@ -152,24 +152,30 @@ All API/method/field names to be live-verified against the lab before trusting.
 
 ## Acceptance criteria
 
-- [ ] Slice A: `disk-smart capabilities|health|attributes` (CLI) and the
+- [x] Slice A: `disk-smart capabilities|health|attributes` (CLI) and the
       matching `get_disk_smart_capabilities` / `get_disk_health` /
-      `get_disk_smart_attributes` MCP tools return normalized per-disk state:
-      health/bad-sector/lifespan/spin-down from `HddMan`, and the SMART
-      attribute table + self-test status + schedule read-back from `Smart`.
-- [ ] Disks with no SMART data are reported as "no SMART data" (not an error),
+      `get_disk_smart_attributes` MCP tools return normalized per-disk state.
+      Live-verified API map differs from the guesses above (see Evidence):
+      per-disk health/bad-sector/lifespan/spin-down comes from
+      `SYNO.Core.Storage.Disk.list` (not `HddMan`, which is the NAS-wide
+      threshold config); the SMART attribute table + summary comes from
+      `SYNO.Storage.CGI.Smart.get_health_info`; the detailed self-test status
+      comes from `SYNO.Core.Storage.Disk.get_smart_test_log`. The schedule
+      read-back is Slice B (`SYNO.Storage.CGI.Smart.Scheduler`).
+- [x] Disks with no SMART data are reported as "no SMART data" (not an error),
       and a NAS with no eligible disks returns an empty successful state.
-- [ ] Independent gating: `Smart` and `HddMan` each select their own backend and
-      appear in the capability report with stable operation name, API, and
-      version; a missing API family fails closed for its own operations only and
-      does not disable the other family's reads.
-- [ ] Decoder unit tests cover the SMART attribute table, self-test status, and
+      (`get_health_info` returns DSM code 117 for a disk with no attribute
+      table; the facade marks that disk `no_smart_data` and continues.)
+- [x] Independent gating: each area selects its own backend and appears in the
+      capability report with a stable operation name, API, and version; a
+      missing API family fails closed for its own operations only.
+- [x] Decoder unit tests cover the SMART attribute table, self-test status, and
       health/lifespan fields from sanitized fixtures with **no serial numbers**
-      or physical-unit identifiers committed.
-- [ ] Slice A live verification on the lab (read-only `DSMCTL_DUMP` probe first
-      to pin real method/field names): read health + full SMART attributes for
-      every installed disk, with the exact API family/version recorded in the
-      spec's evidence note.
+      or physical-unit identifiers committed (fake `TESTDISK*` serials).
+- [x] Slice A live verification on the lab (read-only raw probe first to pin
+      real method/field names): read health + full SMART attributes for every
+      installed disk, with the exact API family/version recorded in the Evidence
+      note below.
 - [ ] Slice B (test run): guarded hash-bound plan/apply starts a quick self-test
       on one disk; the plan carries the disk identity fingerprint and current
       test status; apply rejects stale disk state and a test-already-running
@@ -217,6 +223,50 @@ All API/method/field names to be live-verified against the lab before trusting.
   [WI-003](WI-003-volume-management.md), [WI-013](WI-013-ssd-cache.md)) beyond
   reading the same physical disks; this module performs no pool/volume topology
   change.
+
+## Evidence
+
+Slice A live-verified against the lab (DS3018xs, DSM 7.3, 6 disks: 2 SATA SSD +
+4 SATA HDD) with a throwaway read-only raw probe. The proposed API map above was
+partly stale; the shipped read slice uses:
+
+- **Per-disk health / lifespan / coarse test state — `SYNO.Core.Storage.Disk`
+  v1 `list`** (params `{offset:0, limit:-1}`, JSON request). Returns
+  `{disks:[…]}` with, per disk: `id`, `device` (`/dev/sdX`), `name`/`longName`,
+  `model`, `firm`, `serial`/`ui_serial`, `vendor`, `diskType` (bus), `isSsd`,
+  `slot_id`, `disk_location`, `container{str,type}`, `size_total`, `temp`,
+  `status`, `overview_status`/`drive_status_key`/`summary_status_key`,
+  `smart_status`, `smart_test_support`, `smart_testing`, `testing_type`,
+  `remain_life{trustable,value}` (value `-1` = not applicable, e.g. HDDs),
+  `remain_life_danger`, `below_remain_life_thr`, `sb_days_left`(+`_critical`/
+  `_warning`), `unc` (`-1` = unavailable). This is the per-disk health authority
+  the storage inventory (`SYNO.Storage.CGI.Storage.load_info`) stops short of.
+- **SMART attribute table + summary — `SYNO.Storage.CGI.Smart` v1
+  `get_health_info`** (params `{device:"/dev/sdX"}`, JSON request — the value
+  must be the full device path and JSON-encoded; a bare form value or the short
+  `sda` id returns code 117/114). Returns `{healthInfo:{count, history{…},
+  overview{smart,smart_info,smart_test,remain_life_attr,remain_life,isNVMeDisk,
+  isSsd,…}, smartInfo:[{id,name,current,worst,threshold,raw,status}]}}`.
+  `smartInfo` is the attribute table; every field is a string (values are
+  zero-padded, raw values can be composite like `0/0`). A disk with no attribute
+  table answers with **DSM error code 117** → reported as `no_smart_data`.
+- **Detailed self-test status/log — `SYNO.Core.Storage.Disk` v1
+  `get_smart_test_log`** (params `{device:"/dev/sdX"}`). Returns
+  `{latest_test_time, testInfo:[{device, latest_test_result, latest_test_type,
+  testing, remain, quickTime, extendTime}]}`.
+- **Global disk-health warning thresholds — `SYNO.Storage.CGI.HddMan` v1
+  `get`** (no params). Returns `{BadSctrThrEn, RemainLifeThrEn, RemainLifeThrVal,
+  SBMonthLeftThrEn, SBMonthLeftThrVal, WddaEn, healthReportEn, …}`. NAS-wide, not
+  per-disk.
+
+Method/param names were confirmed against the on-NAS Storage Manager JS
+(`/webman/3rdparty/StorageManager/storage_panel.js`, found via the desktop
+initdata) after the raw-probe error-code sweep; codesearch was OAuth-blocked.
+
+Slice-B wire shapes observed for the follow-on (not implemented): test run =
+`SYNO.Core.Storage.Disk` `do_smart_test` (`{device, type}`, `type:"stop"` to
+cancel); schedule = `SYNO.Storage.CGI.Smart.Scheduler` (`get`/`set`/`list`/
+`delete`/`run`/`change_state`).
 
 ## Handoff
 
