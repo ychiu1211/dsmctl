@@ -62,8 +62,8 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools() error = %v", err)
 	}
-	if len(tools.Tools) != 243 {
-		t.Fatalf("ListTools() returned %d tools, want 243", len(tools.Tools))
+	if len(tools.Tools) != 248 {
+		t.Fatalf("ListTools() returned %d tools, want 248", len(tools.Tools))
 	}
 	for _, tool := range tools.Tools {
 		if scope, ok := ToolScope(tool.Name); !ok || scope == "" {
@@ -138,6 +138,11 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"get_universal_search_capabilities":     false,
 		"get_universal_search_folders":          false,
 		"get_universal_search_status":           false,
+		"get_hardware_capabilities":             false,
+		"get_hardware_general":                  false,
+		"get_hardware_power_schedule":           false,
+		"get_hardware_power_recovery":           false,
+		"get_hardware_ups":                      false,
 		"get_drive_admin_capabilities":          false,
 		"get_drive_admin_status":                false,
 		"get_drive_admin_connections":           false,
