@@ -1135,6 +1135,36 @@ type getDiskSMARTAttributesOutput struct {
 	SMART synology.DiskSMARTState `json:"smart" jsonschema:"Per-disk SMART attribute tables, summaries, and self-test status"`
 }
 
+type getHardwareInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getHardwareCapabilitiesOutput struct {
+	NAS          string                        `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.HardwareCapabilities `json:"capabilities" jsonschema:"Hardware & Power read areas currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport  `json:"report" jsonschema:"Discovered APIs and selected Hardware & Power compatibility backends"`
+}
+
+type getHardwareGeneralOutput struct {
+	NAS     string                        `json:"nas" jsonschema:"NAS profile used for the request"`
+	General synology.HardwareGeneralState `json:"general" jsonschema:"Beep control, fan-speed mode, and LED brightness/schedule; model-absent areas are omitted"`
+}
+
+type getHardwarePowerScheduleOutput struct {
+	NAS      string                              `json:"nas" jsonschema:"NAS profile used for the request"`
+	Schedule synology.HardwarePowerScheduleState `json:"schedule" jsonschema:"Scheduled power on/off tasks"`
+}
+
+type getHardwarePowerRecoveryOutput struct {
+	NAS      string                              `json:"nas" jsonschema:"NAS profile used for the request"`
+	Recovery synology.HardwarePowerRecoveryState `json:"recovery" jsonschema:"After-power-loss behavior and per-NIC Wake-on-LAN state"`
+}
+
+type getHardwareUPSOutput struct {
+	NAS string                    `json:"nas" jsonschema:"NAS profile used for the request"`
+	UPS synology.HardwareUPSState `json:"ups" jsonschema:"UPS configuration and live status; reports the no-device path when no UPS is attached"`
+}
+
 type planResourceRecordingChangeInput struct {
 	NAS     string                 `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
 	Request resmon.RecordingChange `json:"request" jsonschema:"History-recording toggle intent; set enable to true or false"`
@@ -3772,6 +3802,71 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getDiskSMARTAttributesOutput{}, err
 		}
 		return nil, getDiskSMARTAttributesOutput{NAS: result.NAS, SMART: result.SMART}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_hardware_capabilities",
+		Title:       "Get Hardware & Power capabilities",
+		Description: "Report which Control Panel Hardware & Power read areas (beep control, fan-speed mode, LED brightness, power schedule, power recovery, UPS) are available for a NAS and the DSM API backend selected for each. Each area is model dependent and gated independently.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getHardwareInput) (*mcp.CallToolResult, getHardwareCapabilitiesOutput, error) {
+		result, err := service.GetHardwareCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getHardwareCapabilitiesOutput{}, err
+		}
+		return nil, getHardwareCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_hardware_general",
+		Title:       "Get general hardware settings",
+		Description: "Read the general Hardware & Power comfort settings: the per-event beep-control flags (fan failure, power on/off, volume/cache crash, and so on with each event's model-support flag), the fan-speed mode, and the LED brightness and weekly schedule. Every field is model dependent; areas the model does not expose are omitted, not invented. This tool never changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getHardwareInput) (*mcp.CallToolResult, getHardwareGeneralOutput, error) {
+		result, err := service.GetHardwareGeneral(ctx, input.NAS)
+		if err != nil {
+			return nil, getHardwareGeneralOutput{}, err
+		}
+		return nil, getHardwareGeneralOutput{NAS: result.NAS, General: result.General}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_hardware_power_schedule",
+		Title:       "Get scheduled power on/off tasks",
+		Description: "Read the Control Panel Hardware & Power scheduled power-on and power-off tasks (enable flag, time of day, and weekday mask) and how many are enabled. A power-off task makes the NAS unreachable at its scheduled time. This tool reads the schedule only and never changes it.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getHardwareInput) (*mcp.CallToolResult, getHardwarePowerScheduleOutput, error) {
+		result, err := service.GetHardwarePowerSchedule(ctx, input.NAS)
+		if err != nil {
+			return nil, getHardwarePowerScheduleOutput{}, err
+		}
+		return nil, getHardwarePowerScheduleOutput{NAS: result.NAS, Schedule: result.Schedule}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_hardware_power_recovery",
+		Title:       "Get power-recovery behavior",
+		Description: "Read the after-power-loss behavior (whether the NAS restores its previous power state or stays off and needs a manual power-on) and the per-NIC Wake-on-LAN enable state. This tool reads the policy only and never changes it.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getHardwareInput) (*mcp.CallToolResult, getHardwarePowerRecoveryOutput, error) {
+		result, err := service.GetHardwarePowerRecovery(ctx, input.NAS)
+		if err != nil {
+			return nil, getHardwarePowerRecoveryOutput{}, err
+		}
+		return nil, getHardwarePowerRecoveryOutput{NAS: result.NAS, Recovery: result.Recovery}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_hardware_ups",
+		Title:       "Get UPS configuration and status",
+		Description: "Read the uninterruptible-power-supply configuration and live status: whether UPS integration is enabled, the mode (local USB, SNMP, or network slave), whether a USB UPS is attached with its battery charge/runtime, the safe-shutdown threshold, and the network-UPS-server enable and permitted-slave allow-list. The API is present even with no UPS attached, in which case the no-device path is reported. UPS authentication material is reported only as configured or not, never as a value. This tool never changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getHardwareInput) (*mcp.CallToolResult, getHardwareUPSOutput, error) {
+		result, err := service.GetHardwareUPS(ctx, input.NAS)
+		if err != nil {
+			return nil, getHardwareUPSOutput{}, err
+		}
+		return nil, getHardwareUPSOutput{NAS: result.NAS, UPS: result.UPS}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

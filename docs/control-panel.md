@@ -641,6 +641,77 @@ same session; a config restore overwrites the system configuration wholesale and
 can lock the administrator out). No install or restore path is exposed on any
 surface — CLI, MCP, or the read-only gateway.
 
+## Hardware & Power (read-only)
+
+DSM's Control Panel → Hardware & Power page carries four independent DSM API
+families with independent failure boundaries: general hardware comfort settings
+(beep control, fan speed, LED brightness — themselves three independently gated
+sub-areas), the power schedule, power recovery, and the UPS. One being absent
+reports `(not supported)` without disabling the others, and each fails closed
+(no silent empty-success decode) when its API is missing. Every field is **model
+dependent**: presence is taken from the live `get`, and absent fields are
+reported not-supported rather than fabricated.
+
+```console
+dsmctl hardware capabilities --nas office
+dsmctl hardware general --nas office --json
+dsmctl hardware power-schedule --nas office --json
+dsmctl hardware power-recovery --nas office --json
+dsmctl hardware ups --nas office --json
+```
+
+- **General hardware** reads three independently gated sub-areas:
+  `SYNO.Core.Hardware.BeepControl` (`get`) → per-event beep flags, each paired
+  with the model's `support_` capability flag so an unsupported event is reported
+  rather than assumed; `SYNO.Core.Hardware.FanSpeed` (`get`) → the fan-speed mode
+  enum (`dual_fan_speed`, e.g. `quietfan`) plus model descriptors; and
+  `SYNO.Core.Hardware.Led.Brightness` (`get`) → the LED brightness level and the
+  168-character weekly on/off schedule mask. Note the five-segment LED API name
+  (`…Led.Brightness`, not `…Led`).
+- **Power schedule** reads `SYNO.Core.Hardware.PowerSchedule` (`load` — `get` and
+  `list` return DSM code 103) → the power-on and power-off task arrays and the
+  enabled-task count. A power-off task makes the NAS unreachable at its scheduled
+  time.
+- **Power recovery** reads `SYNO.Core.Hardware.PowerRecovery` (`get`) → whether
+  the NAS restores its previous power state after a power loss (`rc_power_config`;
+  false = stay off, manual power-on required) and the per-NIC Wake-on-LAN state.
+- **UPS** reads `SYNO.Core.ExternalDevice.UPS` (`get` — `load` returns code 103)
+  → UPS enabled, mode (local USB / SNMP / network slave), whether a USB UPS is
+  attached with its battery charge/runtime, the safe-shutdown threshold
+  (`delay_time`; the DSM sentinel `-1` = shut down only when the battery reaches
+  low), the network-UPS-server enable and permitted-slave allow-list, and the
+  master IP when this NAS is a slave. The API is present even when no UPS is
+  attached, in which case the no-device path (disabled, not connected, status
+  unknown) is reported.
+
+**Secret suppression is mandatory on read.** The UPS `get` response carries the
+SNMP-UPS community string (`snmp_community`) and auth/privacy key indicators. The
+decoder **never surfaces the community value**: it reports only whether a
+community and the auth/privacy keys are configured (`community_set`,
+`auth_key_set`, `privacy_key_set`). A unit test injects a canary community and
+asserts the re-encoded model carries no trace, and a live `--json` grep confirms
+no leak.
+
+MCP exposes the same reads through `get_hardware_capabilities`,
+`get_hardware_general`, `get_hardware_power_schedule`,
+`get_hardware_power_recovery`, and `get_hardware_ups`. All are read-only and
+never change any hardware, power, or UPS setting.
+
+Verified live on DSM 7.3 (DS3018xs): `SYNO.Core.Hardware.BeepControl` v1 `get`,
+`SYNO.Core.Hardware.FanSpeed` v1 `get`, `SYNO.Core.Hardware.Led.Brightness` v1
+`get`, `SYNO.Core.Hardware.PowerSchedule` v1 `load`,
+`SYNO.Core.Hardware.PowerRecovery` v1 `get`, and `SYNO.Core.ExternalDevice.UPS`
+v1 `get`. The lab had no power-schedule tasks configured, so the two task arrays
+(the envelope) are live-verified but the per-task field mapping is decoded
+tolerantly through DSM's known key alternates (an unknown key yields an
+empty/zero field, never a wrong value); re-verifying a populated task shape is a
+prerequisite of the guarded-write follow-on. Guarded writes (beep/fan/LED
+comfort, power schedule, power recovery, UPS) are a deferred follow-on: the
+comfort scope is low risk while the power-schedule, power-recovery, and UPS
+scopes are **HIGH** risk — each can power the NAS off, keep it from returning
+after an outage, or drop safe shutdown — and, like the other guarded modules,
+will be excluded from the read-only gateway.
+
 ## Adding another module
 
 Add a dedicated type under `internal/domain/controlpanel`, an operation package
