@@ -62,8 +62,8 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools() error = %v", err)
 	}
-	if len(tools.Tools) != 209 {
-		t.Fatalf("ListTools() returned %d tools, want 209", len(tools.Tools))
+	if len(tools.Tools) != 214 {
+		t.Fatalf("ListTools() returned %d tools, want 214", len(tools.Tools))
 	}
 	for _, tool := range tools.Tools {
 		if scope, ok := ToolScope(tool.Name); !ok || scope == "" {
@@ -165,6 +165,11 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"get_firewall_status":                   false,
 		"get_firewall_profiles":                 false,
 		"get_firewall_rules":                    false,
+		"get_network_capabilities":              false,
+		"get_network_general":                   false,
+		"get_network_interfaces":                false,
+		"get_network_bonds":                     false,
+		"get_network_routes":                    false,
 		"plan_firewall_profile_change":          false,
 		"plan_firewall_enable_change":           false,
 		"get_login_portal_capabilities":         false,

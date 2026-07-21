@@ -1434,6 +1434,36 @@ type firewallApplyOutput struct {
 	Result application.FirewallApplyResult `json:"result" jsonschema:"Mutation result after stale-state, never-lockout, and postcondition checks"`
 }
 
+type networkInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getNetworkGeneralOutput struct {
+	NAS     string                  `json:"nas" jsonschema:"NAS profile used for the request"`
+	General synology.NetworkGeneral `json:"general" jsonschema:"General network settings: hostname, default gateway, DNS, and outbound proxy (the proxy password is never surfaced)"`
+}
+
+type getNetworkInterfacesOutput struct {
+	NAS        string                      `json:"nas" jsonschema:"NAS profile used for the request"`
+	Interfaces []synology.NetworkInterface `json:"interfaces" jsonschema:"Per-interface configuration and link status"`
+}
+
+type getNetworkBondsOutput struct {
+	NAS   string                 `json:"nas" jsonschema:"NAS profile used for the request"`
+	Bonds []synology.NetworkBond `json:"bonds" jsonschema:"Link-aggregation bonds with their mode and member NICs"`
+}
+
+type getNetworkRoutesOutput struct {
+	NAS    string                     `json:"nas" jsonschema:"NAS profile used for the request"`
+	Routes synology.NetworkRouteTable `json:"routes" jsonschema:"Static-route table; configured is false when advanced routing is not set up on the NAS"`
+}
+
+type getNetworkCapabilitiesOutput struct {
+	NAS          string                       `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.NetworkCapabilities `json:"capabilities" jsonschema:"Network reads currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport `json:"report" jsonschema:"Discovered APIs and selected network backends"`
+}
+
 type loginPortalInput struct {
 	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
 }
@@ -3985,6 +4015,71 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getFirewallRulesOutput{}, err
 		}
 		return nil, getFirewallRulesOutput{NAS: result.NAS, RuleSet: result.RuleSet}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_network_capabilities",
+		Title:       "Get network capabilities",
+		Description: "Report which Control Panel > Network reads dsmctl supports on the selected NAS (general settings, per-interface config, bonds, static routes, outbound proxy, and traffic-control presence) and the backend for each. Each area is an independent boundary: one being absent leaves the others usable. Some areas are wire-unverified (bond mode/members, static-route fields, per-interface IPv6) because the lab lacked a bond, static routes, and IPv6; traffic-control is capability-detected only. This slice is read-only; the connectivity-affecting writes are a deferred, guarded follow-on.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input networkInput) (*mcp.CallToolResult, getNetworkCapabilitiesOutput, error) {
+		result, err := service.GetNetworkCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getNetworkCapabilitiesOutput{}, err
+		}
+		return nil, getNetworkCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_network_general",
+		Title:       "Get network general settings",
+		Description: "Read the Control Panel > Network > General settings: hostname, IPv4/IPv6 default gateway (and the interface that carries it), configured DNS nameservers (and whether DNS is DHCP-supplied or manual), and the outbound HTTP/HTTPS proxy configuration. The proxy password is never surfaced. This tool never changes settings.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input networkInput) (*mcp.CallToolResult, getNetworkGeneralOutput, error) {
+		result, err := service.GetNetworkGeneral(ctx, input.NAS)
+		if err != nil {
+			return nil, getNetworkGeneralOutput{}, err
+		}
+		return nil, getNetworkGeneralOutput{NAS: result.NAS, General: result.General}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_network_interfaces",
+		Title:       "Get network interfaces",
+		Description: "Read each network interface's configuration and link status (Control Panel > Network > Network Interface): logical name, type, IPv4 address/netmask/gateway, DHCP-vs-static, MTU (9000 indicates jumbo frames), negotiated speed and duplex, link status, whether it carries the default gateway, VLAN, and any IPv6 assignments. This tool never changes settings.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input networkInput) (*mcp.CallToolResult, getNetworkInterfacesOutput, error) {
+		result, err := service.GetNetworkInterfaces(ctx, input.NAS)
+		if err != nil {
+			return nil, getNetworkInterfacesOutput{}, err
+		}
+		return nil, getNetworkInterfacesOutput{NAS: result.NAS, Interfaces: result.Interfaces}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_network_bonds",
+		Title:       "Get network bonds",
+		Description: "Read the link-aggregation (bonding) interfaces: each bond's name, address, status, bonding mode, and member NICs. Note: the per-bond mode and member field names are wire-unverified because the lab had no bond to confirm them against. This tool never changes settings.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input networkInput) (*mcp.CallToolResult, getNetworkBondsOutput, error) {
+		result, err := service.GetNetworkBonds(ctx, input.NAS)
+		if err != nil {
+			return nil, getNetworkBondsOutput{}, err
+		}
+		return nil, getNetworkBondsOutput{NAS: result.NAS, Bonds: result.Bonds}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_network_routes",
+		Title:       "Get network static routes",
+		Description: "Read the static-route table: destination network, netmask/prefix, next-hop gateway, egress interface, and address family. On a NAS without advanced routing configured DSM reports no route table (configured is false). Note: the per-route field names are wire-unverified until confirmed against a NAS with static routes. This tool never changes settings.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input networkInput) (*mcp.CallToolResult, getNetworkRoutesOutput, error) {
+		result, err := service.GetNetworkRoutes(ctx, input.NAS)
+		if err != nil {
+			return nil, getNetworkRoutesOutput{}, err
+		}
+		return nil, getNetworkRoutesOutput{NAS: result.NAS, Routes: result.Routes}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

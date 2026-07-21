@@ -48,6 +48,7 @@ func New(version string) *cobra.Command {
 		newFirewallCommand(opts),
 		newLogCommand(opts),
 		newNASCommand(opts),
+		newNetworkCommand(opts),
 		newNotificationCommand(opts),
 		newOfficeCommand(opts),
 		newPackageCommand(opts),
