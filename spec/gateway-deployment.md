@@ -222,6 +222,11 @@ Administration is separate from MCP authorization.
 - Password and OTP submissions are accepted only by authenticated admin
   endpoints, kept only for the enrollment transaction, and never accepted by
   MCP tools.
+- A stored NAS password may be revealed to the local administrator (WI-084):
+  the reveal endpoint re-verifies the administrator password, is rate limited,
+  emits a `credential.reveal` audit event naming the NAS, and returns the
+  value once without persisting it anywhere else. Reveal is part of local
+  administration and is never reachable through MCP authorization.
 - A DSM authentication adapter failure must fail closed; the package must not
   expose an unauthenticated fallback admin UI.
 
@@ -273,6 +278,45 @@ pending high-risk plan requests containing the plan summary, risk, and binding
 fields (WI-038). These records are advisory: they never approve anything, MCP
 clients cannot see or create approvals through them, and the approval record
 above remains the only admission authority.
+
+### Remote provisioning (WI-086)
+
+Remote provisioning of a fresh NAS is admitted under a distinct
+`nas.provision` scope. The shipped v1 targets a profile the local administrator
+**already added** (URL + pinned TLS) but that holds no credentials yet, so the
+existing allowlist and per-profile machinery apply unchanged; the tool refuses a
+profile that already has a stored credential, and the generated password is
+stored in the vault and never returned over MCP. `nas.provision` is never a
+sub-privilege of `nas.apply` and is never granted by default; the developer
+read-only gateway strips the tool.
+
+A **truly un-enrolled target** (a discovered device with no profile yet) is
+provisioned by the `provision_discovered_nas` tool, also under `nas.provision`.
+Because a discovered device is outside every allowlist, it is authorized by the
+scope alone and bounded instead by: the target host must be a
+private/loopback/link-local (LAN/VPN) address; the certificate is trusted on
+first contact and pinned; a name collision with an existing profile is refused;
+and the newly created profile is never added to any token's allowlist. This is a
+LAN/VPN bootstrap that sends a generated password to the device, so the scope is
+granted only to a trusted provisioning client. The conflicts below document the
+finer-grained per-address-allowlist model that was considered instead:
+
+- A distinct `nas.provision` scope, never granted by default and never a
+  sub-privilege of `nas.apply` (it mints a new credential and targets a device
+  reached through `lan.discover`, not an allowlisted profile). The read-only
+  developer gateway strips provisioning tools.
+- The target is named by its discovered identity (serial/MAC/reachable
+  address), filtered by a provision allowlist that is separate from the profile
+  allowlist. Provisioning is confined to LAN/VPN-reachable targets.
+- The provision approval record binds to that discovered identity and is
+  consumed atomically with creation of the new profile; a failed provision
+  leaves no reusable approval. Creating the NAS's first administrator through a
+  scoped token plus out-of-band approval is distinct from Gateway
+  administration, which stays non-MCP.
+- The generated administrator password never crosses the MCP boundary: results
+  carry only the new profile name and credential-status booleans, and retrieval
+  stays the human-gated reveal. The setup channel's plaintext-password property
+  further restricts provisioning to trusted reachability.
 
 ## Audit and observability
 

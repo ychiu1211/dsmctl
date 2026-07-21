@@ -123,6 +123,17 @@ SynoToken, and Noise resume keys), or use the bounded password/OTP enrollment
 for an automation account. Web sessions resume headlessly and survive gateway
 restarts. The container never reads the host's desktop OS keyring.
 
+For a profile whose password is stored (from password/OTP enrollment), the
+row menu adds a **Reveal stored password** action. It opens a dialog that
+requires the administrator to re-enter their own administrator password; on
+success the gateway returns the stored DSM account password once, with a copy
+button, and clears it when the dialog closes. The reveal endpoint is rate
+limited per source, writes a `credential.reveal` audit event naming the NAS
+(never the value), and is part of local administration only — it is never an
+MCP tool and cannot be reached with a bearer token. This is the sole way the
+vault surfaces a stored password, implementing the vault-managed,
+human-gated-reveal policy.
+
 The stored Gateway pin protects Gateway-to-NAS traffic. Because the Web Login
 popup connects the administrator's browser directly to DSM, that browser may
 still display its own self-signed-certificate warning unless its trust store
@@ -275,6 +286,16 @@ application's apply-time resolver can decrypt those values; MCP results and
 plan hashing see only the reference. Removing a NAS deletes its credentials by
 default. With explicit credential retention, the API lists orphan metadata so
 the administrator can later delete it.
+
+One admin endpoint deliberately returns plaintext:
+`POST /admin/api/profiles/{name}/credentials/reveal` gives the signed-in
+administrator browser session the profile's DSM account and its vault-enrolled
+password (the NAS list's Copy account / Copy password actions). It answers 404
+when no password is enrolled, never consults the `DSMCTL_PASSWORD_*`
+environment fallback, never returns web-login session material or apply
+secrets, and is audited as its own `credential.reveal` action. MCP bearer
+tokens cannot call any `/admin/api/` route, so no secret is reachable over
+`/mcp`.
 
 ## Container security and portability
 

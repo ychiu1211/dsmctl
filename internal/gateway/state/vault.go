@@ -121,6 +121,32 @@ func (r *Repository) Password(ctx context.Context, profileName string, profile c
 	return r.environment.Password(ctx, profileName, profile)
 }
 
+// StoredPassword returns only the vault-enrolled password. Unlike Password it
+// never consults the environment fallback, so administrator reveal exposes
+// exactly what the Admin UI stored and nothing configured out-of-band; a
+// profile without a vault entry reports ErrNotFound.
+func (r *Repository) StoredPassword(ctx context.Context, profileName string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	var password string
+	err := r.db.View(func(tx *bolt.Tx) error {
+		record, err := readProfile(tx, profileName)
+		if err != nil {
+			return err
+		}
+		if record.PasswordSecretID == "" {
+			return ErrNotFound
+		}
+		plaintext, _, err := r.secret(tx, record.PasswordSecretID, secretPassword, record.ID)
+		if err == nil {
+			password = string(plaintext)
+		}
+		return err
+	})
+	return password, err
+}
+
 func (r *Repository) SavePassword(ctx context.Context, profileName, password string) (uint64, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err

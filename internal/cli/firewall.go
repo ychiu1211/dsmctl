@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/ychiu1211/dsmctl/internal/application"
 	"github.com/ychiu1211/dsmctl/internal/domain/firewall"
 )
 
@@ -14,18 +15,150 @@ func newFirewallCommand(opts *options) *cobra.Command {
 	command := &cobra.Command{
 		Use:     "firewall",
 		Aliases: []string{"fw"},
-		Short:   "Inspect the DSM firewall (Control Panel > Security > Firewall)",
-		Long: "Read the Control Panel > Security > Firewall surface: whether the firewall is enabled and which " +
-			"profile is active, the firewall profiles, the network adapters, and each profile's per-adapter default " +
-			"policy and ordered rule list. This slice is read-only; the guarded, lockout-simulated writes (rule " +
-			"create/reorder/enable/delete, default policy, and firewall enable/disable) are a deferred follow-on.",
+		Short:   "Inspect and manage the DSM firewall (Control Panel > Security > Firewall)",
+		Long: "Read and change the Control Panel > Security > Firewall surface: whether the firewall is enabled and " +
+			"which profile is active, the firewall profiles, the network adapters, and each profile's per-adapter " +
+			"default policy and ordered rule list. Reads are safe; every change (rule create/delete/reorder, default " +
+			"policy, firewall enable/disable) goes through the guarded plan/apply contract. A mandatory never-lockout " +
+			"guard refuses any effect-taking change whose resulting ruleset would deny the operator's current session, " +
+			"unless allow_connectivity_break is set.",
 	}
 	command.AddCommand(
 		newFirewallCapabilitiesCommand(opts),
 		newFirewallStatusCommand(opts),
 		newFirewallProfilesCommand(opts),
 		newFirewallRulesCommand(opts),
+		newFirewallProfilePlanCommand(opts),
+		newFirewallProfileApplyCommand(opts),
+		newFirewallEnablePlanCommand(opts),
+		newFirewallEnableApplyCommand(opts),
 	)
+	return command
+}
+
+func newFirewallProfilePlanCommand(opts *options) *cobra.Command {
+	var inputPath, outputPath string
+	command := &cobra.Command{
+		Use:   "profile-plan",
+		Short: "Validate a firewall profile change (rules + default policy) and emit an approval plan as JSON",
+		Long: "Validate a full-desired-state change to a firewall profile's adapter sections (each adapter's default " +
+			"policy and complete ordered rule list) and return an approval plan bound to the complete observed state " +
+			"and the management connection tuple. A change that would take effect (activating a profile, or editing the " +
+			"active profile while the firewall is enabled) is run through the never-lockout guard: if the resulting " +
+			"ruleset would deny the operator's session it is refused without allow_connectivity_break. This command " +
+			"never mutates DSM.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var request firewall.ProfileChange
+			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
+				return fmt.Errorf("read firewall profile change: %w", err)
+			}
+			service, err := loadService(opts)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			plan, err := service.PlanFirewallProfileChange(cmd.Context(), opts.nas, request)
+			if err != nil {
+				return err
+			}
+			return encodeJSONOutput(cmd, outputPath, plan)
+		},
+	}
+	command.Flags().StringVarP(&inputPath, "file", "f", "-", "firewall profile change JSON file, or - for stdin")
+	command.Flags().StringVarP(&outputPath, "output", "o", "-", "plan JSON file, or - for stdout")
+	return command
+}
+
+func newFirewallProfileApplyCommand(opts *options) *cobra.Command {
+	var inputPath, approvalHash string
+	command := &cobra.Command{
+		Use:   "profile-apply",
+		Short: "Apply a firewall profile plan after hash, stale-state, and never-lockout validation",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var plan application.FirewallProfilePlan
+			if err := decodeJSONInput(cmd, inputPath, &plan); err != nil {
+				return fmt.Errorf("read firewall profile plan: %w", err)
+			}
+			service, err := loadService(opts)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.ApplyFirewallProfilePlan(cmd.Context(), plan, approvalHash)
+			if err != nil {
+				return err
+			}
+			return encodeIndentedJSON(cmd.OutOrStdout(), result)
+		},
+	}
+	command.Flags().StringVarP(&inputPath, "file", "f", "-", "firewall profile plan JSON file, or - for stdin")
+	command.Flags().StringVar(&approvalHash, "approve", "", "exact SHA-256 hash printed by firewall profile-plan")
+	_ = command.MarkFlagRequired("approve")
+	return command
+}
+
+func newFirewallEnablePlanCommand(opts *options) *cobra.Command {
+	var inputPath, outputPath string
+	command := &cobra.Command{
+		Use:   "enable-plan",
+		Short: "Validate a firewall enable/disable (or active-profile switch) and emit an approval plan as JSON",
+		Long: "Validate a change to the global firewall enable flag and/or the active profile and return an approval " +
+			"plan. Enabling the firewall (or switching the active profile while enabled) runs the never-lockout guard " +
+			"against the profile that would become active: it is refused if the resulting ruleset would deny the " +
+			"operator's session and allow_connectivity_break is not set, or if the session source cannot be determined " +
+			"and no keep_reachable is supplied. Disabling removes all filtering and cannot lock the operator out. This " +
+			"command never mutates DSM.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var request firewall.EnableChange
+			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
+				return fmt.Errorf("read firewall enable change: %w", err)
+			}
+			service, err := loadService(opts)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			plan, err := service.PlanFirewallEnableChange(cmd.Context(), opts.nas, request)
+			if err != nil {
+				return err
+			}
+			return encodeJSONOutput(cmd, outputPath, plan)
+		},
+	}
+	command.Flags().StringVarP(&inputPath, "file", "f", "-", "firewall enable change JSON file, or - for stdin")
+	command.Flags().StringVarP(&outputPath, "output", "o", "-", "plan JSON file, or - for stdout")
+	return command
+}
+
+func newFirewallEnableApplyCommand(opts *options) *cobra.Command {
+	var inputPath, approvalHash string
+	command := &cobra.Command{
+		Use:   "enable-apply",
+		Short: "Apply a firewall enable/disable plan after hash, stale-state, and never-lockout validation",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var plan application.FirewallEnablePlan
+			if err := decodeJSONInput(cmd, inputPath, &plan); err != nil {
+				return fmt.Errorf("read firewall enable plan: %w", err)
+			}
+			service, err := loadService(opts)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.ApplyFirewallEnablePlan(cmd.Context(), plan, approvalHash)
+			if err != nil {
+				return err
+			}
+			return encodeIndentedJSON(cmd.OutOrStdout(), result)
+		},
+	}
+	command.Flags().StringVarP(&inputPath, "file", "f", "-", "firewall enable plan JSON file, or - for stdin")
+	command.Flags().StringVar(&approvalHash, "approve", "", "exact SHA-256 hash printed by firewall enable-plan")
+	_ = command.MarkFlagRequired("approve")
 	return command
 }
 
@@ -55,6 +188,8 @@ func newFirewallCapabilitiesCommand(opts *options) *cobra.Command {
 			fmt.Fprintf(writer, "adapters read\t%s\n", yesNo(result.Capabilities.AdaptersRead))
 			fmt.Fprintf(writer, "rules read\t%s\n", yesNo(result.Capabilities.RulesRead))
 			fmt.Fprintf(writer, "rule fields wire-unverified\t%s\n", yesNo(result.Capabilities.RuleFieldsWireUnverified))
+			fmt.Fprintf(writer, "profile write\t%s\n", yesNo(result.Capabilities.ProfileWrite))
+			fmt.Fprintf(writer, "enable write\t%s\n", yesNo(result.Capabilities.EnableWrite))
 			fmt.Fprintf(writer, "mutations\t%s\n", yesNo(result.Capabilities.Mutations))
 			fmt.Fprintln(writer, "\nOPERATION\tSUPPORTED\tBACKEND\tAPI\tVERSION")
 			for _, op := range result.Report.Operations {
@@ -195,5 +330,5 @@ func firewallSource(rule firewall.Rule) string {
 	if rule.Source != "" {
 		return rule.Source
 	}
-	return rule.SourceType
+	return rule.SourceGroup
 }

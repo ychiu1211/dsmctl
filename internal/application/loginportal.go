@@ -33,6 +33,11 @@ type loginPortalClient interface {
 	ApplicationPortals(context.Context) (synology.ApplicationPortals, error)
 	ReverseProxyRules(context.Context) (synology.ReverseProxyRules, error)
 	LoginPortalCapabilities(context.Context) (synology.LoginPortalCapabilities, synology.CompatibilityReport, error)
+	LoginPortalTransport() synology.LoginPortalTransportInfo
+	ApplyDSMWebServiceChange(context.Context, synology.DSMWebServiceChange) (synology.LoginPortalMutationResult, error)
+	ApplyApplicationPortalChange(context.Context, synology.ApplicationPortalChange) (synology.LoginPortalMutationResult, error)
+	ApplyReverseProxyRuleCreate(context.Context, synology.ReverseProxyRuleCreate, []synology.ReverseProxyHeaderValue) (synology.LoginPortalMutationResult, error)
+	ApplyReverseProxyRuleDelete(context.Context, synology.ReverseProxyRuleDelete) (synology.LoginPortalMutationResult, error)
 }
 
 func (s *Service) GetDSMWebService(ctx context.Context, requestedNAS string) (DSMWebServiceResult, error) {

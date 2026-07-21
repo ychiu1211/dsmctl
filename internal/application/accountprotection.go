@@ -39,6 +39,11 @@ type accountProtectionClient interface {
 	AccountProtection(context.Context) (synology.AccountProtection, error)
 	EnforceTwoFactor(context.Context) (synology.EnforceTwoFactor, error)
 	AccountProtectionCapabilities(context.Context) (synology.AccountProtectionCapabilities, synology.CompatibilityReport, error)
+	ActiveConnections(context.Context) ([]synology.ActiveConnection, error)
+	ApplyAutoBlockChange(context.Context, synology.AutoBlockChange) (synology.AccountProtectionMutationResult, error)
+	ApplyAccountProtectionChange(context.Context, synology.AccountProtectionChange) (synology.AccountProtectionMutationResult, error)
+	ApplyEnforceTwoFactorChange(context.Context, synology.EnforceTwoFactorChange) (synology.AccountProtectionMutationResult, error)
+	ApplyAutoBlockListEdit(context.Context, synology.IPListEdit) (synology.AccountProtectionMutationResult, error)
 }
 
 func (s *Service) GetAutoBlockSettings(ctx context.Context, requestedNAS string) (AutoBlockSettingsResult, error) {

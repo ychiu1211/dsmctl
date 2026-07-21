@@ -111,11 +111,14 @@ func describeFailedStep(resp *entryResponse, stepNames []string) string {
 	return "a setup step failed without a reported code"
 }
 
-// Harden applies the DSM wizard's post-account setup steps: harden auto-block,
-// set the device name, disable the built-in admin, and stop the location
-// telemetry agent unless opted in. Every step is best-effort; the returned
-// error is advisory and never means the administrator was not created.
-func Harden(ctx context.Context, target Target, req AdminRequest, builtinAdminScramble string) error {
+// Harden applies the DSM wizard's post-account setup steps that the NEW
+// administrator is allowed to perform: harden auto-block, set the device name,
+// and stop the location telemetry agent unless opted in. Disabling the built-in
+// admin is NOT done here — DSM rejects a User.set on the reserved admin from any
+// other administrator with error 105, so it must run in the setup (admin)
+// session via DisableBuiltinAdmin. Every step is best-effort; the returned error
+// is advisory and never means the administrator was not created.
+func Harden(ctx context.Context, target Target, req AdminRequest) error {
 	if err := requireHTTPS(target.BaseURL); err != nil {
 		return err
 	}
@@ -126,8 +129,6 @@ func Harden(ctx context.Context, target Target, req AdminRequest, builtinAdminSc
 	compound := []map[string]any{
 		{"api": "SYNO.Core.Security.AutoBlock", "method": "set", "version": 1, "attempts": 10, "enable": true, "enable_expire": false, "within_mins": 5},
 		{"api": "SYNO.Core.Service", "method": "control", "version": 1, "service": []map[string]any{{"service_id": "synoagentregisterd", "action": agentAction}}},
-		{"api": "SYNO.Core.User", "method": "set", "version": 1, "name": "admin", "password": builtinAdminScramble},
-		{"api": "SYNO.Core.User", "method": "set", "version": 1, "name": "admin", "expired": "now"},
 	}
 	if name := strings.TrimSpace(req.DeviceName); name != "" {
 		compound = append([]map[string]any{
@@ -143,6 +144,42 @@ func Harden(ctx context.Context, target Target, req AdminRequest, builtinAdminSc
 	}
 	if resp.Data.HasFail != nil && *resp.Data.HasFail {
 		return fmt.Errorf("one or more hardening steps did not apply")
+	}
+	return nil
+}
+
+// DisableBuiltinAdmin scrambles the built-in "admin" account's password and
+// expires it, mirroring the trailing steps of the DSM setup wizard's own
+// account compound. It MUST run on the setup (admin) session — DSM permits the
+// reserved admin to be modified only by itself, rejecting any other
+// administrator with error 105 (which is why provisioning does this before
+// logging in as the new administrator). Disabling the built-in admin is also
+// what flips DSM's server-side admin_configured flag, so the first-run welcome
+// wizard stops being presented on login.
+//
+// The Target client MUST already hold the admin setup session (or the caller
+// must run EstablishSetupSession first). Leaving the account expired AND
+// scrambled means it is neither loginable nor holds an empty password if revived.
+func DisableBuiltinAdmin(ctx context.Context, target Target, scramble string) error {
+	if err := requireHTTPS(target.BaseURL); err != nil {
+		return err
+	}
+	if strings.TrimSpace(scramble) == "" {
+		return fmt.Errorf("disable built-in admin requires a scramble password")
+	}
+	compound := []map[string]any{
+		{"api": "SYNO.Core.User", "method": "set", "version": 1, "name": "admin", "password": scramble},
+		{"api": "SYNO.Core.User", "method": "set", "version": 1, "name": "admin", "expired": "now"},
+	}
+	resp, err := postCompound(ctx, target, compound, true)
+	if err != nil {
+		return err
+	}
+	if err := checkEntry(resp); err != nil {
+		return fmt.Errorf("disable built-in admin: %w", err)
+	}
+	if resp.Data.HasFail != nil && *resp.Data.HasFail {
+		return fmt.Errorf("disable built-in admin: %s", describeFailedStep(resp, []string{"scramble admin password", "expire admin"}))
 	}
 	return nil
 }

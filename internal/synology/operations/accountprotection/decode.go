@@ -108,6 +108,36 @@ func decodeEnforceTwoFactor(data json.RawMessage) (accountprotection.EnforceTwoF
 	}, nil
 }
 
+// decodeActiveConnections normalizes the SYNO.Core.CurrentConnection list into
+// the source IPs of active clients. It feeds the self-lockout guardrail only, so
+// it carries no session identity (no SID, SynoToken, or device id) and a missing
+// items array is treated as "no active connections" rather than an error, since
+// this read is best-effort.
+func decodeActiveConnections(data json.RawMessage) ([]accountprotection.ActiveConnection, error) {
+	root, err := decodeObject(data, "active connections")
+	if err != nil {
+		return nil, err
+	}
+	items, ok := objectList(root, "items", "connections")
+	if !ok {
+		return nil, nil
+	}
+	connections := make([]accountprotection.ActiveConnection, 0, len(items))
+	for _, item := range items {
+		from := stringValue(item, "from", "ip", "ip_addr")
+		if from == "" {
+			continue
+		}
+		current, _ := boolValue(item, "is_current_connected", "is_current", "current")
+		connections = append(connections, accountprotection.ActiveConnection{
+			From:    from,
+			Who:     stringValue(item, "who", "user"),
+			Current: current,
+		})
+	}
+	return connections, nil
+}
+
 // --- shared lenient decoding helpers (mirrors the certificate operation pkg) ---
 
 func decodeObject(data json.RawMessage, what string) (map[string]any, error) {

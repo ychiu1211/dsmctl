@@ -128,6 +128,7 @@ func run(arguments []string, logger *slog.Logger) error {
 			application.WithCredentialStore(repository),
 			application.WithSecretReferenceResolver(repository),
 			application.WithRemoteApplyAuthorizer(repository),
+			application.WithProvisionSink(admin.NewVaultProvisionSink(repository, manager)),
 		)
 		adminApplication, err := admin.New(admin.Options{Repository: repository, Manager: manager, Discoverer: service, PublicURL: *adminPublicURL, Logger: logger})
 		if err != nil {

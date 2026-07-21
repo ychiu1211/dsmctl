@@ -528,6 +528,13 @@ func defaultDeviceName() string {
 	return "dsmctl@" + strings.TrimSpace(hostname)
 }
 
+// DefaultDeviceName is the DSM trusted-device name this host registers under.
+// Enrollment flows outside the manager (for example 'auth password set') use
+// it so a device registered there is recognized by later manager logins.
+func DefaultDeviceName() string {
+	return defaultDeviceName()
+}
+
 func (m *Manager) Close(ctx context.Context) error {
 	m.profileGate.Lock()
 	defer m.profileGate.Unlock()

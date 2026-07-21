@@ -93,7 +93,7 @@ func TestEveryRemoteTargetedToolRejectsOmittedNAS(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	principal := remotepolicy.Principal{TokenID: "all-scopes", Scopes: map[string]struct{}{remotepolicy.ScopeRead: {}, remotepolicy.ScopePlan: {}, remotepolicy.ScopeApply: {}, remotepolicy.ScopeLANDiscover: {}}, NAS: map[string]struct{}{}}
+	principal := remotepolicy.Principal{TokenID: "all-scopes", Scopes: map[string]struct{}{remotepolicy.ScopeRead: {}, remotepolicy.ScopePlan: {}, remotepolicy.ScopeApply: {}, remotepolicy.ScopeLANDiscover: {}, remotepolicy.ScopeProvision: {}}, NAS: map[string]struct{}{}}
 	remoteContext := remotepolicy.WithPrincipal(context.Background(), principal)
 	for _, tool := range tools.Tools {
 		if strings.Contains(tool.Name, "approval") {
@@ -107,7 +107,7 @@ func TestEveryRemoteTargetedToolRejectsOmittedNAS(t *testing.T) {
 		handler := remotePolicyMiddleware(service, nil)(next)
 		request := &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{Name: tool.Name, Arguments: json.RawMessage(`{}`)}}
 		_, err := handler(remoteContext, "tools/call", request)
-		targetless := tool.Name == "list_nas" || tool.Name == "discover_lan_devices" || tool.Name == "get_auth_status"
+		targetless := tool.Name == "list_nas" || tool.Name == "discover_lan_devices" || tool.Name == "get_auth_status" || tool.Name == "provision_discovered_nas" || tool.Name == "install_discovered_nas"
 		if targetless {
 			if err != nil || !called {
 				t.Errorf("targetless tool %q err=%v called=%v", tool.Name, err, called)

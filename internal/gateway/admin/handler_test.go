@@ -593,6 +593,11 @@ func TestAdminUIHasNoEmbeddedCredential(t *testing.T) {
 		`value="365" selected`, `value="nas.read" checked`, `value="nas.plan" checked`, `value="nas.apply" checked`, `value="lan.discover" checked`,
 		`error.payload=value`, `location.pathname.replace(/\/admin\/?$/,'/mcp')`, `transport:'streamable-http'`, `show(message)`,
 		`id="credentialDialog"`, `id="approvalRequests"`, `id="auditRows"`, `confirm_new_password`,
+		`id="revealDialog"`, `/credentials/password/reveal`, `data-i18n="revealPassword"`, `if(profile.password_stored)items.push({label:t('revealPassword')`,
+		`onclick="copyText(revealedAccount,t('accountCopied'))"`, `data-i18n="copyAccount"`, `{label:t('openNAS'),action:()=>window.open(profile.url,'_blank','noopener')}`,
+		`openNAS:'Open NAS'`, `openNAS:'開啟 NAS'`, `copyAccount:'複製帳號'`,
+		`id="provisionDialog"`, `async function submitProvision(event)`, `/profiles/'+encodeURIComponent(name)+'/provision'`,
+		`if(!hasAuthentication)items.push({label:t('provision')`, `provision:'Provision fresh NAS'`, `provision:'安裝全新 NAS'`,
 	} {
 		if !strings.Contains(recorder.Body.String(), required) {
 			t.Fatalf("UI is missing redesigned application shell marker %q", required)
@@ -843,6 +848,106 @@ func TestPasswordEnrollmentFailureIsLoggedServerSideAndRedacted(t *testing.T) {
 	}
 	if strings.Contains(logText, "wrong-enrollment-password") || strings.Contains(logText, "654321") {
 		t.Fatalf("server log leaked an enrollment secret: %s", logText)
+	}
+}
+
+func TestRevealStoredPasswordRequiresAdministratorReverification(t *testing.T) {
+	handler, repository, manager, adminSession := newTestHandler(t)
+	defer manager.Close(context.Background())
+	ctx := context.Background()
+	if _, err := repository.CreateProfile(ctx, state.ProfileInput{Name: "office", URL: "https://office.example:5001", Username: "operator"}); err != nil {
+		t.Fatal(err)
+	}
+	const secret = "reveal-only-with-admin-password"
+	if _, err := repository.SavePassword(ctx, "office", secret); err != nil {
+		t.Fatal(err)
+	}
+
+	unauth := performJSON(handler, http.MethodPost, "/admin/api/profiles/office/credentials/password/reveal", `{"password":"correct horse battery staple"}`, "")
+	if unauth.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated reveal status = %d", unauth.Code)
+	}
+
+	wrong := performJSON(handler, http.MethodPost, "/admin/api/profiles/office/credentials/password/reveal", `{"password":"not the admin password"}`, adminSession)
+	if wrong.Code != http.StatusUnauthorized || strings.Contains(wrong.Body.String(), secret) {
+		t.Fatalf("wrong-admin-password reveal status = %d body=%s", wrong.Code, wrong.Body.String())
+	}
+
+	ok := performJSON(handler, http.MethodPost, "/admin/api/profiles/office/credentials/password/reveal", `{"password":"correct horse battery staple"}`, adminSession)
+	if ok.Code != http.StatusOK {
+		t.Fatalf("reveal status = %d body=%s", ok.Code, ok.Body.String())
+	}
+	var revealed struct {
+		NAS      string `json:"nas"`
+		Account  string `json:"account"`
+		Password string `json:"password"`
+	}
+	if err := json.Unmarshal(ok.Body.Bytes(), &revealed); err != nil {
+		t.Fatal(err)
+	}
+	if revealed.Password != secret || revealed.Account != "operator" || revealed.NAS != "office" {
+		t.Fatalf("reveal payload = %#v", revealed)
+	}
+
+	missing := performJSON(handler, http.MethodPost, "/admin/api/profiles/office/credentials/password/reveal", `{"password":"correct horse battery staple"}`, adminSession)
+	if missing.Code != http.StatusOK {
+		t.Fatalf("second reveal status = %d", missing.Code)
+	}
+	if _, _, err := repository.DeletePassword(ctx, "office"); err != nil {
+		t.Fatal(err)
+	}
+	notFound := performJSON(handler, http.MethodPost, "/admin/api/profiles/office/credentials/password/reveal", `{"password":"correct horse battery staple"}`, adminSession)
+	if notFound.Code != http.StatusNotFound {
+		t.Fatalf("reveal without stored password status = %d body=%s", notFound.Code, notFound.Body.String())
+	}
+
+	events, err := repository.AuditEvents(ctx, state.AuditQuery{Action: "credential.reveal", Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var success, denied int
+	for _, event := range events {
+		if strings.Contains(fmt.Sprintf("%v", event), secret) {
+			t.Fatalf("audit event leaked the revealed password: %#v", event)
+		}
+		if event.NAS != "office" {
+			continue
+		}
+		switch event.Outcome {
+		case "success":
+			success++
+		case "denied":
+			denied++
+		}
+	}
+	if success == 0 || denied == 0 {
+		t.Fatalf("expected both success and denied credential.reveal audit events, got success=%d denied=%d", success, denied)
+	}
+}
+
+func TestRevealStoredPasswordRateLimited(t *testing.T) {
+	handler, repository, manager, adminSession := newTestHandler(t)
+	defer manager.Close(context.Background())
+	ctx := context.Background()
+	if _, err := repository.CreateProfile(ctx, state.ProfileInput{Name: "office", URL: "https://office.example:5001", Username: "operator"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.SavePassword(ctx, "office", "stored-secret"); err != nil {
+		t.Fatal(err)
+	}
+	var limited bool
+	for attempt := 1; attempt <= 6; attempt++ {
+		response := performJSON(handler, http.MethodPost, "/admin/api/profiles/office/credentials/password/reveal", `{"password":"wrong administrator password"}`, adminSession)
+		if response.Code == http.StatusTooManyRequests {
+			limited = true
+			break
+		}
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("reveal attempt %d status = %d", attempt, response.Code)
+		}
+	}
+	if !limited {
+		t.Fatal("repeated failed reveals were not rate limited")
 	}
 }
 

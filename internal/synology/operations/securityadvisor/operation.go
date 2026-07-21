@@ -1,14 +1,14 @@
-// Package securityadvisor implements the read-only DSM operations for the
-// Control Panel → Security → Security Advisor surface. Security Advisor is DSM
-// core (not a package), so selection uses the advertised API/version alone and
-// each API is its own independent compatibility boundary.
+// Package securityadvisor implements the DSM operations for the Control Panel →
+// Security → Security Advisor surface. Security Advisor is DSM core (not a
+// package), so selection uses the advertised API/version alone and each API is
+// its own independent compatibility boundary.
 //
-// Verified live on DSM 7.3 (SYNO.API.Info.query): three v1 APIs make up the
-// family, all JSON-request on entry.cgi —
+// Verified live on the DSM 7.x lab (SYNO.API.Info.query): three v1 APIs make up
+// the family, all JSON-request on entry.cgi —
 //
-//	SYNO.Core.SecurityScan.Status    system_get → last-scan status + per-category findings
-//	SYNO.Core.SecurityScan.Conf      get        → scan schedule + security baseline
-//	SYNO.Core.SecurityScan.Operation (scan trigger / cancel) — DEFERRED write/action, never called here
+//	SYNO.Core.SecurityScan.Status    system_get → last-scan status + per-category findings (read, this file)
+//	SYNO.Core.SecurityScan.Conf      get/set    → scan schedule + security baseline (read here, write in mutation.go)
+//	SYNO.Core.SecurityScan.Operation start      → trigger a full scan (action in mutation.go)
 //
 // The detailed per-rule lookup (Status.rule_get) exists but requires a specific
 // rule id and is not an enumerable findings list on this release, so the read
@@ -28,9 +28,9 @@ const (
 	StatusAPIName = "SYNO.Core.SecurityScan.Status"
 	// ConfAPIName reads (and, in a deferred slice, writes) the schedule + baseline.
 	ConfAPIName = "SYNO.Core.SecurityScan.Conf"
-	// OperationAPIName triggers/cancels a scan. It is the deferred run-scan
-	// action API; this read slice discovers it for capability reporting only and
-	// never invokes it, because a full scan is CPU/IO-heavy on the NAS.
+	// OperationAPIName triggers a scan (method start; the run-scan action lives
+	// in mutation.go). A full scan is CPU/IO-heavy on the NAS, so it is never
+	// invoked implicitly by a read.
 	OperationAPIName = "SYNO.Core.SecurityScan.Operation"
 
 	StatusReadCapabilityName   = "securityadvisor.status.read"
@@ -99,14 +99,14 @@ func ExecuteConfiguration(ctx context.Context, target compatibility.Target, exec
 	return configurationOperation.Run(ctx, target, executor, Input{})
 }
 
-// SupportsRunScan reports whether the deferred run-scan action API is advertised.
+// SupportsRunScan reports whether the run-scan action API is advertised.
 func SupportsRunScan(target compatibility.Target) bool {
 	return target.SupportsAPI(OperationAPIName, 1)
 }
 
-// SupportsScheduleWrite reports whether the deferred schedule/baseline write
-// rides an advertised API. The write is Conf `set`, the same API/version as the
-// schedule read.
+// SupportsScheduleWrite reports whether the schedule/baseline write rides an
+// advertised API. The write is Conf `set`, the same API/version as the schedule
+// read.
 func SupportsScheduleWrite(target compatibility.Target) bool {
 	return target.SupportsAPI(ConfAPIName, 1)
 }

@@ -39,6 +39,7 @@ func apTarget() compatibility.Target {
 	target.SetAPI(SmartBlockAPIName, compatibility.APIInfo{Path: "entry.cgi", MinVersion: 1, MaxVersion: 1})
 	target.SetAPI(EnforcePolicyAPIName, compatibility.APIInfo{Path: "entry.cgi", MinVersion: 1, MaxVersion: 1})
 	target.SetAPI(DoSAPIName, compatibility.APIInfo{Path: "entry.cgi", MinVersion: 1, MaxVersion: 2})
+	target.SetAPI(ActiveConnectionsAPIName, compatibility.APIInfo{Path: "entry.cgi", MinVersion: 1, MaxVersion: 1})
 	return target
 }
 

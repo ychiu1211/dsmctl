@@ -203,6 +203,12 @@ type PoolChange struct {
 	DiskIDs        []string `json:"disk_ids,omitempty" jsonschema:"Complete initial set of stable DSM disk identifiers for create"`
 	AddDiskIDs     []string `json:"add_disk_ids,omitempty" jsonschema:"Stable DSM disk identifiers to add during patch-only update"`
 	TargetRAIDType *string  `json:"target_raid_type,omitempty" jsonschema:"Optional explicit RAID migration target during update; omitted preserves the current type"`
+	// AllowUnsupportedDisks opts a pool create/expand into using drives that DSM
+	// does not report as compatible (lab or unvalidated drives). It relaxes ONLY
+	// the compatibility gate — health, SMART, selectability and in-use checks still
+	// apply — and records a plan warning. It is part of the hashed plan, so the
+	// approval covers the operator's decision to proceed on unlisted drives.
+	AllowUnsupportedDisks bool `json:"allow_unsupported_disks,omitempty" jsonschema:"Opt-in to create or expand a pool on drives DSM does not list as compatible (lab or unvalidated drives); relaxes only the compatibility check and records a plan warning"`
 }
 
 // VolumeChange owns PoolID, FileSystem, and Capacity only during create.

@@ -100,6 +100,98 @@ func TestBuildStoragePlanAcceptsCanonicalUnusedOwnerMarker(t *testing.T) {
 	}
 }
 
+func TestBuildStoragePlanAcceptsSysPartitionNormalDisks(t *testing.T) {
+	// A freshly installed NAS reports its free disks as "sys_partition_normal"
+	// because the DSM system partition is mirrored across every drive; such disks
+	// must remain eligible pool candidates or a fresh box could never get a data
+	// pool.
+	state := storageContractState(3)
+	for index := range state.Disks {
+		state.Disks[index].Status = "sys_partition_normal"
+	}
+	if _, err := BuildStoragePlan("lab", state, storage.ChangeRequest{
+		Action: storage.ActionCreate, Resource: storage.ResourcePool,
+		Pool: &storage.PoolChange{Name: "data", RAIDType: storage.RAID5, DiskIDs: []string{"disk-01", "disk-02", "disk-03"}},
+	}); err != nil {
+		t.Fatalf("BuildStoragePlan() rejected sys_partition_normal disks: %v", err)
+	}
+}
+
+func TestBuildStoragePlanGatesUnsupportedDrivesBehindOptIn(t *testing.T) {
+	state := storageContractState(3)
+	for index := range state.Disks {
+		state.Disks[index].Compatibility = "not_in_support"
+	}
+	request := func(allow bool) storage.ChangeRequest {
+		return storage.ChangeRequest{
+			Action: storage.ActionCreate, Resource: storage.ResourcePool,
+			Pool: &storage.PoolChange{Name: "data", RAIDType: storage.RAID5, DiskIDs: []string{"disk-01", "disk-02", "disk-03"}, AllowUnsupportedDisks: allow},
+		}
+	}
+	if _, err := BuildStoragePlan("lab", state, request(false)); err == nil || !strings.Contains(err.Error(), "not eligible") {
+		t.Fatalf("BuildStoragePlan() error = %v, want unsupported-drive rejection without opt-in", err)
+	}
+	plan, err := BuildStoragePlan("lab", state, request(true))
+	if err != nil {
+		t.Fatalf("BuildStoragePlan() with allow_unsupported_disks rejected the create: %v", err)
+	}
+	if !plan.Request.Pool.AllowUnsupportedDisks {
+		t.Fatalf("plan did not preserve allow_unsupported_disks: %#v", plan.Request.Pool)
+	}
+	var warned bool
+	for _, warning := range plan.Warnings {
+		if strings.Contains(warning, "allow_unsupported_disks is set") {
+			warned = true
+		}
+	}
+	if !warned {
+		t.Fatalf("plan warnings missing unsupported-drive advisory: %#v", plan.Warnings)
+	}
+}
+
+func TestStoragePostStatusAcceptsBenignBackgroundOptimizing(t *testing.T) {
+	// A freshly created RAID5 pool reports "background_optimizing" with
+	// actioning=false while it is already writable and volume-ready; the pool
+	// postcondition, the volume parent-pool check, and the volume postcondition
+	// must all accept that state, but never a genuine failure state.
+	pool := storage.Pool{ID: "reuse_1", Status: "background_optimizing", Health: "background_optimizing", Writable: true, Compatible: true, CanCreateVolume: true}
+	if err := validatePoolPostStatus(pool); err != nil {
+		t.Fatalf("validatePoolPostStatus rejected background_optimizing pool: %v", err)
+	}
+	if err := validateVolumePoolForMutation(pool, true); err != nil {
+		t.Fatalf("validateVolumePoolForMutation rejected background_optimizing parent pool: %v", err)
+	}
+	if err := validatePoolPostStatus(storage.Pool{ID: "p", Status: "crashed", Health: "crashed"}); err == nil {
+		t.Fatal("validatePoolPostStatus accepted a crashed pool")
+	}
+	volume := storage.Volume{ID: "volume_1", Status: "background_optimizing", Health: "normal"}
+	if err := validateVolumePostStatus(volume); err != nil {
+		t.Fatalf("validateVolumePostStatus rejected background_optimizing volume: %v", err)
+	}
+}
+
+func TestVerifyStorageVolumePostconditionToleratesEmptyDSMName(t *testing.T) {
+	// DSM often does not persist a display name for the first volume on a pool
+	// (it reports an empty name), so the create postcondition must identify the
+	// new volume by its new stable ID plus pool, filesystem, and approved
+	// capacity — not by name. A freshly created volume is also still "creating"
+	// (actioning=true), which must be accepted.
+	plan := StoragePlan{
+		Request:               storage.ChangeRequest{Action: storage.ActionCreate, Resource: storage.ResourceVolume, Volume: &storage.VolumeChange{Name: "volume1", PoolID: "reuse_1", FileSystem: "btrfs"}},
+		References:            StorageStableReferences{PoolLayout: "multiple"},
+		ResolvedCapacityBytes: 2966748659712,
+	}
+	before := storage.State{}
+	after := storage.State{Volumes: []storage.Volume{{ID: "volume_1", Name: "", PoolID: "reuse_1", FileSystem: "btrfs", AllocatedBytes: 2966748659712, Status: "creating", Health: "creating", Writable: true, Actioning: true}}}
+	id, err := verifyStorageVolumePostcondition(plan, before, after)
+	if err != nil {
+		t.Fatalf("verifyStorageVolumePostcondition rejected an empty-named creating volume: %v", err)
+	}
+	if id != "volume_1" {
+		t.Fatalf("verifyStorageVolumePostcondition returned id %q, want volume_1", id)
+	}
+}
+
 func TestBuildStoragePlanCanonicalizesDiskOrder(t *testing.T) {
 	state := storageContractState(3)
 	request := func(disks ...string) storage.ChangeRequest {

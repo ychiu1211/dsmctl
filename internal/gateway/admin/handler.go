@@ -55,15 +55,16 @@ type DeviceDiscoverer interface {
 }
 
 type Handler struct {
-	repository    *state.Repository
-	manager       *runtime.Manager
-	discoverer    DeviceDiscoverer
-	publicURL     string
-	logger        *slog.Logger
-	now           func() time.Time
-	setupDeadline time.Time
-	setupAttempts *attemptLimiter
-	loginAttempts *attemptLimiter
+	repository     *state.Repository
+	manager        *runtime.Manager
+	discoverer     DeviceDiscoverer
+	publicURL      string
+	logger         *slog.Logger
+	now            func() time.Time
+	setupDeadline  time.Time
+	setupAttempts  *attemptLimiter
+	loginAttempts  *attemptLimiter
+	revealAttempts *attemptLimiter
 
 	pendingMu sync.Mutex
 	pending   map[string]pendingEnrollment
@@ -128,9 +129,10 @@ func New(options Options) (*Handler, error) {
 	return &Handler{
 		repository: options.Repository, manager: options.Manager, discoverer: discoverer, publicURL: publicURL, logger: logger,
 		now: now, setupDeadline: startedAt.Add(setupWindow),
-		setupAttempts: newAttemptLimiter(now, 10, time.Minute),
-		loginAttempts: newAttemptLimiter(now, 5, time.Minute),
-		pending:       make(map[string]pendingEnrollment),
+		setupAttempts:  newAttemptLimiter(now, 10, time.Minute),
+		loginAttempts:  newAttemptLimiter(now, 5, time.Minute),
+		revealAttempts: newAttemptLimiter(now, 5, time.Minute),
+		pending:        make(map[string]pendingEnrollment),
 	}, nil
 }
 
@@ -451,6 +453,10 @@ func (h *Handler) profile(w http.ResponseWriter, req *http.Request) {
 		h.credentialStatus(w, req, name)
 	case "credentials/password":
 		h.passwordEnrollment(w, req, name)
+	case "credentials/password/reveal":
+		h.revealPassword(w, req, name)
+	case "provision":
+		h.provisionProfile(w, req, name)
 	case "credentials/session":
 		h.removeSession(w, req, name)
 	case "credentials/trusted-device":
@@ -1008,6 +1014,56 @@ func (h *Handler) passwordEnrollment(w http.ResponseWriter, req *http.Request, n
 	writeJSON(w, http.StatusOK, map[string]any{"nas": name, "account": strings.TrimSpace(input.Account), "password_stored": true, "trusted_device_stored": device.ID != ""})
 }
 
+// revealPassword implements the WI-084 human-gated reveal: the authenticated
+// administrator must re-enter their own administrator password before the
+// vault-stored DSM password is returned once. The reveal is rate limited and
+// audited with the NAS name; the response is never persisted or logged.
+func (h *Handler) revealPassword(w http.ResponseWriter, req *http.Request, name string) {
+	if req.Method != http.MethodPost {
+		methodNotAllowed(w, http.MethodPost)
+		return
+	}
+	var input struct {
+		Password string `json:"password"`
+	}
+	if err := decodeJSON(req, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	defer func() { input.Password = "" }()
+	attemptKey := remoteAttemptKey(req, "reveal")
+	if !h.revealAttempts.Allow(attemptKey) {
+		writeError(w, http.StatusTooManyRequests, "too many reveal attempts")
+		return
+	}
+	actor := administratorActor(req.Context())
+	username := strings.TrimPrefix(actor, "local:")
+	if _, err := h.repository.VerifyAdministratorCredentials(req.Context(), username, input.Password); err != nil {
+		_ = h.repository.AppendAudit(req.Context(), state.AuditEvent{CorrelationID: correlationID(req), ActorType: "gateway_admin", ActorID: actor, Action: "credential.reveal", NAS: name, Outcome: "denied", Reason: "administrator reauthentication denied"})
+		writeError(w, http.StatusUnauthorized, "administrator password verification failed")
+		return
+	}
+	profile, err := h.repository.Profile(req.Context(), name)
+	if err != nil {
+		writeRepositoryError(w, err)
+		return
+	}
+	password, err := h.repository.StoredPassword(req.Context(), name)
+	if errors.Is(err, state.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "no password is stored in the vault for this NAS")
+		return
+	}
+	if err != nil {
+		h.logger.ErrorContext(req.Context(), "vault password reveal failed",
+			"request_id", correlationID(req), "nas", name, "error", err)
+		writeError(w, http.StatusInternalServerError, "read stored password")
+		return
+	}
+	h.revealAttempts.Reset(attemptKey)
+	_ = h.repository.AppendAudit(req.Context(), state.AuditEvent{CorrelationID: correlationID(req), ActorType: "gateway_admin", ActorID: actor, Action: "credential.reveal", NAS: name, Outcome: "success"})
+	writeJSON(w, http.StatusOK, map[string]any{"nas": profile.Name, "account": profile.Username, "password": password})
+}
+
 func (h *Handler) removeSession(w http.ResponseWriter, req *http.Request, name string) {
 	if req.Method != http.MethodDelete {
 		methodNotAllowed(w, http.MethodDelete)
@@ -1424,6 +1480,10 @@ func adminAuditAction(req *http.Request) string {
 		return "approval.lifecycle"
 	case strings.HasPrefix(path, "/admin/api/audit"):
 		return "audit.query"
+	case strings.HasSuffix(path, "/credentials/password/reveal"):
+		return "credential.reveal"
+	case strings.HasSuffix(path, "/provision"):
+		return "profile.provision"
 	case strings.Contains(path, "/credentials/") || strings.Contains(path, "/weblogin/"):
 		return "credential.manage"
 	case strings.Contains(path, "/secrets") || strings.HasPrefix(path, "/admin/api/orphan-secrets"):

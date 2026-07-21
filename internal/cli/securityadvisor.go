@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/ychiu1211/dsmctl/internal/application"
 	"github.com/ychiu1211/dsmctl/internal/domain/securityadvisor"
 )
 
@@ -14,17 +15,113 @@ func newSecurityAdvisorCommand(opts *options) *cobra.Command {
 	command := &cobra.Command{
 		Use:     "security-advisor",
 		Aliases: []string{"secadvisor", "sa"},
-		Short:   "Inspect the Security Advisor scan (Control Panel > Security > Security Advisor)",
+		Short:   "Inspect and manage the Security Advisor scan (Control Panel > Security > Security Advisor)",
 		Long: "Read the Security Advisor surface: the last-scan status, the per-category findings with their " +
-			"severity breakdown, and the current scan schedule and security baseline. This slice is read-only; " +
-			"triggering a scan and changing the schedule/baseline are deferred, explicitly-authorized follow-ons.",
+			"severity breakdown, and the current scan schedule and security baseline. Trigger a scan on demand " +
+			"with 'run', and change the schedule and baseline through the guarded plan/apply contract.",
 	}
 	command.AddCommand(
 		newSecurityAdvisorCapabilitiesCommand(opts),
 		newSecurityAdvisorStatusCommand(opts),
 		newSecurityAdvisorFindingsCommand(opts),
 		newSecurityAdvisorScheduleCommand(opts),
+		newSecurityAdvisorPlanCommand(opts),
+		newSecurityAdvisorApplyCommand(opts),
+		newSecurityAdvisorRunCommand(opts),
 	)
+	return command
+}
+
+func newSecurityAdvisorPlanCommand(opts *options) *cobra.Command {
+	var inputPath, outputPath string
+	command := &cobra.Command{
+		Use:   "plan",
+		Short: "Validate a schedule + baseline patch and emit an approval plan as JSON",
+		Long: "Validate a patch-only schedule and security-baseline change and return an approval plan bound to " +
+			"the complete observed configuration. Loosening the baseline (business to home) or disabling the " +
+			"scheduled scan is classified high risk. This command never mutates DSM.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var request securityadvisor.ScheduleChange
+			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
+				return fmt.Errorf("read security advisor change: %w", err)
+			}
+			service, err := loadService(opts)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			plan, err := service.PlanSecurityAdvisorScheduleChange(cmd.Context(), opts.nas, request)
+			if err != nil {
+				return err
+			}
+			return encodeJSONOutput(cmd, outputPath, plan)
+		},
+	}
+	command.Flags().StringVarP(&inputPath, "file", "f", "-", "schedule change JSON file, or - for stdin")
+	command.Flags().StringVarP(&outputPath, "output", "o", "-", "plan JSON file, or - for stdout")
+	return command
+}
+
+func newSecurityAdvisorApplyCommand(opts *options) *cobra.Command {
+	var inputPath, approvalHash string
+	command := &cobra.Command{
+		Use:   "apply",
+		Short: "Apply a schedule + baseline plan after hash and stale-state validation",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var plan application.SecurityAdvisorSchedulePlan
+			if err := decodeJSONInput(cmd, inputPath, &plan); err != nil {
+				return fmt.Errorf("read security advisor plan: %w", err)
+			}
+			service, err := loadService(opts)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.ApplySecurityAdvisorSchedulePlan(cmd.Context(), plan, approvalHash)
+			if err != nil {
+				return err
+			}
+			return encodeIndentedJSON(cmd.OutOrStdout(), result)
+		},
+	}
+	command.Flags().StringVarP(&inputPath, "file", "f", "-", "security advisor plan JSON file, or - for stdin")
+	command.Flags().StringVar(&approvalHash, "approve", "", "exact SHA-256 hash printed by security-advisor plan")
+	_ = command.MarkFlagRequired("approve")
+	return command
+}
+
+func newSecurityAdvisorRunCommand(opts *options) *cobra.Command {
+	var jsonOutput bool
+	command := &cobra.Command{
+		Use:   "run",
+		Short: "Trigger a full Security Advisor scan now (load-heavy action, no configuration change)",
+		Long: "Trigger a full Security Advisor scan on demand. A scan is CPU/IO-heavy on the NAS and changes no " +
+			"configuration; track its progress with 'security-advisor status'. This action is never invoked " +
+			"implicitly by a read.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			service, err := loadService(opts)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.RunSecurityScan(cmd.Context(), opts.nas)
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				return encodeIndentedJSON(cmd.OutOrStdout(), result)
+			}
+			writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+			fmt.Fprintf(writer, "NAS:\t%s\n", result.NAS)
+			fmt.Fprintf(writer, "Scan started:\t%s\n", yesNo(result.Scan.Started))
+			fmt.Fprintf(writer, "Backend:\t%s %s v%d\n", result.Scan.API, result.Scan.Method, result.Scan.Version)
+			return writer.Flush()
+		},
+	}
+	command.Flags().BoolVar(&jsonOutput, "json", false, "output structured JSON")
 	return command
 }
 
@@ -51,8 +148,8 @@ func newSecurityAdvisorCapabilitiesCommand(opts *options) *cobra.Command {
 			fmt.Fprintf(writer, "NAS:\t%s\n", result.NAS)
 			fmt.Fprintf(writer, "status + findings read\t%s\n", yesNo(result.Capabilities.StatusRead))
 			fmt.Fprintf(writer, "schedule + baseline read\t%s\n", yesNo(result.Capabilities.ScheduleRead))
-			fmt.Fprintf(writer, "run scan (deferred action)\t%s\n", yesNo(result.Capabilities.RunScan))
-			fmt.Fprintf(writer, "schedule/baseline write (deferred)\t%s\n", yesNo(result.Capabilities.ScheduleWrite))
+			fmt.Fprintf(writer, "run scan (action)\t%s\n", yesNo(result.Capabilities.RunScan))
+			fmt.Fprintf(writer, "schedule/baseline write\t%s\n", yesNo(result.Capabilities.ScheduleWrite))
 			fmt.Fprintln(writer, "\nOPERATION\tSUPPORTED\tBACKEND\tAPI\tVERSION")
 			for _, op := range result.Report.Operations {
 				fmt.Fprintf(writer, "%s\t%s\t%s\t%s\tv%d\n", op.Operation, yesNo(op.Supported), valueOrDash(op.Backend), valueOrDash(op.API), op.Version)

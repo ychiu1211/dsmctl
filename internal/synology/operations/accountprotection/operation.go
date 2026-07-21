@@ -158,6 +158,7 @@ func APINames() []string {
 		SmartBlockAPIName,
 		EnforcePolicyAPIName,
 		DoSAPIName,
+		ActiveConnectionsAPIName,
 	}
 }
 

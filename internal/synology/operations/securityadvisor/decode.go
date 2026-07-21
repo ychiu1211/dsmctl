@@ -49,12 +49,23 @@ func decodeStatus(data json.RawMessage) (securityadvisor.Status, error) {
 		return securityadvisor.Status{}, fmt.Errorf("decode security advisor status: no items object among %s", availableKeys(root))
 	}
 
-	overall, err := severityFromDSM(stringValue(root, "sysStatus"))
-	if err != nil {
-		return securityadvisor.Status{}, fmt.Errorf("decode security advisor status: %w", err)
+	// While a scan is in progress DSM reports a status marker in sysStatus (for
+	// example "running") in place of a severity. That is a scan state, not an
+	// unknown taxonomy value, so it is recognized here rather than erroring; the
+	// overall severity is simply not yet known until the scan completes.
+	rawSysStatus := stringValue(root, "sysStatus")
+	scanning := isScanInProgressStatus(rawSysStatus)
+	var overall securityadvisor.Severity
+	if !scanning {
+		decoded, err := severityFromDSM(rawSysStatus)
+		if err != nil {
+			return securityadvisor.Status{}, fmt.Errorf("decode security advisor status: %w", err)
+		}
+		overall = decoded
 	}
 
 	status := securityadvisor.Status{
+		Running:         scanning,
 		Progress:        intValue(root, "sysProgress"),
 		OverallSeverity: overall,
 		StartTime:       stringValue(root, "startTime"),
@@ -125,6 +136,20 @@ func decodeCategory(name string, object map[string]any) (securityadvisor.Categor
 		result.Passed = 0
 	}
 	return result, nil
+}
+
+// isScanInProgressStatus reports whether a sysStatus value is a scan-progress
+// marker rather than a completed-scan severity. DSM sets sysStatus to "running"
+// while a scan is underway (the live-verified marker); the other progress-ish
+// states are recognized defensively so a poll during a scan never errors the
+// read.
+func isScanInProgressStatus(raw string) bool {
+	switch strings.TrimSpace(raw) {
+	case "running", "waiting", "scanning", "pause", "paused":
+		return true
+	default:
+		return false
+	}
 }
 
 func decodeConfiguration(data json.RawMessage) (securityadvisor.Configuration, error) {
