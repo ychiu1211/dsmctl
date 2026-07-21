@@ -33,6 +33,10 @@ type firewallClient interface {
 	FirewallProfiles(context.Context) ([]synology.FirewallProfile, error)
 	FirewallRules(context.Context, string) (synology.FirewallRuleSet, error)
 	FirewallCapabilities(context.Context) (synology.FirewallCapabilities, synology.CompatibilityReport, error)
+	FirewallTransport() synology.FirewallConnection
+	FirewallActiveSessions(context.Context) ([]synology.FirewallSessionSource, error)
+	ApplyFirewallProfileChange(context.Context, synology.FirewallProfileChange) (synology.FirewallMutationResult, error)
+	ApplyFirewallEnableChange(context.Context, synology.FirewallEnableChange) (synology.FirewallMutationResult, error)
 }
 
 func (s *Service) GetFirewallStatus(ctx context.Context, requestedNAS string) (FirewallStatusResult, error) {

@@ -124,8 +124,10 @@ func decodeAdapterPolicy(adapter string, section map[string]any) firewall.Adapte
 
 // decodeRules decodes an adapter section's ordered rule array. DSM reports rules
 // as [] (empty array) or null when there are none; both yield an empty list, not
-// an error. Per-rule fields are WIRE-UNVERIFIED (no populated rule on the lab) and
-// are read tolerantly.
+// an error. The per-rule field names are live-verified (WI-066 Slice B): a
+// throwaway rule written with the firewall disabled and read back confirmed the
+// exact DSM tokens (enable, name, policy, protocol, port_direction, port_group,
+// ports, source_ip_group, source_ip, log). They are still read tolerantly.
 func decodeRules(section map[string]any) []firewall.Rule {
 	value, ok := section["rules"]
 	if !ok || value == nil {
@@ -142,20 +144,94 @@ func decodeRules(section map[string]any) []firewall.Rule {
 			continue
 		}
 		enabled, _ := boolValue(object, "enable", "enabled")
+		logged, _ := boolValue(object, "log")
 		rules = append(rules, firewall.Rule{
-			Enabled:    enabled,
-			Policy:     stringValue(object, "policy", "action"),
-			Protocol:   stringValue(object, "proto", "protocol"),
-			IPVersion:  stringValue(object, "ip_ver", "ipver", "ip_version"),
-			SourceType: stringValue(object, "src_type", "source_type"),
-			Source:     stringValue(object, "src", "source", "src_value", "ip"),
-			PortType:   stringValue(object, "port_type", "porttype"),
-			Ports:      stringValue(object, "port", "ports", "dst_port", "service"),
-			Direction:  stringValue(object, "direction", "dir"),
-			Name:       stringValue(object, "name", "desc", "description"),
+			Enabled:       enabled,
+			Policy:        stringValue(object, "policy", "action"),
+			Protocol:      stringValue(object, "protocol", "proto"),
+			PortDirection: stringValue(object, "port_direction", "direction", "dir"),
+			PortGroup:     stringValue(object, "port_group", "port_type"),
+			Ports:         stringValue(object, "ports", "port", "service"),
+			SourceGroup:   stringValue(object, "source_ip_group", "src_type", "source_type"),
+			Source:        stringValue(object, "source_ip", "src", "source"),
+			Log:           logged,
+			Name:          stringValue(object, "name", "desc", "description"),
 		})
 	}
 	return rules
+}
+
+// encodeRule renders a domain Rule back into the exact DSM Profile.set rule object
+// shape confirmed live: {enable, name, policy, protocol, port_direction,
+// port_group, ports, source_ip_group, source_ip, log}.
+func encodeRule(rule firewall.Rule) map[string]any {
+	return map[string]any{
+		"enable":          rule.Enabled,
+		"name":            rule.Name,
+		"policy":          rule.Policy,
+		"protocol":        rule.Protocol,
+		"port_direction":  rule.PortDirection,
+		"port_group":      rule.PortGroup,
+		"ports":           rule.Ports,
+		"source_ip_group": rule.SourceGroup,
+		"source_ip":       rule.Source,
+		"log":             rule.Log,
+	}
+}
+
+// encodeProfile renders a full ProfileRules back into the DSM Profile.set "profile"
+// parameter: {<adapter>:{policy, rules[]}, ..., name}.
+func encodeProfile(profile firewall.ProfileRules) map[string]any {
+	out := map[string]any{"name": profile.Profile}
+	for _, adapter := range profile.Adapters {
+		rules := make([]any, 0, len(adapter.Rules))
+		for _, rule := range adapter.Rules {
+			rules = append(rules, encodeRule(rule))
+		}
+		out[adapter.Adapter] = map[string]any{
+			"policy": adapter.Policy,
+			"rules":  rules,
+		}
+	}
+	return out
+}
+
+// decodeCurrentConnection normalizes SYNO.Core.CurrentConnection list into the
+// operator's session source. It never decodes any session secret (SID, token,
+// device id): only the source address and the is-current marker. The returned
+// slice preserves each entry so the guard can pick the current one and fall back
+// to protecting all active sources.
+func decodeCurrentConnection(data json.RawMessage) ([]firewall.SessionSource, error) {
+	root, err := decodeObject(data, "current connection")
+	if err != nil {
+		return nil, err
+	}
+	value, ok := root["items"]
+	if !ok || value == nil {
+		return nil, nil
+	}
+	items, ok := value.([]any)
+	if !ok {
+		return nil, fmt.Errorf("decode current connection: items is not an array")
+	}
+	sources := make([]firewall.SessionSource, 0, len(items))
+	for _, item := range items {
+		object, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		from := stringValue(object, "from", "ip", "ip_addr")
+		if from == "" {
+			continue
+		}
+		current, _ := boolValue(object, "is_current_connected", "is_current", "current")
+		sources = append(sources, firewall.SessionSource{
+			From:    from,
+			Who:     stringValue(object, "who", "user"),
+			Current: current,
+		})
+	}
+	return sources, nil
 }
 
 // --- shared lenient decoding helpers (mirrors the accountprotection pkg) ---

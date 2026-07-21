@@ -29,6 +29,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/domain/rsyncservice"
 	"github.com/ychiu1211/dsmctl/internal/domain/san"
 	"github.com/ychiu1211/dsmctl/internal/domain/accountprotection"
+	firewalldomain "github.com/ychiu1211/dsmctl/internal/domain/firewall"
 	"github.com/ychiu1211/dsmctl/internal/domain/loginportal"
 	"github.com/ychiu1211/dsmctl/internal/domain/securityadvisor"
 	"github.com/ychiu1211/dsmctl/internal/domain/servicediscovery"
@@ -1397,8 +1398,40 @@ type getFirewallRulesOutput struct {
 
 type getFirewallCapabilitiesOutput struct {
 	NAS          string                        `json:"nas" jsonschema:"NAS profile used for the request"`
-	Capabilities synology.FirewallCapabilities `json:"capabilities" jsonschema:"Firewall reads currently exposed by dsmctl"`
+	Capabilities synology.FirewallCapabilities `json:"capabilities" jsonschema:"Firewall reads and guarded writes currently exposed by dsmctl"`
 	Report       synology.CompatibilityReport  `json:"report" jsonschema:"Discovered APIs and selected firewall backends"`
+}
+
+type planFirewallProfileChangeInput struct {
+	NAS     string                 `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request firewalldomain.ProfileChange `json:"request" jsonschema:"Full-desired-state firewall profile change: the target profile, the desired adapter sections (default policy plus complete ordered rule list), whether to activate it, and the never-lockout override/keep_reachable"`
+}
+
+type planFirewallProfileChangeOutput struct {
+	Plan application.FirewallProfilePlan `json:"plan" jsonschema:"Validated plan bound to the complete observed state, the management tuple, the guard decision, and the approval hash"`
+}
+
+type applyFirewallProfilePlanInput struct {
+	Plan         application.FirewallProfilePlan `json:"plan" jsonschema:"Unmodified plan returned by plan_firewall_profile_change"`
+	ApprovalHash string                          `json:"approval_hash" jsonschema:"Exact approval hash from the plan"`
+}
+
+type planFirewallEnableChangeInput struct {
+	NAS     string                `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request firewalldomain.EnableChange `json:"request" jsonschema:"Firewall enable/disable intent: the desired enabled state, the profile to make active when enabling, and the never-lockout override/keep_reachable"`
+}
+
+type planFirewallEnableChangeOutput struct {
+	Plan application.FirewallEnablePlan `json:"plan" jsonschema:"Validated plan bound to the complete observed state, the management tuple, the guard decision, and the approval hash"`
+}
+
+type applyFirewallEnablePlanInput struct {
+	Plan         application.FirewallEnablePlan `json:"plan" jsonschema:"Unmodified plan returned by plan_firewall_enable_change"`
+	ApprovalHash string                         `json:"approval_hash" jsonschema:"Exact approval hash from the plan"`
+}
+
+type firewallApplyOutput struct {
+	Result application.FirewallApplyResult `json:"result" jsonschema:"Mutation result after stale-state, never-lockout, and postcondition checks"`
 }
 
 type loginPortalInput struct {
@@ -3916,6 +3949,58 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getFirewallRulesOutput{}, err
 		}
 		return nil, getFirewallRulesOutput{NAS: result.NAS, RuleSet: result.RuleSet}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_firewall_profile_change",
+		Title:       "Plan a firewall profile change (rules + default policy)",
+		Description: "Validate a full-desired-state change to a firewall profile's adapter sections (each adapter's default no-match policy and complete ordered rule list, expressing rule create/delete/reorder) and return an approval plan bound to the complete observed state and the operator's management connection tuple. A change that would take effect — activating a profile, or editing the active profile while the firewall is enabled — is run through the mandatory never-lockout guard: the resulting ruleset is evaluated (first-match, then adapter default, deferring an adapter's 'none' default to the all-interfaces section) against {the source IP the NAS sees for the current session, the DSM port, tcp}, and the plan is REFUSED if that would not provably ALLOW the session, unless allow_connectivity_break is set. When the source cannot be read from an active connection, keep_reachable must supply it or the guard fails closed. Every effect-taking firewall change is high risk. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planFirewallProfileChangeInput) (*mcp.CallToolResult, planFirewallProfileChangeOutput, error) {
+		plan, err := service.PlanFirewallProfileChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planFirewallProfileChangeOutput{}, err
+		}
+		return nil, planFirewallProfileChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_firewall_profile_plan",
+		Title:       "Apply an approved firewall profile plan",
+		Description: "Apply an unmodified firewall profile plan only while its approval hash and the complete observed state (including the management connection tuple) still match, then re-read to verify the written profile matches the desired state. The never-lockout guard is re-run before the write; a change whose resulting active ruleset would deny the current session is refused unless the plan carried allow_connectivity_break. The write is full-desired-state for the target profile; untouched adapters are preserved by merging into a freshly read profile.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyFirewallProfilePlanInput) (*mcp.CallToolResult, firewallApplyOutput, error) {
+		result, err := service.ApplyFirewallProfilePlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, firewallApplyOutput{}, err
+		}
+		return nil, firewallApplyOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_firewall_enable_change",
+		Title:       "Plan a firewall enable/disable or active-profile switch",
+		Description: "Validate a change to the global firewall enable flag and/or the active profile and return an approval plan bound to the complete observed state and the operator's management connection tuple. Enabling the firewall (or switching the active profile while enabled) runs the mandatory never-lockout guard against the profile that would become active: the plan is REFUSED if the resulting ruleset would deny the operator's session and allow_connectivity_break is not set, or if the session source cannot be determined and no keep_reachable is supplied (fail closed). Enabling or switching the active profile is high risk; disabling removes all filtering, cannot lock the operator out, and is medium risk. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planFirewallEnableChangeInput) (*mcp.CallToolResult, planFirewallEnableChangeOutput, error) {
+		plan, err := service.PlanFirewallEnableChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planFirewallEnableChangeOutput{}, err
+		}
+		return nil, planFirewallEnableChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_firewall_enable_plan",
+		Title:       "Apply an approved firewall enable/disable plan",
+		Description: "Apply an unmodified firewall enable/disable plan only while its approval hash and the complete observed state (including the management connection tuple) still match, then re-read to verify the enable flag and active profile took effect. When enabling, the never-lockout guard is re-run before the write and refuses a change whose resulting active ruleset would deny the current session unless the plan carried allow_connectivity_break.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyFirewallEnablePlanInput) (*mcp.CallToolResult, firewallApplyOutput, error) {
+		result, err := service.ApplyFirewallEnablePlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, firewallApplyOutput{}, err
+		}
+		return nil, firewallApplyOutput{Result: result}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

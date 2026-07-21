@@ -40,6 +40,14 @@ func NewReadOnly(service *application.Service, version string) *mcp.Server {
 		"apply_account_protection_thresholds_plan",
 		"plan_account_protection_enforce_2fa_change",
 		"apply_account_protection_enforce_2fa_plan",
+		// Firewall guarded writes (WI-066). Every effect-taking firewall change can
+		// deny the management port and lock out the shared box; the never-lockout
+		// guard runs in the planner/apply, but the whole plan/apply pair is stripped
+		// from the read-only gateway.
+		"plan_firewall_profile_change",
+		"apply_firewall_profile_plan",
+		"plan_firewall_enable_change",
+		"apply_firewall_enable_plan",
 		// Terminal & SNMP guarded writes (WI-071). Enabling SSH/Telnet or disabling
 		// SSH is high risk; the SNMP set carries the community secret. Both pairs are
 		// stripped from the read-only gateway.
