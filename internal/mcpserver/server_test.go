@@ -62,8 +62,8 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools() error = %v", err)
 	}
-	if len(tools.Tools) != 233 {
-		t.Fatalf("ListTools() returned %d tools, want 233", len(tools.Tools))
+	if len(tools.Tools) != 261 {
+		t.Fatalf("ListTools() returned %d tools, want 261", len(tools.Tools))
 	}
 	for _, tool := range tools.Tools {
 		if scope, ok := ToolScope(tool.Name); !ok || scope == "" {
@@ -132,6 +132,23 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"get_resource_monitor_history":          false,
 		"get_resource_monitor_setting":          false,
 		"plan_resource_recording_change":        false,
+		"get_disk_smart_capabilities":           false,
+		"get_disk_health":                       false,
+		"get_disk_smart_attributes":             false,
+		"get_universal_search_capabilities":     false,
+		"get_universal_search_folders":          false,
+		"get_universal_search_status":           false,
+		"get_hardware_capabilities":             false,
+		"get_hardware_general":                  false,
+		"get_hardware_power_schedule":           false,
+		"get_hardware_power_recovery":           false,
+		"get_hardware_ups":                      false,
+		"get_directory_capabilities":            false,
+		"get_directory_status":                  false,
+		"get_directory_users":                   false,
+		"get_directory_groups":                  false,
+		"get_kmip_capabilities":                 false,
+		"get_kmip_status":                       false,
 		"get_drive_admin_capabilities":          false,
 		"get_drive_admin_status":                false,
 		"get_drive_admin_connections":           false,
@@ -188,6 +205,9 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"get_hyper_backup_lun_backups":          false,
 		"plan_hyper_backup_lun_backup_create":   false,
 		"plan_hyper_backup_task_change":         false,
+		"get_task_scheduler_capabilities":       false,
+		"get_task_scheduler_tasks":              false,
+		"get_task_scheduler_triggered":          false,
 	}
 	mutationTools := map[string]bool{
 		"apply_account_plan":                   false,

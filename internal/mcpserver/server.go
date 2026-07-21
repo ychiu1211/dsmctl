@@ -1057,9 +1057,59 @@ type getNotificationHistoryOutput struct {
 	History synology.NotificationHistoryState `json:"history" jsonschema:"One page of the DSM notification history, newest first"`
 }
 
+type getDSMUpdateInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getDSMUpdateCapabilitiesOutput struct {
+	NAS          string                         `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.DSMUpdateCapabilities `json:"capabilities" jsonschema:"Update & Restore read areas currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport   `json:"report" jsonschema:"Discovered APIs and selected DSM update compatibility backends"`
+}
+
+type getDSMUpdateStatusOutput struct {
+	NAS    string                   `json:"nas" jsonschema:"NAS profile used for the request"`
+	Status synology.DSMUpdateStatus `json:"status" jsonschema:"Local DSM update state: installed version, whether an upgrade is allowed, and any in-progress state"`
+}
+
+type getDSMUpdateAvailableOutput struct {
+	NAS       string                      `json:"nas" jsonschema:"NAS profile used for the request"`
+	Available synology.DSMUpdateAvailable `json:"available" jsonschema:"Update-server offered-update check; availability is unknown when the update server is unreachable"`
+}
+
+type getDSMUpdatePolicyOutput struct {
+	NAS    string                   `json:"nas" jsonschema:"NAS profile used for the request"`
+	Policy synology.DSMUpdatePolicy `json:"policy" jsonschema:"DSM auto-update policy"`
+}
+
+type getDSMUpdateConfigBackupOutput struct {
+	NAS          string                        `json:"nas" jsonschema:"NAS profile used for the request"`
+	ConfigBackup synology.DSMUpdateConfigBackup `json:"config_backup" jsonschema:"Configuration-backup status and history without any destination password"`
+}
+
 type getLogsOutput struct {
 	NAS  string            `json:"nas" jsonschema:"NAS profile used for the request"`
 	Logs synology.LogState `json:"logs" jsonschema:"Normalized DSM system log entries and severity counts"`
+}
+
+type getTaskSchedulerInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getTaskSchedulerCapabilitiesOutput struct {
+	NAS          string                             `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.TaskSchedulerCapabilities `json:"capabilities" jsonschema:"Task Scheduler read areas currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport       `json:"report" jsonschema:"Discovered APIs and selected Task Scheduler compatibility backends"`
+}
+
+type getTaskSchedulerTasksOutput struct {
+	NAS   string                               `json:"nas" jsonschema:"NAS profile used for the request"`
+	Tasks synology.TaskSchedulerScheduledTasks `json:"tasks" jsonschema:"Scheduled-task inventory metadata; never a task's command or script body"`
+}
+
+type getTaskSchedulerTriggeredOutput struct {
+	NAS   string                               `json:"nas" jsonschema:"NAS profile used for the request"`
+	Tasks synology.TaskSchedulerTriggeredTasks `json:"tasks" jsonschema:"Triggered-task inventory metadata; never a task's command or script body"`
 }
 
 type getResourceMonitorInput struct {
@@ -1091,6 +1141,136 @@ type getResourceMonitorCapabilitiesOutput struct {
 	NAS          string                               `json:"nas" jsonschema:"NAS profile used for the request"`
 	Capabilities synology.ResourceMonitorCapabilities `json:"capabilities" jsonschema:"Resource Monitor operations currently exposed by dsmctl"`
 	Report       synology.CompatibilityReport         `json:"report" jsonschema:"Discovered APIs and selected Resource Monitor compatibility backends"`
+}
+
+type getDiskSMARTInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getDiskSMARTCapabilitiesOutput struct {
+	NAS          string                        `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.DiskSMARTCapabilities `json:"capabilities" jsonschema:"Disk-SMART read areas currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport  `json:"report" jsonschema:"Discovered APIs and selected disk-SMART compatibility backends"`
+}
+
+type getDiskHealthOutput struct {
+	NAS    string                   `json:"nas" jsonschema:"NAS profile used for the request"`
+	Health synology.DiskHealthState `json:"health" jsonschema:"Per-disk health, lifespan, and coarse self-test state plus global warning thresholds"`
+}
+
+type getDiskSMARTAttributesOutput struct {
+	NAS   string                  `json:"nas" jsonschema:"NAS profile used for the request"`
+	SMART synology.DiskSMARTState `json:"smart" jsonschema:"Per-disk SMART attribute tables, summaries, and self-test status"`
+}
+
+type getUniversalSearchInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getUniversalSearchCapabilitiesOutput struct {
+	NAS          string                               `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.UniversalSearchCapabilities `json:"capabilities" jsonschema:"Universal Search read areas currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport         `json:"report" jsonschema:"Discovered APIs and selected Universal Search compatibility backends"`
+}
+
+type getUniversalSearchFoldersOutput struct {
+	NAS     string                                 `json:"nas" jsonschema:"NAS profile used for the request"`
+	Folders synology.UniversalSearchIndexedFolders `json:"folders" jsonschema:"Universal Search indexed-folder list"`
+}
+
+type getUniversalSearchStatusOutput struct {
+	NAS    string                              `json:"nas" jsonschema:"NAS profile used for the request"`
+	Status synology.UniversalSearchIndexStatus `json:"status" jsonschema:"Overall Universal Search index daemon status"`
+}
+
+type getHardwareInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getHardwareCapabilitiesOutput struct {
+	NAS          string                        `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.HardwareCapabilities `json:"capabilities" jsonschema:"Hardware & Power read areas currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport  `json:"report" jsonschema:"Discovered APIs and selected Hardware & Power compatibility backends"`
+}
+
+type getHardwareGeneralOutput struct {
+	NAS     string                        `json:"nas" jsonschema:"NAS profile used for the request"`
+	General synology.HardwareGeneralState `json:"general" jsonschema:"Beep control, fan-speed mode, and LED brightness/schedule; model-absent areas are omitted"`
+}
+
+type getHardwarePowerScheduleOutput struct {
+	NAS      string                              `json:"nas" jsonschema:"NAS profile used for the request"`
+	Schedule synology.HardwarePowerScheduleState `json:"schedule" jsonschema:"Scheduled power on/off tasks"`
+}
+
+type getHardwarePowerRecoveryOutput struct {
+	NAS      string                              `json:"nas" jsonschema:"NAS profile used for the request"`
+	Recovery synology.HardwarePowerRecoveryState `json:"recovery" jsonschema:"After-power-loss behavior and per-NIC Wake-on-LAN state"`
+}
+
+type getHardwareUPSOutput struct {
+	NAS string                    `json:"nas" jsonschema:"NAS profile used for the request"`
+	UPS synology.HardwareUPSState `json:"ups" jsonschema:"UPS configuration and live status; reports the no-device path when no UPS is attached"`
+}
+
+type getExternalDeviceInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getExternalDeviceCapabilitiesOutput struct {
+	NAS          string                              `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.ExternalDeviceCapabilities `json:"capabilities" jsonschema:"External Devices read areas currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport        `json:"report" jsonschema:"Discovered APIs and selected External Devices compatibility backends"`
+}
+
+type getExternalStorageOutput struct {
+	NAS     string                        `json:"nas" jsonschema:"NAS profile used for the request"`
+	Storage synology.ExternalStorageState `json:"storage" jsonschema:"Attached USB and eSATA external disks; a bus whose API is absent is omitted"`
+}
+
+type getExternalPrintersOutput struct {
+	NAS      string                        `json:"nas" jsonschema:"NAS profile used for the request"`
+	Printers synology.ExternalPrinterState `json:"printers" jsonschema:"Connected printers and the Bonjour/AirPrint sharing toggle"`
+}
+
+type getDirectoryInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getDirectoryCapabilitiesOutput struct {
+	NAS          string                         `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.DirectoryCapabilities `json:"capabilities" jsonschema:"Directory (Domain/LDAP) read areas currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport   `json:"report" jsonschema:"Discovered APIs and selected directory compatibility backends"`
+}
+
+type getDirectoryStatusOutput struct {
+	NAS    string                   `json:"nas" jsonschema:"NAS profile used for the request"`
+	Status synology.DirectoryStatus `json:"status" jsonschema:"Directory-client status: AD domain membership and/or LDAP bind, with non-secret configuration"`
+}
+
+type getDirectoryUsersOutput struct {
+	NAS   string                  `json:"nas" jsonschema:"NAS profile used for the request"`
+	Users synology.DirectoryUsers `json:"users" jsonschema:"Synced domain/LDAP users, scoped to the active mode"`
+}
+
+type getDirectoryGroupsOutput struct {
+	NAS    string                   `json:"nas" jsonschema:"NAS profile used for the request"`
+	Groups synology.DirectoryGroups `json:"groups" jsonschema:"Synced domain/LDAP groups, scoped to the active mode"`
+}
+
+type getKMIPInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getKMIPCapabilitiesOutput struct {
+	NAS          string                       `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.KMIPCapabilities    `json:"capabilities" jsonschema:"KMIP read surface currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport `json:"report" jsonschema:"Discovered APIs and the selected KMIP compatibility backend"`
+}
+
+type getKMIPStatusOutput struct {
+	NAS    string              `json:"nas" jsonschema:"NAS profile used for the request"`
+	Status synology.KMIPStatus `json:"status" jsonschema:"KMIP role/status: local server and external client configuration with non-secret certificate bindings"`
 }
 
 type planResourceRecordingChangeInput struct {
@@ -3590,6 +3770,110 @@ func New(service *application.Service, version string) *mcp.Server {
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_task_scheduler_capabilities",
+		Title:       "Get Task Scheduler capabilities",
+		Description: "Report which DSM Task Scheduler read areas (scheduled tasks, triggered tasks) are available for a NAS and the DSM API backend selected for each. Scheduled and triggered tasks are independent DSM API families. Read-only.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getTaskSchedulerInput) (*mcp.CallToolResult, getTaskSchedulerCapabilitiesOutput, error) {
+		result, err := service.GetTaskSchedulerCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getTaskSchedulerCapabilitiesOutput{}, err
+		}
+		return nil, getTaskSchedulerCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_task_scheduler_tasks",
+		Title:       "List scheduled tasks",
+		Description: "List DSM scheduled tasks (Control Panel > Task Scheduler): for each task its id, name, normalized type, enabled state, run-as identity (flagged when privileged/root), schedule, next run time, and last-run status. Inventory metadata only: a task's command or script body is never returned by this tool. This tool never creates, edits, enables, runs, or deletes a task.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getTaskSchedulerInput) (*mcp.CallToolResult, getTaskSchedulerTasksOutput, error) {
+		result, err := service.GetTaskSchedulerScheduled(ctx, input.NAS)
+		if err != nil {
+			return nil, getTaskSchedulerTasksOutput{}, err
+		}
+		return nil, getTaskSchedulerTasksOutput{NAS: result.NAS, Tasks: result.Tasks}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_task_scheduler_triggered",
+		Title:       "List triggered tasks",
+		Description: "List DSM triggered tasks (boot-up, shutdown, and event-triggered tasks): for each its name, trigger event, enabled state, and run-as identity (flagged when privileged/root). Inventory metadata only: a task's command or script body is never returned. This tool never creates, edits, enables, runs, or deletes a task.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getTaskSchedulerInput) (*mcp.CallToolResult, getTaskSchedulerTriggeredOutput, error) {
+		result, err := service.GetTaskSchedulerTriggered(ctx, input.NAS)
+		if err != nil {
+			return nil, getTaskSchedulerTriggeredOutput{}, err
+		}
+		return nil, getTaskSchedulerTriggeredOutput{NAS: result.NAS, Tasks: result.Tasks}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_dsm_update_capabilities",
+		Title:       "Get DSM Update & Restore capabilities",
+		Description: "Report which DSM Update & Restore read areas (local update status, update-server offered-update check, auto-update policy, configuration backup) are available for a NAS and the DSM API backend selected for each. Each area is independent. This tool never installs a DSM update or restores a configuration.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDSMUpdateInput) (*mcp.CallToolResult, getDSMUpdateCapabilitiesOutput, error) {
+		result, err := service.GetDSMUpdateCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getDSMUpdateCapabilitiesOutput{}, err
+		}
+		return nil, getDSMUpdateCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_dsm_update_status",
+		Title:       "Get DSM update status",
+		Description: "Read the installed DSM version/build and the local update state (whether an upgrade is allowed and any in-progress download/install state). Side-effect-free: this does not contact the update server, install an update, or change any setting.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDSMUpdateInput) (*mcp.CallToolResult, getDSMUpdateStatusOutput, error) {
+		result, err := service.GetDSMUpdateStatus(ctx, input.NAS)
+		if err != nil {
+			return nil, getDSMUpdateStatusOutput{}, err
+		}
+		return nil, getDSMUpdateStatusOutput{NAS: result.NAS, Status: result.Status}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_dsm_update_available",
+		Title:       "Check for an available DSM update",
+		Description: "Check the update server for an offered DSM update and report whether one is available, plus any offered-version and restart/criticality details DSM returns. This performs a network egress to Synology's update server; if the server is unreachable, availability is reported as unknown rather than failing. It never downloads or installs an update.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDSMUpdateInput) (*mcp.CallToolResult, getDSMUpdateAvailableOutput, error) {
+		result, err := service.GetDSMUpdateAvailable(ctx, input.NAS)
+		if err != nil {
+			return nil, getDSMUpdateAvailableOutput{}, err
+		}
+		return nil, getDSMUpdateAvailableOutput{NAS: result.NAS, Available: result.Available}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_dsm_update_policy",
+		Title:       "Get DSM auto-update policy",
+		Description: "Read the DSM auto-update policy: whether automatic update is enabled, which updates are auto-installed (such as important/security only), whether updates auto-download, the update channel, and the scheduled maintenance window. This tool never changes the policy.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDSMUpdateInput) (*mcp.CallToolResult, getDSMUpdatePolicyOutput, error) {
+		result, err := service.GetDSMUpdatePolicy(ctx, input.NAS)
+		if err != nil {
+			return nil, getDSMUpdatePolicyOutput{}, err
+		}
+		return nil, getDSMUpdatePolicyOutput{NAS: result.NAS, Policy: result.Policy}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_dsm_update_config_backup",
+		Title:       "Get DSM configuration-backup status",
+		Description: "Read the DSM configuration-backup status: whether scheduled backup to the Synology account is enabled, the destination account and encryption mode, the last-backup result, and the stored backup history (times, DSM versions, host/model). The destination account password is never returned. This tool never runs, changes, or restores a backup.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDSMUpdateInput) (*mcp.CallToolResult, getDSMUpdateConfigBackupOutput, error) {
+		result, err := service.GetDSMUpdateConfigBackup(ctx, input.NAS)
+		if err != nil {
+			return nil, getDSMUpdateConfigBackupOutput{}, err
+		}
+		return nil, getDSMUpdateConfigBackupOutput{NAS: result.NAS, ConfigBackup: result.ConfigBackup}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_resource_monitor_capabilities",
 		Title:       "Get Resource Monitor capabilities",
 		Description: "Report whether current utilization and recorded history can be read and whether history recording can be toggled, plus the DSM backend selected for each operation.",
@@ -3639,6 +3923,266 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getResourceRecordingSettingOutput{}, err
 		}
 		return nil, getResourceRecordingSettingOutput{NAS: result.NAS, Setting: result.Setting}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_disk_smart_capabilities",
+		Title:       "Get disk SMART capabilities",
+		Description: "Report which per-disk health and S.M.A.R.T. read areas (disk health/lifespan, SMART attribute tables, global warning thresholds) are available for a NAS and the DSM API backend selected for each. Each area is gated independently.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDiskSMARTInput) (*mcp.CallToolResult, getDiskSMARTCapabilitiesOutput, error) {
+		result, err := service.GetDiskSMARTCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getDiskSMARTCapabilitiesOutput{}, err
+		}
+		return nil, getDiskSMARTCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_disk_health",
+		Title:       "Get per-disk health",
+		Description: "Read Storage Manager's per-physical-disk health: overall health status, SSD remaining-life/wear, spare-block/bad-sector detail, temperature, whether a SMART self-test is running, and the global disk-health warning thresholds. This complements storage inventory, which carries no per-disk lifespan or self-test detail. This tool never changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDiskSMARTInput) (*mcp.CallToolResult, getDiskHealthOutput, error) {
+		result, err := service.GetDiskHealth(ctx, input.NAS)
+		if err != nil {
+			return nil, getDiskHealthOutput{}, err
+		}
+		return nil, getDiskHealthOutput{NAS: result.NAS, Health: result.Health}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_disk_smart_attributes",
+		Title:       "Get disk SMART attributes",
+		Description: "Read the full S.M.A.R.T. attribute table (id, name, current/worst/threshold/raw values, pass-fail status) for each installed disk, plus a per-disk health summary and self-test status. A disk that exposes no attribute table (many enterprise SSDs, NVMe/SATADOM/M.2, and USB devices) is reported as having no SMART data rather than erroring. This tool never starts a SMART test or changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDiskSMARTInput) (*mcp.CallToolResult, getDiskSMARTAttributesOutput, error) {
+		result, err := service.GetDiskSMARTAttributes(ctx, input.NAS)
+		if err != nil {
+			return nil, getDiskSMARTAttributesOutput{}, err
+		}
+		return nil, getDiskSMARTAttributesOutput{NAS: result.NAS, SMART: result.SMART}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_universal_search_capabilities",
+		Title:       "Get Universal Search capabilities",
+		Description: "Report which Universal Search (SynoFinder) file-index reads (indexed-folder list, overall index status) are available for a NAS and the DSM API backend selected for each, with package evidence (installed / version / running). The module is gated on the installed Universal Search package and fails closed when it is absent.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getUniversalSearchInput) (*mcp.CallToolResult, getUniversalSearchCapabilitiesOutput, error) {
+		result, err := service.GetUniversalSearchCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getUniversalSearchCapabilitiesOutput{}, err
+		}
+		return nil, getUniversalSearchCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_universal_search_folders",
+		Title:       "Get Universal Search indexed folders",
+		Description: "List the folders in the Synology Universal Search file index: each folder's path (identifier), display name, owning app, paused state, and which content categories (audio/video/photo/document) are indexed. Requires the Universal Search package to be installed. This tool never changes the index or DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getUniversalSearchInput) (*mcp.CallToolResult, getUniversalSearchFoldersOutput, error) {
+		result, err := service.GetUniversalSearchFolders(ctx, input.NAS)
+		if err != nil {
+			return nil, getUniversalSearchFoldersOutput{}, err
+		}
+		return nil, getUniversalSearchFoldersOutput{NAS: result.NAS, Folders: result.Folders}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_universal_search_status",
+		Title:       "Get Universal Search index status",
+		Description: "Read the overall Synology Universal Search index daemon status: whether the file-content and search-term indexes are idle (finished) or currently working, plus a progress percentage when the running index reports one. Requires the Universal Search package to be installed. This tool never changes the index or DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getUniversalSearchInput) (*mcp.CallToolResult, getUniversalSearchStatusOutput, error) {
+		result, err := service.GetUniversalSearchStatus(ctx, input.NAS)
+		if err != nil {
+			return nil, getUniversalSearchStatusOutput{}, err
+		}
+		return nil, getUniversalSearchStatusOutput{NAS: result.NAS, Status: result.Status}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_hardware_capabilities",
+		Title:       "Get Hardware & Power capabilities",
+		Description: "Report which Control Panel Hardware & Power read areas (beep control, fan-speed mode, LED brightness, power schedule, power recovery, UPS) are available for a NAS and the DSM API backend selected for each. Each area is model dependent and gated independently.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getHardwareInput) (*mcp.CallToolResult, getHardwareCapabilitiesOutput, error) {
+		result, err := service.GetHardwareCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getHardwareCapabilitiesOutput{}, err
+		}
+		return nil, getHardwareCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_hardware_general",
+		Title:       "Get general hardware settings",
+		Description: "Read the general Hardware & Power comfort settings: the per-event beep-control flags (fan failure, power on/off, volume/cache crash, and so on with each event's model-support flag), the fan-speed mode, and the LED brightness and weekly schedule. Every field is model dependent; areas the model does not expose are omitted, not invented. This tool never changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getHardwareInput) (*mcp.CallToolResult, getHardwareGeneralOutput, error) {
+		result, err := service.GetHardwareGeneral(ctx, input.NAS)
+		if err != nil {
+			return nil, getHardwareGeneralOutput{}, err
+		}
+		return nil, getHardwareGeneralOutput{NAS: result.NAS, General: result.General}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_hardware_power_schedule",
+		Title:       "Get scheduled power on/off tasks",
+		Description: "Read the Control Panel Hardware & Power scheduled power-on and power-off tasks (enable flag, time of day, and weekday mask) and how many are enabled. A power-off task makes the NAS unreachable at its scheduled time. This tool reads the schedule only and never changes it.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getHardwareInput) (*mcp.CallToolResult, getHardwarePowerScheduleOutput, error) {
+		result, err := service.GetHardwarePowerSchedule(ctx, input.NAS)
+		if err != nil {
+			return nil, getHardwarePowerScheduleOutput{}, err
+		}
+		return nil, getHardwarePowerScheduleOutput{NAS: result.NAS, Schedule: result.Schedule}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_hardware_power_recovery",
+		Title:       "Get power-recovery behavior",
+		Description: "Read the after-power-loss behavior (whether the NAS restores its previous power state or stays off and needs a manual power-on) and the per-NIC Wake-on-LAN enable state. This tool reads the policy only and never changes it.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getHardwareInput) (*mcp.CallToolResult, getHardwarePowerRecoveryOutput, error) {
+		result, err := service.GetHardwarePowerRecovery(ctx, input.NAS)
+		if err != nil {
+			return nil, getHardwarePowerRecoveryOutput{}, err
+		}
+		return nil, getHardwarePowerRecoveryOutput{NAS: result.NAS, Recovery: result.Recovery}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_hardware_ups",
+		Title:       "Get UPS configuration and status",
+		Description: "Read the uninterruptible-power-supply configuration and live status: whether UPS integration is enabled, the mode (local USB, SNMP, or network slave), whether a USB UPS is attached with its battery charge/runtime, the safe-shutdown threshold, and the network-UPS-server enable and permitted-slave allow-list. The API is present even with no UPS attached, in which case the no-device path is reported. UPS authentication material is reported only as configured or not, never as a value. This tool never changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getHardwareInput) (*mcp.CallToolResult, getHardwareUPSOutput, error) {
+		result, err := service.GetHardwareUPS(ctx, input.NAS)
+		if err != nil {
+			return nil, getHardwareUPSOutput{}, err
+		}
+		return nil, getHardwareUPSOutput{NAS: result.NAS, UPS: result.UPS}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_external_device_capabilities",
+		Title:       "Get External Devices capabilities",
+		Description: "Report which Control Panel External Devices read areas (USB external storage, eSATA external storage, printers, and the Bonjour/AirPrint printer-sharing toggle) are available for a NAS and the DSM API backend selected for each. Each area is gated independently; a model with no eSATA port or no printer support reports that area unsupported without disabling the others. UPS is not part of this module (it is Hardware & Power).",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getExternalDeviceInput) (*mcp.CallToolResult, getExternalDeviceCapabilitiesOutput, error) {
+		result, err := service.GetExternalDeviceCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getExternalDeviceCapabilitiesOutput{}, err
+		}
+		return nil, getExternalDeviceCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_external_storage",
+		Title:       "Get attached external disks",
+		Description: "Read the attached external storage devices on both buses — USB and eSATA — with each device's identity, size, and status and its partitions (filesystem, size, usage, mount point, and any auto-created share). Each bus is gated independently; a bus whose DSM API is absent is omitted and a bus with no disk attached reports an empty list. This tool reads inventory only and never ejects, formats, or modifies any device.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getExternalDeviceInput) (*mcp.CallToolResult, getExternalStorageOutput, error) {
+		result, err := service.GetExternalStorage(ctx, input.NAS)
+		if err != nil {
+			return nil, getExternalStorageOutput{}, err
+		}
+		return nil, getExternalStorageOutput{NAS: result.NAS, Storage: result.Storage}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_external_printers",
+		Title:       "Get connected printers",
+		Description: "Read the printers DSM has enumerated (id, name, connection type, status, default flag, and queued-job count) and the global Bonjour/AirPrint printer-sharing toggle. The printer API is present even when no printer is attached, in which case the list is empty. This tool reads printer state only and never changes printer settings or clears the spooler.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getExternalDeviceInput) (*mcp.CallToolResult, getExternalPrintersOutput, error) {
+		result, err := service.GetExternalPrinters(ctx, input.NAS)
+		if err != nil {
+			return nil, getExternalPrintersOutput{}, err
+		}
+		return nil, getExternalPrintersOutput{NAS: result.NAS, Printers: result.Printers}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_directory_capabilities",
+		Title:       "Get directory service capabilities",
+		Description: "Report which Control Panel Domain/LDAP (directory-client) read areas (AD domain status, LDAP client status, synced users, synced groups) are available for a NAS and the DSM API backend selected for each. AD and LDAP are gated independently; a missing API family is reported as not supported without disabling the others.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDirectoryInput) (*mcp.CallToolResult, getDirectoryCapabilitiesOutput, error) {
+		result, err := service.GetDirectoryCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getDirectoryCapabilitiesOutput{}, err
+		}
+		return nil, getDirectoryCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_directory_status",
+		Title:       "Get directory service status",
+		Description: "Read the Control Panel Domain/LDAP directory-client status: whether the NAS is joined to an Active Directory domain or bound to an LDAP server (mode ad/ldap/none), and each area's non-secret configuration (joined domain, workgroup, DNS/domain controller, LDAP server address, base DN, encryption, profile). Bind/join passwords, password hashes, and Kerberos keytab material are never surfaced. This tool never changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDirectoryInput) (*mcp.CallToolResult, getDirectoryStatusOutput, error) {
+		result, err := service.GetDirectoryStatus(ctx, input.NAS)
+		if err != nil {
+			return nil, getDirectoryStatusOutput{}, err
+		}
+		return nil, getDirectoryStatusOutput{NAS: result.NAS, Status: result.Status}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_directory_users",
+		Title:       "Get synced directory users",
+		Description: "List the synced Active Directory / LDAP users, scoped to the NAS's active directory mode (empty when the NAS is neither joined nor bound). These principals are owned by the directory server and are read-only here; only non-secret identity fields (name, uid, description) are returned. This tool never changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDirectoryInput) (*mcp.CallToolResult, getDirectoryUsersOutput, error) {
+		result, err := service.GetDirectoryUsers(ctx, input.NAS)
+		if err != nil {
+			return nil, getDirectoryUsersOutput{}, err
+		}
+		return nil, getDirectoryUsersOutput{NAS: result.NAS, Users: result.Users}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_directory_groups",
+		Title:       "Get synced directory groups",
+		Description: "List the synced Active Directory / LDAP groups, scoped to the NAS's active directory mode (empty when the NAS is neither joined nor bound). Read-only; only non-secret identity fields (name, gid, description) are returned. This tool never changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDirectoryInput) (*mcp.CallToolResult, getDirectoryGroupsOutput, error) {
+		result, err := service.GetDirectoryGroups(ctx, input.NAS)
+		if err != nil {
+			return nil, getDirectoryGroupsOutput{}, err
+		}
+		return nil, getDirectoryGroupsOutput{NAS: result.NAS, Groups: result.Groups}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_kmip_capabilities",
+		Title:       "Get KMIP capabilities",
+		Description: "Report whether the KMIP (Key Management Interoperability Protocol) status read is available for a NAS and the DSM API backend selected, plus whether the NAS itself advertises KMIP support (DSM support_kmip). KMIP is DSM-core (Storage Manager, SYNO.Storage.CGI.KMIP); a DSM build without the family is reported as not supported without disabling other modules. This tool never changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getKMIPInput) (*mcp.CallToolResult, getKMIPCapabilitiesOutput, error) {
+		result, err := service.GetKMIPCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getKMIPCapabilitiesOutput{}, err
+		}
+		return nil, getKMIPCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_kmip_status",
+		Title:       "Get KMIP status",
+		Description: "Read the Control Panel / Storage Manager KMIP status: whether this NAS runs a local KMIP server (holding keys for other Synology devices) and/or acts as a KMIP client escrowing its own keys to an external KMIP server, the external server it targets, last-connection health, and the non-secret certificate identities bound to each role. Private keys, escrowed/wrapped key material, pre-shared secrets, and client credentials are never surfaced. A NAS that reports KMIP as unsupported reads successfully as the disabled state. This tool never changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getKMIPInput) (*mcp.CallToolResult, getKMIPStatusOutput, error) {
+		result, err := service.GetKMIPStatus(ctx, input.NAS)
+		if err != nil {
+			return nil, getKMIPStatusOutput{}, err
+		}
+		return nil, getKMIPStatusOutput{NAS: result.NAS, Status: result.Status}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

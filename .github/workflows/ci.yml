@@ -34,6 +34,9 @@ jobs:
             exit 1
           fi
           echo "no live-test environment variables set; integration live tests will skip"
+      - name: Guard against real internal-lab data in fixtures
+        shell: bash
+        run: bash scripts/check-no-lab-data.sh
       - name: Resolve and verify shared source version
         shell: bash
         run: |

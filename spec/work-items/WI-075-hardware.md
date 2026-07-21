@@ -1,7 +1,7 @@
 ---
 id: WI-075
 title: Hardware, power and UPS
-status: proposed
+status: in_progress
 priority: P3
 owner: ""
 depends_on: [WI-006]
@@ -143,15 +143,15 @@ requested fields took effect** (DSM silently ignores some fields):
 
 ## Acceptance criteria
 
-- [ ] Slice A: `hardware capabilities|general|power-schedule|power-recovery|ups`
+- [x] Slice A: `hardware capabilities|general|power-schedule|power-recovery|ups`
       (CLI) and the matching `get_*` MCP tools return normalized state with
       semantic field names; model-absent fields are reported not-supported, not
       invented.
-- [ ] Independent gating: each area selects its own backend and is skipped
+- [x] Independent gating: each area selects its own backend and is skipped
       (null / not-supported) when its API or device is absent; a missing area
       does not disable the others; capabilities report the selected backend,
       API, and version per operation.
-- [ ] Slice A live verification on the DSM 7.3 lab: read beep/fan/LED, the power
+- [x] Slice A live verification on the DSM 7.3 lab: read beep/fan/LED, the power
       schedule, power-recovery behavior, and UPS state (including the
       no-UPS-attached path) via read-only probe.
 - [ ] Slice B `comfort` scope (low risk): beep/fan/LED via guarded hash-bound

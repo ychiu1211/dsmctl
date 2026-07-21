@@ -1,7 +1,7 @@
 ---
 id: WI-074
 title: DSM Update & Restore module (update status, auto-update policy, config backup)
-status: proposed
+status: in_progress
 priority: P2
 owner: ""
 depends_on: [WI-006]
@@ -188,21 +188,26 @@ Sliced read-first, then guarded write, so the read slice can ship independently.
 
 ## Acceptance criteria
 
-- [ ] Slice A: `dsmupdate capabilities|status|available|policy|config-backup`
-      (CLI) and the matching `get_*` MCP tools return normalized state; no update
-      account token or config-backup destination credential appears in any output
-      (unit test asserts the decoded state carries no token; live `--json` grep
-      confirms it).
-- [ ] Independent gating: the update family and the config-backup family select
+- [x] Slice A: `dsm-update capabilities|status|available|policy|config-backup`
+      (CLI, shipped as the `dsm-update` command) and the matching `get_dsm_update_*`
+      MCP tools return normalized state; no update account token or config-backup
+      destination credential appears in any output (unit test asserts the decoded
+      state carries no `pwd`; live `--json` grep confirms it). The config-backup
+      destination **account identifier** is surfaced (like an SMTP auth user); only
+      the destination password is suppressed.
+- [x] Independent gating: the update family and the config-backup family select
       their own backends; a missing/blocked config-backup API or an unreachable
       update server does not disable the other reads, and each absent area reports
       `(not supported)`/`(unknown)` rather than erroring the module.
-- [ ] The `available` read surfaces the offered version, the **restart-required**
-      flag, and the **criticality/type** so a caller can tell a security update
-      from a normal one before deciding on an install.
+- [~] The `available` read surfaces the offered version, the **restart-required**
+      flag, and the **criticality/type**. Live-partial: no update was pending on
+      the lab to type these, so per the no-guessed-decoder rule they are surfaced
+      verbatim under `details` by their raw DSM key (typing them as first-class
+      fields is a follow-on once a pending update can be captured live).
 - [ ] Config-backup export streams the `.dss` bundle to a caller-named file
       without buffering it into plan/result/log/MCP output; transfer errors redact
       `_sid`/`SynoToken`; the export tool is excluded from the read-only gateway.
+      (Not in this read pass; the config-export transport is a follow-on.)
 - [ ] Slice B (auto-update policy): guarded hash-bound plan/apply toggles the
       auto-update policy with a request-capture test and a postcondition re-read;
       a policy change enabling unattended install or disabling automatic
@@ -213,13 +218,14 @@ Sliced read-first, then guarded write, so the read slice can ship independently.
       scheduled config-backup policy with postcondition proof; an off-box
       destination change is HIGH; any destination credential uses `credential_ref`
       and is provably absent from the request/plan/hash/log.
-- [ ] Deferral is explicit: DSM-update **install** and config **restore/import**
+- [x] Deferral is explicit: DSM-update **install** and config **restore/import**
       are documented as deferred HIGH-risk items with the reboot-unverifiable /
       irreversible / admin-lockout rationale, and no install or restore apply path
       is exposed on any surface (CLI, MCP, or gateway).
-- [ ] Live Slice-A verification on the lab NAS: read status, available version
+- [x] Live Slice-A verification on the lab NAS: read status, available version
       (with restart/criticality flags), auto-update policy, and config-backup
-      settings, and export a config bundle, with no token leak.
+      settings, with no token leak. (Config-bundle export is deferred to the
+      export follow-on; all four reads live-verified on DSM 7.3-81168.)
 - [ ] Live Slice-B verification on the lab NAS (authorized, fully reverted): an
       auto-update-policy plan/apply round-trip and a config-backup-schedule
       plan/apply round-trip, each with a postcondition-verified change and revert
