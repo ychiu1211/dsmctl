@@ -39,7 +39,7 @@ func TestInfoDecodesLiveShape(t *testing.T) {
 	executor := &capturingExecutor{responses: map[string]json.RawMessage{
 		InfoAPIName: json.RawMessage(`{
 			"cameraNumber":0,"maxCameraSupport":75,"liscenseNumber":2,
-			"hostname":"Derek_3018xs","timezone":"Taipei",
+			"hostname":"test-nas","timezone":"Taipei",
 			"version":{"major":"9","minor":"2","small":"5","build":"11979"}
 		}`),
 	}}
@@ -47,7 +47,7 @@ func TestInfoDecodesLiveShape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExecuteInfo() error = %v", err)
 	}
-	if selection.Backend != "surveillance-info-v1" || info.Version != "9.2.5-11979" || info.Hostname != "Derek_3018xs" ||
+	if selection.Backend != "surveillance-info-v1" || info.Version != "9.2.5-11979" || info.Hostname != "test-nas" ||
 		info.CameraNumber != 0 || info.MaxCameraSupport != 75 || info.LicenseNumber != 2 || info.Timezone != "Taipei" {
 		t.Fatalf("info = %#v", info)
 	}

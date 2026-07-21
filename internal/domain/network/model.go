@@ -169,5 +169,7 @@ type Capabilities struct {
 	BondFieldsWireUnverified  bool   `json:"bond_fields_wire_unverified" jsonschema:"True while the per-bond mode/member field decoding is unverified (no bond existed on the lab to confirm the DSM field names)"`
 	RouteFieldsWireUnverified bool   `json:"route_fields_wire_unverified" jsonschema:"True while the per-route field decoding is unverified (the lab has no static routes; the method returned code 4302)"`
 	IPv6FieldsWireUnverified  bool   `json:"ipv6_fields_wire_unverified" jsonschema:"True while the per-interface IPv6 element decoding is unverified (IPv6 was off on every lab NIC)"`
-	Mutations                 bool   `json:"mutations" jsonschema:"Whether any guarded write is available (false: this is the read-only slice)"`
+	GeneralWrite              bool   `json:"general_write" jsonschema:"Whether the general network settings (hostname, DNS, default gateway) can be changed through the guarded plan/apply contract (SYNO.Core.Network set, live-confirmed)"`
+	InterfaceWriteWireUnverified bool `json:"interface_write_wire_unverified" jsonschema:"True when the per-interface write method (SYNO.Core.Network.Ethernet set) is present but its request-body shape is unverified (it returns DSM code 4302 for every probed shape). Interface changes are plan+guard only; the apply is refused"`
+	Mutations                 bool   `json:"mutations" jsonschema:"Whether any guarded write is available (the general set; interface writes are plan-only while the wire is unverified)"`
 }

@@ -62,8 +62,8 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools() error = %v", err)
 	}
-	if len(tools.Tools) != 216 {
-		t.Fatalf("ListTools() returned %d tools, want 216", len(tools.Tools))
+	if len(tools.Tools) != 228 {
+		t.Fatalf("ListTools() returned %d tools, want 228", len(tools.Tools))
 	}
 	for _, tool := range tools.Tools {
 		if scope, ok := ToolScope(tool.Name); !ok || scope == "" {
@@ -177,6 +177,13 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"get_login_portal_dsm":                  false,
 		"get_login_portal_applications":         false,
 		"get_login_portal_reverse_proxy":        false,
+		"get_hyper_backup_capabilities":         false,
+		"get_hyper_backup_tasks":                false,
+		"get_hyper_backup_task":                 false,
+		"get_hyper_backup_versions":             false,
+		"get_hyper_backup_logs":                 false,
+		"get_hyper_backup_vault":                false,
+		"plan_hyper_backup_task_change":         false,
 	}
 	mutationTools := map[string]bool{
 		"apply_account_plan":                   false,
@@ -206,6 +213,7 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"apply_snmp_plan":                             false,
 		"apply_firewall_profile_plan":                 false,
 		"apply_firewall_enable_plan":                  false,
+		"apply_hyper_backup_task_plan":                false,
 	}
 	for _, tool := range tools.Tools {
 		if _, ok := mutationTools[tool.Name]; ok {

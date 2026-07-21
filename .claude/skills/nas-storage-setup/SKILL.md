@@ -23,8 +23,8 @@ A fresh DSM marks itself "set up" with zero volumes, so it looks finished but no
 Storage Manager just prompts for a volume. **Creating a storage pool permanently erases every
 disk it uses. Confirm with the user before any `storage apply` that creates or deletes a pool.**
 
-Live-verified on two Synology **DS918+** (4-bay): `10.17.37.51` (DSM 7.3.2, fresh all-disk
-Btrfs RAID5 created from scratch) and `10.17.36.255` (DSM 7.3.1, kept its reused pool).
+Live-verified on two Synology **DS918+** (4-bay): `192.0.2.51` (DSM 7.3.2, fresh all-disk
+Btrfs RAID5 created from scratch) and `192.0.2.255` (DSM 7.3.1, kept its reused pool).
 
 ## Relationship to nas-provision
 

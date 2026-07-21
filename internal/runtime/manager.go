@@ -95,6 +95,14 @@ type Client interface {
 	ApplyDownloadStationTaskChange(ctx context.Context, change synology.DownloadStationTaskChange) (synology.DownloadStationTaskMutationResult, error)
 	DownloadStationSettingsGroup(ctx context.Context, group string) (json.RawMessage, error)
 	ApplyDownloadStationSettingsChange(ctx context.Context, change synology.DownloadStationSettingsChange, secrets synology.DownloadStationSettingsSecrets) (synology.DownloadStationSettingsMutationResult, error)
+	HyperBackupTasks(ctx context.Context) (synology.HyperBackupTasks, error)
+	HyperBackupTaskDetail(ctx context.Context, taskID int) (synology.HyperBackupTaskDetail, error)
+	HyperBackupTaskStatus(ctx context.Context, taskID int) (synology.HyperBackupTaskStatus, error)
+	HyperBackupVersions(ctx context.Context, taskID, offset, limit int) (synology.HyperBackupVersions, error)
+	HyperBackupLogs(ctx context.Context, offset, limit int) (synology.HyperBackupLogs, error)
+	HyperBackupVault(ctx context.Context) (synology.HyperBackupVault, error)
+	HyperBackupCapabilities(ctx context.Context) (synology.HyperBackupCapabilities, synology.CompatibilityReport, error)
+	ApplyHyperBackupTaskChange(ctx context.Context, change synology.HyperBackupTaskChange) (synology.HyperBackupTaskMutationResult, error)
 }
 
 type Option func(*Manager)

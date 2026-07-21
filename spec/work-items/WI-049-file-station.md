@@ -122,7 +122,7 @@ touch existing user data).
   precondition/fingerprint/hash + staleness (phases 3+); multipart body order and
   download content-type branch (phase 2).
 - `go build ./...`, `go vet ./...`, `go test ./... -count=1`.
-- Live on the DSM 7.3 lab (`10.17.36.235`), reads against real shares and
+- Live on the DSM 7.3 lab (`192.0.2.235`), reads against real shares and
   mutations against `dsmctl-e2e-*` scratch paths only, verified then cleaned up.
 
 ## Coordination
@@ -137,7 +137,7 @@ any concurrent client-core change.
 ## Handoff
 
 - Phase 1 complete and live-verified on the lab (default profile `lab`, DSM 7.3,
-  host `Derek_3018xs`). All reads shipped: domain models, operation variants +
+  host `test-nas`). All reads shipped: domain models, operation variants +
   tolerant decoders, façade, application methods, CLI `file` command tree, and ten
   `get_filestation_*` MCP tools (golden tool count updated 93 → 103; the five
   non-`get_` read tools were named with the `get_` prefix so the remote read-scope
@@ -145,7 +145,7 @@ any concurrent client-core change.
   "no such task" (code 599) registration race for a bounded number of early
   attempts.
 - **All phases complete and live-verified on the DSM 7.3 lab** (default profile
-  `lab`, host `Derek_3018xs`). Full read + write FileStation module shipped:
+  `lab`, host `test-nas`). Full read + write FileStation module shipped:
   reads, streaming download/upload transport, the file-tree mutation surface,
   favorites, sharing links, and background-task list, across CLI and MCP.
 - Key implementation notes for future maintainers:

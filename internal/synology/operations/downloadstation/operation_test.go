@@ -65,7 +65,7 @@ const (
 	statisticBody = `{"speed_download":0,"speed_upload":0}`
 	tasksEmpty    = `{"offset":0,"tasks":[],"total":0}`
 	// A populated task with "size" as a quoted string exercises flexInt64.
-	tasksBody = `{"offset":0,"total":1,"tasks":[{"id":"dbid_1","type":"http","username":"deryck","title":"file.iso","size":"1048576","status":"downloading","additional":{"detail":{"destination":"downloads"},"transfer":{"size_downloaded":"524288","size_uploaded":0,"speed_download":1000,"speed_upload":0}}}]}`
+	tasksBody = `{"offset":0,"total":1,"tasks":[{"id":"dbid_1","type":"http","username":"testuser","title":"file.iso","size":"1048576","status":"downloading","additional":{"detail":{"destination":"downloads"},"transfer":{"size_downloaded":"524288","size_uploaded":0,"speed_download":1000,"speed_upload":0}}}]}`
 )
 
 func TestServiceComposesInfoConfigSchedule(t *testing.T) {

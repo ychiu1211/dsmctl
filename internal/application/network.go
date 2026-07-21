@@ -39,6 +39,11 @@ type networkClient interface {
 	NetworkBonds(context.Context) ([]synology.NetworkBond, error)
 	NetworkRoutes(context.Context) (synology.NetworkRouteTable, error)
 	NetworkCapabilities(context.Context) (synology.NetworkCapabilities, synology.CompatibilityReport, error)
+	NetworkGeneralFresh(context.Context) (synology.NetworkGeneral, error)
+	NetworkTransportInfo() synology.NetworkTransport
+	NetworkCurrentSources(context.Context) []string
+	ApplyNetworkGeneralChange(context.Context, synology.NetworkGeneralChange) (synology.NetworkMutationResult, error)
+	ApplyNetworkInterfaceChange(context.Context, synology.NetworkInterfaceChange) (synology.NetworkMutationResult, error)
 }
 
 func (s *Service) GetNetworkGeneral(ctx context.Context, requestedNAS string) (NetworkGeneralResult, error) {

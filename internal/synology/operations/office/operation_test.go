@@ -44,7 +44,7 @@ func TestInfoReadDecodesLiveShape(t *testing.T) {
 		"ai_feedback_url":null,"gids":[100,101],"is_manager":true,
 		"is_user_event_enabled":true,"mobile_compatibility":{"major":"1","minor":"3"},
 		"schema_doc":13,"schema_mobile":2003,"schema_sheet":5,"schema_slide":13,
-		"uid":1026,"username":"deryck",
+		"uid":1026,"username":"testuser",
 		"version":{"build":"22592","hotfix":"2","major":"3","minor":"7"}
 	}`)}
 

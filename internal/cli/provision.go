@@ -93,7 +93,7 @@ func newProvisionCommand(opts *options) *cobra.Command {
 				return errors.New("--admin-user is required; the administrator username is yours to choose")
 			}
 			if !strings.HasPrefix(strings.ToLower(targetURL), "https://") {
-				return errors.New("--url must be an https URL, for example https://10.17.37.51:5001")
+				return errors.New("--url must be an https URL, for example https://192.0.2.51:5001")
 			}
 			profile := config.Profile{URL: targetURL, Username: adminUser, InsecureSkipTLSVerify: skipTLS}
 			if !skipTLS {
@@ -109,7 +109,7 @@ func newProvisionCommand(opts *options) *cobra.Command {
 		},
 	}
 	command.Flags().StringVar(&adminUser, "admin-user", "", "administrator username to create (required unless --finish-only; your choice, never generated)")
-	command.Flags().StringVar(&targetURL, "url", "", "DSM https URL of the NAS in its setup window, e.g. https://10.17.37.51:5001 (required unless --finish-only)")
+	command.Flags().StringVar(&targetURL, "url", "", "DSM https URL of the NAS in its setup window, e.g. https://192.0.2.51:5001 (required unless --finish-only)")
 	command.Flags().StringVar(&deviceName, "device-name", "", "DSM server name (hostname) to set")
 	command.Flags().StringVar(&autoUpdate, "auto-update", "security", "DSM update policy: security (auto-install security hotfixes), all, or notify")
 	command.Flags().BoolVar(&skipTLS, "insecure-skip-tls-verify", false, "accept the NAS's fresh self-signed certificate without pinning (for an explicitly isolated lab NAS)")

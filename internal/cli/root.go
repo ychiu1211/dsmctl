@@ -37,6 +37,7 @@ func New(version string) *cobra.Command {
 		newAccountCommand(opts),
 		newAccountProtectionCommand(opts),
 		newAuthCommand(opts),
+		newBackupCommand(opts),
 		newControlPanelCommand(opts),
 		newDiscoverCommand(opts),
 		newDownloadCommand(opts),

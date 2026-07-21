@@ -9,7 +9,7 @@ import (
 )
 
 const installSysCrashState = `{"success":true,"data":{"has_disk":true,"dsinfo":{
-  "model":"DS918+","serial":"17C0PDN818400","build_ver":"7.3.1-86003","disk_count":4,
+  "model":"DS918+","serial":"TESTSERIAL0002","build_ver":"7.3.1-86003","disk_count":4,
   "internet_reinstall_ok":true,"internet_reinstall_version":"DSM 7.3.1-86003","status":"sys_crash"}}}`
 
 func installStateAndTriggerServer(t *testing.T, installed *bool) *httptest.Server {

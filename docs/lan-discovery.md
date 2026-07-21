@@ -34,8 +34,8 @@ address(es), MAC, serial, and state:
 
 ```
 HOSTNAME       MODEL     OS VERSION            IP ADDRESS                  MAC                SERIAL         STATE
-office-nas     DS923+    7.3.2-86009 Update 1  10.17.32.82                 90:09:d0:41:b7:ed  2340TQRMS02XQ  ready
-lab-rack       DS3622xs+ 8.0-120105            10.17.34.112, 10.17.37.14   00:11:32:de:75:80  2090SQRZADD2F  ready
+office-nas     DS923+    7.3.2-86009 Update 1  192.0.2.82                  00:00:5E:00:53:04  TESTSERIAL0003 ready
+lab-rack       DS3622xs+ 8.0-120105            192.0.2.112, 192.0.2.14     00:00:5E:00:53:03  TESTSERIAL0004 ready
 ```
 
 `--json` emits the full `discovery.Device` model, including the netmask,

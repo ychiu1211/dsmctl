@@ -55,7 +55,7 @@ func TestExecuteCertificatesDecodesLiveShape(t *testing.T) {
 			{"id":"VUDePf","desc":"Synology QuickConnect Certificate","is_default":false,"is_broken":false,"renewable":true,
 			 "key_types":"RSA/ECC",
 			 "issuer":{"common_name":"YR2","country":"US","organization":"Let's Encrypt"},
-			 "subject":{"common_name":"derekchiu3018.direct.quickconnect.to","sub_alt_name":["*.derekchiu3018.direct.quickconnect.to","derekchiu3018.direct.quickconnect.to"]},
+			 "subject":{"common_name":"testnas3018.direct.quickconnect.to","sub_alt_name":["*.testnas3018.direct.quickconnect.to","testnas3018.direct.quickconnect.to"]},
 			 "valid_from":"Jul 14 11:51:08 2026 GMT","valid_till":"Oct 12 11:51:07 2026 GMT","user_deletable":true,
 			 "services":[{"service":"quickconnect","display_name":"QuickConnect","isPkg":false,"owner":"root","subscriber":"system"}]}
 		]

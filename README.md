@@ -150,6 +150,12 @@ dsmctl download service --nas office --json
 dsmctl download tasks --nas office
 dsmctl download statistics --nas office
 dsmctl download settings --nas office
+dsmctl backup capabilities --nas office
+dsmctl backup tasks --nas office
+dsmctl backup task 1 --nas office
+dsmctl backup versions 1 --nas office
+dsmctl backup logs --nas office
+dsmctl backup vault --nas office
 ```
 
 Download tasks are created and controlled through the same guarded plan/apply
@@ -165,6 +171,15 @@ BitTorrent settings are changed the same way (patch-only, full-object merge):
 ```console
 echo '{"bt":{"max_upload_rate":15}}' | dsmctl download settings plan --nas office -o bt.plan.json
 dsmctl download settings apply --nas office -f bt.plan.json --approve <hash-from-plan>
+```
+
+Hyper Backup tasks are run and canceled through the same contract (the plan is
+bound to the observed task state, so it goes stale if the task starts or
+finishes in the meantime):
+
+```console
+echo '{"action":"backup","task_id":1}' | dsmctl backup tasks plan --nas office -o run.plan.json
+dsmctl backup tasks apply --nas office -f run.plan.json --approve <hash-from-plan>
 ```
 
 The one External Access write so far is the QuickConnect relay toggle, through
@@ -318,6 +333,14 @@ Available tools:
 - `apply_download_station_task_plan`: apply an approved, unchanged task plan and verify the postcondition (created/paused/resumed/deleted).
 - `plan_download_station_settings_change`: validate a settings patch for exactly one group (BT, FTP/HTTP, RSS, location, scheduler, global, auto-extraction, or NZB) and return a state-bound approval plan without mutating DSM.
 - `apply_download_station_settings_plan`: apply an approved, unchanged settings plan (full-object merge) and verify each changed field.
+- `get_hyper_backup_capabilities`: report Hyper Backup read/action support and the HyperBackup + HyperBackupVault package evidence; package-gated, read-only.
+- `get_hyper_backup_tasks`: list backup tasks with state, live activity, last result, next scheduled run, and source folders; read-only.
+- `get_hyper_backup_task`: read one task's repository, transfer options, live status/progress, and destination reachability; read-only.
+- `get_hyper_backup_versions`: list the backup versions one task has produced; read-only.
+- `get_hyper_backup_logs`: read the Hyper Backup log feed with per-level totals; read-only.
+- `get_hyper_backup_vault`: read the Hyper Backup Vault view (inbound targets, parallel-session limit); requires HyperBackupVault; read-only.
+- `plan_hyper_backup_task_change`: validate a run-backup-now or cancel request and return a plan bound to the observed task state without mutating DSM.
+- `apply_hyper_backup_task_plan`: apply an approved, unchanged task plan and verify the postcondition (run started, or the running backup stopped).
 - `plan_package_change`: validate a start/stop/uninstall lifecycle action or an automatic-update settings change and return a state-bound approval plan without mutating DSM; install, update, and trust-level changes are rejected.
 - `apply_package_plan`: apply an approved, unchanged Package Center plan (lifecycle or settings) and verify the terminal package-state or settings postcondition.
 

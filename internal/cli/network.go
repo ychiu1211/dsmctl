@@ -7,17 +7,22 @@ import (
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
+
+	"github.com/ychiu1211/dsmctl/internal/application"
+	"github.com/ychiu1211/dsmctl/internal/domain/network"
 )
 
 func newNetworkCommand(opts *options) *cobra.Command {
 	command := &cobra.Command{
 		Use:     "network",
 		Aliases: []string{"net"},
-		Short:   "Inspect the DSM network configuration (Control Panel > Network)",
+		Short:   "Inspect and manage the DSM network configuration (Control Panel > Network)",
 		Long: "Read the Control Panel > Network surface: the general settings (hostname, default gateway, DNS, outbound " +
 			"proxy), the per-interface configuration and link status, link-aggregation bonds, and the static-route table. " +
-			"All commands are read-only; the connectivity-affecting writes are a deferred, guarded follow-on. The proxy " +
-			"password is never surfaced.",
+			"Reads are safe. The general settings can be changed through the guarded plan/apply contract; a mandatory " +
+			"never-sever-the-management-NIC guard refuses any change to the interface carrying dsmctl's connection or to " +
+			"the default gateway unless allow_connectivity_break is set. Interface reconfiguration is plan-only in this " +
+			"build (the DSM interface-set wire is unverified). The proxy password is never surfaced.",
 	}
 	command.AddCommand(
 		newNetworkCapabilitiesCommand(opts),
@@ -26,7 +31,135 @@ func newNetworkCommand(opts *options) *cobra.Command {
 		newNetworkBondsCommand(opts),
 		newNetworkRoutesCommand(opts),
 		newNetworkTrafficControlCommand(opts),
+		newNetworkGeneralPlanCommand(opts),
+		newNetworkGeneralApplyCommand(opts),
+		newNetworkInterfacePlanCommand(opts),
+		newNetworkInterfaceApplyCommand(opts),
 	)
+	return command
+}
+
+func newNetworkGeneralPlanCommand(opts *options) *cobra.Command {
+	var inputPath, outputPath string
+	command := &cobra.Command{
+		Use:   "general-plan",
+		Short: "Validate a general network change (hostname, DNS, default gateway) and emit an approval plan as JSON",
+		Long: "Validate a patch-only change to the Control Panel > Network > General settings and return an approval plan " +
+			"bound to the complete observed general block and the resolved management path. A default-gateway change is run " +
+			"through the never-sever guard and refused without allow_connectivity_break; hostname and DNS changes are " +
+			"medium risk. This command never mutates DSM.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var request network.GeneralChange
+			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
+				return fmt.Errorf("read network general change: %w", err)
+			}
+			service, err := loadService(opts)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			plan, err := service.PlanNetworkGeneralChange(cmd.Context(), opts.nas, request)
+			if err != nil {
+				return err
+			}
+			return encodeJSONOutput(cmd, outputPath, plan)
+		},
+	}
+	command.Flags().StringVarP(&inputPath, "file", "f", "-", "network general change JSON file, or - for stdin")
+	command.Flags().StringVarP(&outputPath, "output", "o", "-", "plan JSON file, or - for stdout")
+	return command
+}
+
+func newNetworkGeneralApplyCommand(opts *options) *cobra.Command {
+	var inputPath, approvalHash string
+	command := &cobra.Command{
+		Use:   "general-apply",
+		Short: "Apply a general network plan after hash, stale-state, and never-sever validation",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var plan application.NetworkGeneralPlan
+			if err := decodeJSONInput(cmd, inputPath, &plan); err != nil {
+				return fmt.Errorf("read network general plan: %w", err)
+			}
+			service, err := loadService(opts)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.ApplyNetworkGeneralPlan(cmd.Context(), plan, approvalHash)
+			if err != nil {
+				return err
+			}
+			return encodeIndentedJSON(cmd.OutOrStdout(), result)
+		},
+	}
+	command.Flags().StringVarP(&inputPath, "file", "f", "-", "network general plan JSON file, or - for stdin")
+	command.Flags().StringVar(&approvalHash, "approve", "", "exact SHA-256 hash printed by network general-plan")
+	_ = command.MarkFlagRequired("approve")
+	return command
+}
+
+func newNetworkInterfacePlanCommand(opts *options) *cobra.Command {
+	var inputPath, outputPath string
+	command := &cobra.Command{
+		Use:   "interface-plan",
+		Short: "Validate a per-interface change and emit an approval plan as JSON (plan-only; the apply is wire-unverified)",
+		Long: "Validate a patch-only change to one network interface (IP/netmask/gateway/DHCP/MTU) and return an approval " +
+			"plan. The never-sever guard refuses any change to the management interface (the NIC carrying dsmctl's " +
+			"connection), or ANY interface change when the connection is ambiguous (hostname/relay/NAT), unless " +
+			"allow_connectivity_break is set; a non-management NIC change is permitted (medium risk). NOTE: the DSM " +
+			"interface-set request shape is wire-unverified (DSM returns code 4302), so the apply is refused; this command " +
+			"and the guard still work. This command never mutates DSM.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var request network.InterfaceChange
+			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
+				return fmt.Errorf("read network interface change: %w", err)
+			}
+			service, err := loadService(opts)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			plan, err := service.PlanNetworkInterfaceChange(cmd.Context(), opts.nas, request)
+			if err != nil {
+				return err
+			}
+			return encodeJSONOutput(cmd, outputPath, plan)
+		},
+	}
+	command.Flags().StringVarP(&inputPath, "file", "f", "-", "network interface change JSON file, or - for stdin")
+	command.Flags().StringVarP(&outputPath, "output", "o", "-", "plan JSON file, or - for stdout")
+	return command
+}
+
+func newNetworkInterfaceApplyCommand(opts *options) *cobra.Command {
+	var inputPath, approvalHash string
+	command := &cobra.Command{
+		Use:   "interface-apply",
+		Short: "Apply an interface plan (currently refused: the DSM interface-set wire is unverified)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var plan application.NetworkInterfacePlan
+			if err := decodeJSONInput(cmd, inputPath, &plan); err != nil {
+				return fmt.Errorf("read network interface plan: %w", err)
+			}
+			service, err := loadService(opts)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.ApplyNetworkInterfacePlan(cmd.Context(), plan, approvalHash)
+			if err != nil {
+				return err
+			}
+			return encodeIndentedJSON(cmd.OutOrStdout(), result)
+		},
+	}
+	command.Flags().StringVarP(&inputPath, "file", "f", "-", "network interface plan JSON file, or - for stdin")
+	command.Flags().StringVar(&approvalHash, "approve", "", "exact SHA-256 hash printed by network interface-plan")
+	_ = command.MarkFlagRequired("approve")
 	return command
 }
 
@@ -60,6 +193,8 @@ func newNetworkCapabilitiesCommand(opts *options) *cobra.Command {
 			fmt.Fprintf(writer, "bond fields wire-unverified\t%s\n", yesNo(result.Capabilities.BondFieldsWireUnverified))
 			fmt.Fprintf(writer, "route fields wire-unverified\t%s\n", yesNo(result.Capabilities.RouteFieldsWireUnverified))
 			fmt.Fprintf(writer, "ipv6 fields wire-unverified\t%s\n", yesNo(result.Capabilities.IPv6FieldsWireUnverified))
+			fmt.Fprintf(writer, "general write\t%s\n", yesNo(result.Capabilities.GeneralWrite))
+			fmt.Fprintf(writer, "interface write wire-unverified\t%s\n", yesNo(result.Capabilities.InterfaceWriteWireUnverified))
 			fmt.Fprintf(writer, "mutations\t%s\n", yesNo(result.Capabilities.Mutations))
 			fmt.Fprintln(writer, "\nOPERATION\tSUPPORTED\tBACKEND\tAPI\tVERSION")
 			for _, op := range result.Report.Operations {

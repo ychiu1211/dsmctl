@@ -95,7 +95,9 @@ and System Administration groups first** (queued as WI-065…080).
 
 ### Not in this program (recorded for later)
 
-- **Data protection**: Hyper Backup, Snapshot Replication, Active Backup,
+- **Data protection**: Hyper Backup (pulled forward 2026-07-21 as
+  [WI-087](work-items/WI-087-hyper-backup.md): reads + guarded run/cancel;
+  the rest of the family stays here), Snapshot Replication, Active Backup,
   Cloud Sync, **Synology High Availability (SHA)**, **Shared Folder Sync**
   (server-to-server replication).
 - **Virtualization/servers**: Container Manager/Docker, Virtual Machine
