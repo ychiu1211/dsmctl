@@ -202,4 +202,5 @@ type Capabilities struct {
 	ShareConfigSet        bool            `json:"share_config_set" jsonschema:"Whether per-share snapshot configuration can be changed through guarded plan/apply"`
 	ReplicationPair       bool            `json:"replication_pair" jsonschema:"Whether the DR pairing credential API is available (requires the package)"`
 	ReplicationCreate     bool            `json:"replication_create" jsonschema:"Whether a replication relation can be created through guarded plan/apply (requires the package)"`
+	ReplicationManage     bool            `json:"replication_manage" jsonschema:"Whether an existing relation can be synced/stopped by plan id (requires the package)"`
 }

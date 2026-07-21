@@ -148,3 +148,31 @@ func (c *Client) DeleteReplicationCredential(ctx context.Context, credID string)
 	return nil
 }
 
+// SyncReplicationPlan triggers a manual sync of an existing relation by plan id.
+func (c *Client) SyncReplicationPlan(ctx context.Context, planID string, sendEncrypted bool, description string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.prepareSnapshotReplicationTargetLocked(ctx); err != nil {
+		return err
+	}
+	if _, err := snapshotops.ExecuteReplicationSync(ctx, c.target, lockedExecutor{client: c}, snapshotops.SyncInput{
+		PlanID: planID, SnapshotLocked: false, SendEncrypted: sendEncrypted, Description: description,
+	}); err != nil {
+		return fmt.Errorf("sync replication plan: %w", err)
+	}
+	return nil
+}
+
+// PauseReplicationPlan stops (pauses) replication for an existing relation.
+func (c *Client) PauseReplicationPlan(ctx context.Context, planID string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.prepareSnapshotReplicationTargetLocked(ctx); err != nil {
+		return err
+	}
+	if _, err := snapshotops.ExecuteReplicationPause(ctx, c.target, lockedExecutor{client: c}, planID); err != nil {
+		return fmt.Errorf("pause replication plan: %w", err)
+	}
+	return nil
+}
+

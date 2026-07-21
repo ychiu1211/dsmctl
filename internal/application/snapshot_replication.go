@@ -104,6 +104,8 @@ type snapshotReplicationClient interface {
 	PollReplicationTask(context.Context, string) (snapshotreplication.RelationTaskStatus, error)
 	DeleteReplicationPlan(context.Context, string) error
 	DeleteReplicationCredential(context.Context, string) error
+	SyncReplicationPlan(context.Context, string, bool, string) error
+	PauseReplicationPlan(context.Context, string) error
 }
 
 func (s *Service) snapshotReplicationClient(ctx context.Context, requestedNAS string) (string, snapshotReplicationClient, error) {
@@ -1041,10 +1043,67 @@ func (s *Service) DeleteSnapshotReplicationRelation(ctx context.Context, request
 	if err != nil {
 		return SnapshotReplicationRelationApplyResult{}, err
 	}
+	if err := requireReplicationRelation(ctx, client, name, planID); err != nil {
+		return SnapshotReplicationRelationApplyResult{}, err
+	}
 	if err := client.DeleteReplicationPlan(ctx, planID); err != nil {
 		return SnapshotReplicationRelationApplyResult{}, authenticationError(name, err)
 	}
 	return SnapshotReplicationRelationApplyResult{SourceNAS: name, PlanID: planID, Applied: true}, nil
+}
+
+// SyncSnapshotReplicationRelation triggers a manual sync of an existing relation
+// on a NAS by plan id. Guarded but not hash-bound: it targets an explicit plan
+// id and only kicks off a replication copy (reversible/idempotent in effect).
+func (s *Service) SyncSnapshotReplicationRelation(ctx context.Context, requestedNAS, planID string, sendEncrypted bool, description string) (SnapshotReplicationRelationApplyResult, error) {
+	if strings.TrimSpace(planID) == "" {
+		return SnapshotReplicationRelationApplyResult{}, fmt.Errorf("plan_id is required")
+	}
+	name, client, err := s.snapshotReplicationClient(ctx, requestedNAS)
+	if err != nil {
+		return SnapshotReplicationRelationApplyResult{}, err
+	}
+	if err := requireReplicationRelation(ctx, client, name, planID); err != nil {
+		return SnapshotReplicationRelationApplyResult{}, err
+	}
+	if err := client.SyncReplicationPlan(ctx, planID, sendEncrypted, description); err != nil {
+		return SnapshotReplicationRelationApplyResult{}, authenticationError(name, err)
+	}
+	return SnapshotReplicationRelationApplyResult{SourceNAS: name, PlanID: planID, Applied: true}, nil
+}
+
+// StopSnapshotReplicationRelation pauses replication for an existing relation on
+// a NAS by plan id.
+func (s *Service) StopSnapshotReplicationRelation(ctx context.Context, requestedNAS, planID string) (SnapshotReplicationRelationApplyResult, error) {
+	if strings.TrimSpace(planID) == "" {
+		return SnapshotReplicationRelationApplyResult{}, fmt.Errorf("plan_id is required")
+	}
+	name, client, err := s.snapshotReplicationClient(ctx, requestedNAS)
+	if err != nil {
+		return SnapshotReplicationRelationApplyResult{}, err
+	}
+	if err := requireReplicationRelation(ctx, client, name, planID); err != nil {
+		return SnapshotReplicationRelationApplyResult{}, err
+	}
+	if err := client.PauseReplicationPlan(ctx, planID); err != nil {
+		return SnapshotReplicationRelationApplyResult{}, authenticationError(name, err)
+	}
+	return SnapshotReplicationRelationApplyResult{SourceNAS: name, PlanID: planID, Applied: true}, nil
+}
+
+// requireReplicationRelation fails closed if the plan id is not a real relation
+// on the NAS, so sync/stop/delete never act on a bad id.
+func requireReplicationRelation(ctx context.Context, client snapshotReplicationClient, name, planID string) error {
+	plans, err := client.SnapshotReplicationPlans(ctx)
+	if err != nil {
+		return authenticationError(name, err)
+	}
+	for _, plan := range plans.Plans {
+		if plan.ID == planID {
+			return nil
+		}
+	}
+	return fmt.Errorf("NAS %q has no replication relation with plan id %q", name, planID)
 }
 
 func validateSnapshotReplicationRelationPlan(plan SnapshotReplicationRelationPlan, approvalHash string) error {

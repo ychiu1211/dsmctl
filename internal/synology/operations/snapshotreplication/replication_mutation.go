@@ -15,6 +15,7 @@ const (
 
 	ReplicationPairCapabilityName   = "snapshot.replication.pair"
 	ReplicationCreateCapabilityName = "snapshot.replication.create"
+	ReplicationManageCapabilityName = "snapshot.replication.manage"
 )
 
 // Wire constants, live-verified against the DSM 7.4.7 UI bundle.
@@ -303,5 +304,79 @@ var replicationDeleteCredOperation = compatibility.Operation[string, bool]{
 
 func ExecuteReplicationDeleteCredential(ctx context.Context, target compatibility.Target, executor compatibility.Executor, credID string) (bool, error) {
 	ok, _, err := replicationDeleteCredOperation.Run(ctx, target, executor, credID)
+	return ok, err
+}
+
+// --- sync now (management of an existing relation, by plan id) ---
+
+// SyncInput triggers a manual replication sync of an existing relation.
+type SyncInput struct {
+	PlanID         string
+	SnapshotLocked bool
+	SendEncrypted  bool
+	Description    string
+}
+
+var replicationSyncOperation = compatibility.Operation[SyncInput, bool]{
+	Name: ReplicationManageCapabilityName,
+	Variants: []compatibility.Variant[SyncInput, bool]{
+		{
+			Name: "dr-plan-sync-v1", API: PlanAPIName, Version: 1, Priority: 10,
+			Match: compatibility.All(compatibility.APIVersion(PlanAPIName, 1), replicationPackage),
+			Execute: func(ctx context.Context, executor compatibility.Executor, input SyncInput) (bool, error) {
+				params := map[string]any{
+					"plan_id":            input.PlanID,
+					"nowait":             true,
+					"auto_remove":        true,
+					"is_snapshot_locked": input.SnapshotLocked,
+					"is_send_encrypted":  input.SendEncrypted,
+				}
+				if input.Description != "" {
+					params["sync_description"] = input.Description
+				}
+				if _, err := executor.Execute(ctx, compatibility.Request{
+					API: PlanAPIName, Version: 1, Method: "sync", JSONParameters: params,
+				}); err != nil {
+					return false, fmt.Errorf("call %s.sync: %w", PlanAPIName, err)
+				}
+				return true, nil
+			},
+		},
+	},
+}
+
+func SelectReplicationManage(target compatibility.Target) (compatibility.Selection, error) {
+	_, selection, err := replicationSyncOperation.Select(target)
+	return selection, err
+}
+
+func ExecuteReplicationSync(ctx context.Context, target compatibility.Target, executor compatibility.Executor, input SyncInput) (bool, error) {
+	ok, _, err := replicationSyncOperation.Run(ctx, target, executor, input)
+	return ok, err
+}
+
+// --- stop / pause replication of an existing relation ---
+
+var replicationPauseOperation = compatibility.Operation[string, bool]{
+	Name: ReplicationManageCapabilityName,
+	Variants: []compatibility.Variant[string, bool]{
+		{
+			Name: "dr-plan-pause-v1", API: PlanAPIName, Version: 1, Priority: 10,
+			Match: compatibility.All(compatibility.APIVersion(PlanAPIName, 1), replicationPackage),
+			Execute: func(ctx context.Context, executor compatibility.Executor, planID string) (bool, error) {
+				if _, err := executor.Execute(ctx, compatibility.Request{
+					API: PlanAPIName, Version: 1, Method: "pause",
+					JSONParameters: map[string]any{"plan_id": planID, "nowait": true},
+				}); err != nil {
+					return false, fmt.Errorf("call %s.pause: %w", PlanAPIName, err)
+				}
+				return true, nil
+			},
+		},
+	},
+}
+
+func ExecuteReplicationPause(ctx context.Context, target compatibility.Target, executor compatibility.Executor, planID string) (bool, error) {
+	ok, _, err := replicationPauseOperation.Run(ctx, target, executor, planID)
 	return ok, err
 }

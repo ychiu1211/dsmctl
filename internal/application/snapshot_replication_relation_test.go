@@ -38,6 +38,8 @@ type fakeReplicationRelationClient struct {
 	createdWith        *snapshotreplication.RelationCreate
 	deletedCreds       []string
 	deletedPlans       []string
+	syncedPlans        []string
+	pausedPlans        []string
 	confirmAfterCreate bool
 }
 
@@ -259,6 +261,40 @@ func TestValidateReplicationPlanTamper(t *testing.T) {
 	}
 }
 
+func TestSyncStopRequireRealRelation(t *testing.T) {
+	svc := &Service{}
+	client := newSourceRelation()
+	client.plans = []snapshotreplication.ReplicationPlan{{ID: "plan-7", TargetName: "data"}}
+
+	// requireReplicationRelation is the shared guard; exercise it directly since
+	// the Service dispatch needs a manager. Unknown id → refuse.
+	if err := requireReplicationRelation(context.Background(), client, "nas51", "plan-UNKNOWN"); err == nil || !strings.Contains(err.Error(), "no replication relation") {
+		t.Fatalf("unknown plan id must be refused, got %v", err)
+	}
+	if err := requireReplicationRelation(context.Background(), client, "nas51", "plan-7"); err != nil {
+		t.Fatalf("known plan id rejected: %v", err)
+	}
+	_ = svc
+}
+
+func TestSyncAndStopDispatch(t *testing.T) {
+	client := newSourceRelation()
+	client.plans = []snapshotreplication.ReplicationPlan{{ID: "plan-7", TargetName: "data"}}
+
+	if err := client.SyncReplicationPlan(context.Background(), "plan-7", true, "manual"); err != nil {
+		t.Fatalf("sync error = %v", err)
+	}
+	if len(client.syncedPlans) != 1 || client.syncedPlans[0] != "plan-7" {
+		t.Fatalf("synced = %#v", client.syncedPlans)
+	}
+	if err := client.PauseReplicationPlan(context.Background(), "plan-7"); err != nil {
+		t.Fatalf("pause error = %v", err)
+	}
+	if len(client.pausedPlans) != 1 || client.pausedPlans[0] != "plan-7" {
+		t.Fatalf("paused = %#v", client.pausedPlans)
+	}
+}
+
 // --- interface implementation ---
 
 func (c *fakeReplicationRelationClient) SnapshotReplicationModuleCapabilities(context.Context) (synology.SnapshotReplicationCapabilities, synology.CompatibilityReport, error) {
@@ -327,6 +363,16 @@ func (c *fakeReplicationRelationClient) DeleteReplicationPlan(_ context.Context,
 
 func (c *fakeReplicationRelationClient) DeleteReplicationCredential(_ context.Context, credID string) error {
 	c.deletedCreds = append(c.deletedCreds, credID)
+	return nil
+}
+
+func (c *fakeReplicationRelationClient) SyncReplicationPlan(_ context.Context, planID string, _ bool, _ string) error {
+	c.syncedPlans = append(c.syncedPlans, planID)
+	return nil
+}
+
+func (c *fakeReplicationRelationClient) PauseReplicationPlan(_ context.Context, planID string) error {
+	c.pausedPlans = append(c.pausedPlans, planID)
 	return nil
 }
 

@@ -38,8 +38,61 @@ func newSnapshotRelationCommand(opts *options) *cobra.Command {
 	command.AddCommand(
 		newSnapshotRelationPlanCommand(opts),
 		newSnapshotRelationApplyCommand(opts),
+		newSnapshotRelationSyncCommand(opts),
+		newSnapshotRelationStopCommand(opts),
 		newSnapshotRelationDeleteCommand(opts),
 	)
+	return command
+}
+
+func newSnapshotRelationSyncCommand(opts *options) *cobra.Command {
+	var planID, description string
+	var encrypted bool
+	command := &cobra.Command{
+		Use:   "sync",
+		Short: "Trigger a manual sync of an existing replication relation by plan id",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			service, err := loadService(opts)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.SyncSnapshotReplicationRelation(cmd.Context(), opts.nas, planID, encrypted, description)
+			if err != nil {
+				return err
+			}
+			return encodeIndentedJSON(cmd.OutOrStdout(), result)
+		},
+	}
+	command.Flags().StringVar(&planID, "plan-id", "", "replication plan id to sync")
+	command.Flags().StringVar(&description, "description", "", "optional description recorded on the sync")
+	command.Flags().BoolVar(&encrypted, "encrypted", true, "send the sync over an encrypted transport")
+	_ = command.MarkFlagRequired("plan-id")
+	return command
+}
+
+func newSnapshotRelationStopCommand(opts *options) *cobra.Command {
+	var planID string
+	command := &cobra.Command{
+		Use:   "stop",
+		Short: "Stop (pause) replication for an existing relation by plan id",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			service, err := loadService(opts)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.StopSnapshotReplicationRelation(cmd.Context(), opts.nas, planID)
+			if err != nil {
+				return err
+			}
+			return encodeIndentedJSON(cmd.OutOrStdout(), result)
+		},
+	}
+	command.Flags().StringVar(&planID, "plan-id", "", "replication plan id to stop")
+	_ = command.MarkFlagRequired("plan-id")
 	return command
 }
 

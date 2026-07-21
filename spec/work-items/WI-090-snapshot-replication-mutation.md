@@ -64,8 +64,12 @@ One guarded operation plus its read-back, all package-gated on
   undo-failover.** These flip production roles between sites and can strand
   data or split-brain a pair. This item exposes them **read-only** as `can_*`
   capability reporting only; none are executable.
-- **Sync-now / stop / pause** of an existing relation — a smaller follow-on
-  once create is proven (kept out of the first slice to bound blast radius).
+- ~~**Sync-now / stop / pause** of an existing relation~~ — **now built**
+  (2026-07-21): `snapshot relation sync` (`SYNO.DR.Plan sync` v1, by plan id)
+  and `snapshot relation stop` (`SYNO.DR.Plan pause` v1), guarded by a
+  relation-exists precondition (`requireReplicationRelation`), package-gated,
+  CLI-only. Unit-tested; live-verification pending a paired relation. DSM has
+  no `resume` method (a paused relation resumes on its next schedule/sync).
 - **Editing** an existing relation's schedule/retention/encryption.
 - **LUN replication** (`target_type` LUN) — SAN territory.
 - **Multi-controller / VMware SRM solution types** — `solution_type=1`

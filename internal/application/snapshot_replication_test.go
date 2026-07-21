@@ -156,6 +156,12 @@ func (c *fakeSnapshotReplicationClient) DeleteReplicationPlan(context.Context, s
 func (c *fakeSnapshotReplicationClient) DeleteReplicationCredential(context.Context, string) error {
 	return fmt.Errorf("not implemented")
 }
+func (c *fakeSnapshotReplicationClient) SyncReplicationPlan(context.Context, string, bool, string) error {
+	return fmt.Errorf("not implemented")
+}
+func (c *fakeSnapshotReplicationClient) PauseReplicationPlan(context.Context, string) error {
+	return fmt.Errorf("not implemented")
+}
 
 func TestValidateSnapshotReplicationChange(t *testing.T) {
 	lock := true
