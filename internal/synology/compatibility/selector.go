@@ -254,3 +254,22 @@ func IsUnsupported(err error) bool {
 	var unsupported *UnsupportedOperationError
 	return errors.As(err, &unsupported)
 }
+
+// dsmCodedError is satisfied by an error that carries a DSM application error
+// code (for example the transport layer's APIError). It lets operation packages
+// react to a specific DSM code without importing the synology package, which
+// would create an import cycle.
+type dsmCodedError interface {
+	DSMErrorCode() int
+}
+
+// APIErrorCode reports the DSM application error code carried by err, if any.
+// A transport or session failure (which carries no DSM code) returns ok=false,
+// so callers can distinguish "DSM said no" from "the call never reached DSM".
+func APIErrorCode(err error) (code int, ok bool) {
+	var coded dsmCodedError
+	if errors.As(err, &coded) {
+		return coded.DSMErrorCode(), true
+	}
+	return 0, false
+}

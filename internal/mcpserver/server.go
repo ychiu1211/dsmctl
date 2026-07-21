@@ -1065,6 +1065,26 @@ type getResourceMonitorCapabilitiesOutput struct {
 	Report       synology.CompatibilityReport         `json:"report" jsonschema:"Discovered APIs and selected Resource Monitor compatibility backends"`
 }
 
+type getDiskSMARTInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getDiskSMARTCapabilitiesOutput struct {
+	NAS          string                        `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.DiskSMARTCapabilities `json:"capabilities" jsonschema:"Disk-SMART read areas currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport  `json:"report" jsonschema:"Discovered APIs and selected disk-SMART compatibility backends"`
+}
+
+type getDiskHealthOutput struct {
+	NAS    string                   `json:"nas" jsonschema:"NAS profile used for the request"`
+	Health synology.DiskHealthState `json:"health" jsonschema:"Per-disk health, lifespan, and coarse self-test state plus global warning thresholds"`
+}
+
+type getDiskSMARTAttributesOutput struct {
+	NAS   string                  `json:"nas" jsonschema:"NAS profile used for the request"`
+	SMART synology.DiskSMARTState `json:"smart" jsonschema:"Per-disk SMART attribute tables, summaries, and self-test status"`
+}
+
 type planResourceRecordingChangeInput struct {
 	NAS     string                 `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
 	Request resmon.RecordingChange `json:"request" jsonschema:"History-recording toggle intent; set enable to true or false"`
@@ -3559,6 +3579,45 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getResourceRecordingSettingOutput{}, err
 		}
 		return nil, getResourceRecordingSettingOutput{NAS: result.NAS, Setting: result.Setting}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_disk_smart_capabilities",
+		Title:       "Get disk SMART capabilities",
+		Description: "Report which per-disk health and S.M.A.R.T. read areas (disk health/lifespan, SMART attribute tables, global warning thresholds) are available for a NAS and the DSM API backend selected for each. Each area is gated independently.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDiskSMARTInput) (*mcp.CallToolResult, getDiskSMARTCapabilitiesOutput, error) {
+		result, err := service.GetDiskSMARTCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getDiskSMARTCapabilitiesOutput{}, err
+		}
+		return nil, getDiskSMARTCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_disk_health",
+		Title:       "Get per-disk health",
+		Description: "Read Storage Manager's per-physical-disk health: overall health status, SSD remaining-life/wear, spare-block/bad-sector detail, temperature, whether a SMART self-test is running, and the global disk-health warning thresholds. This complements storage inventory, which carries no per-disk lifespan or self-test detail. This tool never changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDiskSMARTInput) (*mcp.CallToolResult, getDiskHealthOutput, error) {
+		result, err := service.GetDiskHealth(ctx, input.NAS)
+		if err != nil {
+			return nil, getDiskHealthOutput{}, err
+		}
+		return nil, getDiskHealthOutput{NAS: result.NAS, Health: result.Health}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_disk_smart_attributes",
+		Title:       "Get disk SMART attributes",
+		Description: "Read the full S.M.A.R.T. attribute table (id, name, current/worst/threshold/raw values, pass-fail status) for each installed disk, plus a per-disk health summary and self-test status. A disk that exposes no attribute table (many enterprise SSDs, NVMe/SATADOM/M.2, and USB devices) is reported as having no SMART data rather than erroring. This tool never starts a SMART test or changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDiskSMARTInput) (*mcp.CallToolResult, getDiskSMARTAttributesOutput, error) {
+		result, err := service.GetDiskSMARTAttributes(ctx, input.NAS)
+		if err != nil {
+			return nil, getDiskSMARTAttributesOutput{}, err
+		}
+		return nil, getDiskSMARTAttributesOutput{NAS: result.NAS, SMART: result.SMART}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

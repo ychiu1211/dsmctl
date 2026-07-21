@@ -65,6 +65,13 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("Synology API %s.%s failed with code %d", e.API, e.Method, e.Code)
 }
 
+// DSMErrorCode exposes the DSM application error code so operation packages can
+// react to a specific code (via compatibility.APIErrorCode) without importing
+// this package. It satisfies the compatibility package's coded-error interface.
+func (e *APIError) DSMErrorCode() int {
+	return e.Code
+}
+
 // HTTPError is a transport- or HTTP-level failure that produced no DSM JSON
 // envelope: a network/transport error (timeout, connection reset/refused) or a
 // non-2xx HTTP status. It carries a stable Category — CategoryTransient or
