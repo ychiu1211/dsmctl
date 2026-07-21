@@ -1,7 +1,7 @@
 ---
 id: WI-080
 title: Universal Search index management module
-status: proposed
+status: in_progress
 priority: P3
 owner: ""
 depends_on: [WI-019, WI-022]
@@ -154,27 +154,29 @@ Sliced read-first, then guarded write, so the read slice can ship independently.
 
 ## Acceptance criteria
 
-- [ ] Live-verify first: the real Universal Search API namespace, the
-      indexed-folder list/add/delete method set, the index-status API+shape, the
-      reindex entry point, and the package id + version baseline are confirmed on
-      the lab with a throwaway `DSMCTL_DUMP` probe; the spec's API guesses are
-      corrected in code and docs to match what the NAS actually returns.
-- [ ] Slice A: `universal-search capabilities|folders|status` (CLI) and the
-      matching `get_universal_search_*` MCP tools return normalized state with
-      package evidence (installed / version / running).
-- [ ] Package-gating: reads and selection fail closed without the package and
+- [x] Live-verify first: the real Universal Search API namespace, the
+      indexed-folder list method, the index-status API+shape, and the package id
+      + version baseline are confirmed on the lab with a throwaway raw probe (see
+      Evidence). The spec's `SYNO.Finder.FileIndex.*` guess is corrected to the
+      real `SYNO.Finder.FileIndexing.*` namespace in code. (Slice-B add/delete
+      and the reindex entry point remain to be confirmed for that slice.)
+- [x] Slice A: `universal-search capabilities|folders|status` (CLI, alias
+      `usearch`) and the matching `get_universal_search_*` MCP tools return
+      normalized state with package evidence (installed / version / running).
+- [x] Package-gating: reads and selection fail closed without the package and
       below baseline; capabilities carry installed/version/running; an
-      installed-but-daemon-down NAS returns an actionable error, not empty
-      success.
-- [ ] Per-operation selection: folder-list and status select independently; a
-      NAS missing the status API still lists folders (and vice versa); older
-      versions degrade to available fields without erroring.
-- [ ] Decoder + composition unit tests: folder-list entry (incl. a count/size
-      returned as a quoted string), status shape, and malformed-shape rejection
-      (decoders never silently return empty successful state).
-- [ ] Slice A live verification on the DSM 7.3 lab: read capabilities, the
+      installed-but-daemon-down NAS returns an actionable "installed but not
+      running" error, not empty success.
+- [x] Per-operation selection: folder-list and status select independently; a
+      NAS missing the status API still lists folders (and vice versa); decoders
+      degrade to available fields without erroring.
+- [x] Decoder + composition unit tests: folder-list entry (incl. a total count
+      returned as a quoted string), status shape (idle + indexing/progress), and
+      malformed-shape rejection (decoders never silently return empty successful
+      state).
+- [x] Slice A live verification on the DSM 7.3 lab: read capabilities, the
       indexed-folder list, and index status against the installed Universal
-      Search package (installed via dsmctl guarded install if not present).
+      Search package (SynoFinder 1.9.0-0900, already installed).
 - [ ] Slice B — add/remove indexed folder via hash-bound plan/apply: plan
       records+hashes the full observed folder list, apply rejects stale state and
       re-reads to confirm the folder is present/absent; add classified low,
@@ -188,8 +190,44 @@ Sliced read-first, then guarded write, so the read slice can ship independently.
       add a throwaway indexed folder → confirm present → trigger reindex →
       confirm status transition → remove the folder → confirm absent, with the
       plan hash rejecting a mid-flight folder-list change.
-- [ ] Read-only gateway exclusion: `plan_universal_search_*` / `apply_universal_search_*`
-      are absent from the read-only tool set; only the `get_*` reads are exposed.
+- [x] Read-only gateway exclusion: only the `get_universal_search_*` reads are
+      exposed (they classify as `ScopeRead`); no `plan_`/`apply_` tools exist in
+      this slice.
+
+## Evidence (Slice A, live-verified DSM 7.3 lab, SynoFinder 1.9.0-0900)
+
+Codesearch is OAuth-blocked, so the API map was captured with a throwaway raw
+probe (`SYNO.API.Info` `query=all`, then direct calls) and reconciled against the
+live responses. The spec's pre-implementation guesses were **wrong on the
+namespace**: the real family is `SYNO.Finder.FileIndexing.*` (not
+`SYNO.Finder.FileIndex.*`), all on `entry.cgi`, advertising only version 1.
+
+- **Package**: id `SynoFinder`, name "Universal Search", version `1.9.0-0900`,
+  running. Baseline gate `PackageVersionRange(SynoFinder, 1.0, ∞)`.
+- **Indexed folder list** — `SYNO.Finder.FileIndexing.Folder` v1 `list` →
+  `{"folder":[{...}],"offset":0,"total":N}`. Per-folder fields (verbatim):
+  `path` (stable id), `name`, `owner` (e.g. `SynologyDrive`), `group` (display-
+  name key), `paused` (bool), `privileged` (bool), `share_path_before_pause`,
+  `volume_to_be_clean`, and content-type flags `audio`/`video`/`photo`/
+  `document`. The list carries **no** per-folder index status, progress, or item
+  count — those spec-hypothesised fields are absent on this version, so the read
+  degrades to what is present. `Folder.get` exists but requires a param (code 120
+  when omitted); not used by the read.
+- **Index status** — `SYNO.Finder.FileIndexing.Status` v1 `get` →
+  `{"status":{"index":"finished","term":"finished"}}`. Two raw sub-state strings
+  (`index` = file-content index, `term` = search-term index); `"finished"` is
+  idle. No progress/queued-count/last-time fields in the idle response; the
+  decoder captures an optional `progress` percentage tolerantly if a running
+  index reports one, and derives `indexing` = any sub-state not finished.
+  `Status.status`/`.list`/`.getinfo` return code 103 (only `get` is valid).
+- **Other Finder APIs seen but out of scope** (search experience / non-goals):
+  `SYNO.Finder.FileIndexing.Search|Highlight|Indicate|Term`, `SYNO.Finder.Settings`,
+  `SYNO.Finder.Preference`, `SYNO.Finder.Elastic.*`, `SYNO.Finder.File*`,
+  `SYNO.Finder.AppIndexing.Search`, `SYNO.Finder.Bookmark`, `SYNO.Finder.UserGrp`.
+
+Slice B (guarded add/remove/reindex) is deferred: its wire fields (the `Folder`
+`add`/`delete` params and the reindex entry point) were not probed to avoid
+mutating the shared lab index.
 
 ## Verification
 

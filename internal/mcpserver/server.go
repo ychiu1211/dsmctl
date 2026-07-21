@@ -1135,6 +1135,26 @@ type getDiskSMARTAttributesOutput struct {
 	SMART synology.DiskSMARTState `json:"smart" jsonschema:"Per-disk SMART attribute tables, summaries, and self-test status"`
 }
 
+type getUniversalSearchInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getUniversalSearchCapabilitiesOutput struct {
+	NAS          string                               `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.UniversalSearchCapabilities `json:"capabilities" jsonschema:"Universal Search read areas currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport         `json:"report" jsonschema:"Discovered APIs and selected Universal Search compatibility backends"`
+}
+
+type getUniversalSearchFoldersOutput struct {
+	NAS     string                                 `json:"nas" jsonschema:"NAS profile used for the request"`
+	Folders synology.UniversalSearchIndexedFolders `json:"folders" jsonschema:"Universal Search indexed-folder list"`
+}
+
+type getUniversalSearchStatusOutput struct {
+	NAS    string                              `json:"nas" jsonschema:"NAS profile used for the request"`
+	Status synology.UniversalSearchIndexStatus `json:"status" jsonschema:"Overall Universal Search index daemon status"`
+}
+
 type planResourceRecordingChangeInput struct {
 	NAS     string                 `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
 	Request resmon.RecordingChange `json:"request" jsonschema:"History-recording toggle intent; set enable to true or false"`
@@ -3772,6 +3792,45 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getDiskSMARTAttributesOutput{}, err
 		}
 		return nil, getDiskSMARTAttributesOutput{NAS: result.NAS, SMART: result.SMART}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_universal_search_capabilities",
+		Title:       "Get Universal Search capabilities",
+		Description: "Report which Universal Search (SynoFinder) file-index reads (indexed-folder list, overall index status) are available for a NAS and the DSM API backend selected for each, with package evidence (installed / version / running). The module is gated on the installed Universal Search package and fails closed when it is absent.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getUniversalSearchInput) (*mcp.CallToolResult, getUniversalSearchCapabilitiesOutput, error) {
+		result, err := service.GetUniversalSearchCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getUniversalSearchCapabilitiesOutput{}, err
+		}
+		return nil, getUniversalSearchCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_universal_search_folders",
+		Title:       "Get Universal Search indexed folders",
+		Description: "List the folders in the Synology Universal Search file index: each folder's path (identifier), display name, owning app, paused state, and which content categories (audio/video/photo/document) are indexed. Requires the Universal Search package to be installed. This tool never changes the index or DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getUniversalSearchInput) (*mcp.CallToolResult, getUniversalSearchFoldersOutput, error) {
+		result, err := service.GetUniversalSearchFolders(ctx, input.NAS)
+		if err != nil {
+			return nil, getUniversalSearchFoldersOutput{}, err
+		}
+		return nil, getUniversalSearchFoldersOutput{NAS: result.NAS, Folders: result.Folders}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_universal_search_status",
+		Title:       "Get Universal Search index status",
+		Description: "Read the overall Synology Universal Search index daemon status: whether the file-content and search-term indexes are idle (finished) or currently working, plus a progress percentage when the running index reports one. Requires the Universal Search package to be installed. This tool never changes the index or DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getUniversalSearchInput) (*mcp.CallToolResult, getUniversalSearchStatusOutput, error) {
+		result, err := service.GetUniversalSearchStatus(ctx, input.NAS)
+		if err != nil {
+			return nil, getUniversalSearchStatusOutput{}, err
+		}
+		return nil, getUniversalSearchStatusOutput{NAS: result.NAS, Status: result.Status}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
