@@ -1185,6 +1185,26 @@ type getHardwareUPSOutput struct {
 	UPS synology.HardwareUPSState `json:"ups" jsonschema:"UPS configuration and live status; reports the no-device path when no UPS is attached"`
 }
 
+type getExternalDeviceInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getExternalDeviceCapabilitiesOutput struct {
+	NAS          string                              `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.ExternalDeviceCapabilities `json:"capabilities" jsonschema:"External Devices read areas currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport        `json:"report" jsonschema:"Discovered APIs and selected External Devices compatibility backends"`
+}
+
+type getExternalStorageOutput struct {
+	NAS     string                        `json:"nas" jsonschema:"NAS profile used for the request"`
+	Storage synology.ExternalStorageState `json:"storage" jsonschema:"Attached USB and eSATA external disks; a bus whose API is absent is omitted"`
+}
+
+type getExternalPrintersOutput struct {
+	NAS      string                        `json:"nas" jsonschema:"NAS profile used for the request"`
+	Printers synology.ExternalPrinterState `json:"printers" jsonschema:"Connected printers and the Bonjour/AirPrint sharing toggle"`
+}
+
 type getDirectoryInput struct {
 	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
 }
@@ -3951,6 +3971,45 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getHardwareUPSOutput{}, err
 		}
 		return nil, getHardwareUPSOutput{NAS: result.NAS, UPS: result.UPS}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_external_device_capabilities",
+		Title:       "Get External Devices capabilities",
+		Description: "Report which Control Panel External Devices read areas (USB external storage, eSATA external storage, printers, and the Bonjour/AirPrint printer-sharing toggle) are available for a NAS and the DSM API backend selected for each. Each area is gated independently; a model with no eSATA port or no printer support reports that area unsupported without disabling the others. UPS is not part of this module (it is Hardware & Power).",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getExternalDeviceInput) (*mcp.CallToolResult, getExternalDeviceCapabilitiesOutput, error) {
+		result, err := service.GetExternalDeviceCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getExternalDeviceCapabilitiesOutput{}, err
+		}
+		return nil, getExternalDeviceCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_external_storage",
+		Title:       "Get attached external disks",
+		Description: "Read the attached external storage devices on both buses — USB and eSATA — with each device's identity, size, and status and its partitions (filesystem, size, usage, mount point, and any auto-created share). Each bus is gated independently; a bus whose DSM API is absent is omitted and a bus with no disk attached reports an empty list. This tool reads inventory only and never ejects, formats, or modifies any device.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getExternalDeviceInput) (*mcp.CallToolResult, getExternalStorageOutput, error) {
+		result, err := service.GetExternalStorage(ctx, input.NAS)
+		if err != nil {
+			return nil, getExternalStorageOutput{}, err
+		}
+		return nil, getExternalStorageOutput{NAS: result.NAS, Storage: result.Storage}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_external_printers",
+		Title:       "Get connected printers",
+		Description: "Read the printers DSM has enumerated (id, name, connection type, status, default flag, and queued-job count) and the global Bonjour/AirPrint printer-sharing toggle. The printer API is present even when no printer is attached, in which case the list is empty. This tool reads printer state only and never changes printer settings or clears the spooler.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getExternalDeviceInput) (*mcp.CallToolResult, getExternalPrintersOutput, error) {
+		result, err := service.GetExternalPrinters(ctx, input.NAS)
+		if err != nil {
+			return nil, getExternalPrintersOutput{}, err
+		}
+		return nil, getExternalPrintersOutput{NAS: result.NAS, Printers: result.Printers}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
