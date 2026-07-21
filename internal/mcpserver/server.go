@@ -1135,6 +1135,31 @@ type getDiskSMARTAttributesOutput struct {
 	SMART synology.DiskSMARTState `json:"smart" jsonschema:"Per-disk SMART attribute tables, summaries, and self-test status"`
 }
 
+type getDirectoryInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getDirectoryCapabilitiesOutput struct {
+	NAS          string                         `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.DirectoryCapabilities `json:"capabilities" jsonschema:"Directory (Domain/LDAP) read areas currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport   `json:"report" jsonschema:"Discovered APIs and selected directory compatibility backends"`
+}
+
+type getDirectoryStatusOutput struct {
+	NAS    string                   `json:"nas" jsonschema:"NAS profile used for the request"`
+	Status synology.DirectoryStatus `json:"status" jsonschema:"Directory-client status: AD domain membership and/or LDAP bind, with non-secret configuration"`
+}
+
+type getDirectoryUsersOutput struct {
+	NAS   string                  `json:"nas" jsonschema:"NAS profile used for the request"`
+	Users synology.DirectoryUsers `json:"users" jsonschema:"Synced domain/LDAP users, scoped to the active mode"`
+}
+
+type getDirectoryGroupsOutput struct {
+	NAS    string                   `json:"nas" jsonschema:"NAS profile used for the request"`
+	Groups synology.DirectoryGroups `json:"groups" jsonschema:"Synced domain/LDAP groups, scoped to the active mode"`
+}
+
 type planResourceRecordingChangeInput struct {
 	NAS     string                 `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
 	Request resmon.RecordingChange `json:"request" jsonschema:"History-recording toggle intent; set enable to true or false"`
@@ -3772,6 +3797,58 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getDiskSMARTAttributesOutput{}, err
 		}
 		return nil, getDiskSMARTAttributesOutput{NAS: result.NAS, SMART: result.SMART}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_directory_capabilities",
+		Title:       "Get directory service capabilities",
+		Description: "Report which Control Panel Domain/LDAP (directory-client) read areas (AD domain status, LDAP client status, synced users, synced groups) are available for a NAS and the DSM API backend selected for each. AD and LDAP are gated independently; a missing API family is reported as not supported without disabling the others.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDirectoryInput) (*mcp.CallToolResult, getDirectoryCapabilitiesOutput, error) {
+		result, err := service.GetDirectoryCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getDirectoryCapabilitiesOutput{}, err
+		}
+		return nil, getDirectoryCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_directory_status",
+		Title:       "Get directory service status",
+		Description: "Read the Control Panel Domain/LDAP directory-client status: whether the NAS is joined to an Active Directory domain or bound to an LDAP server (mode ad/ldap/none), and each area's non-secret configuration (joined domain, workgroup, DNS/domain controller, LDAP server address, base DN, encryption, profile). Bind/join passwords, password hashes, and Kerberos keytab material are never surfaced. This tool never changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDirectoryInput) (*mcp.CallToolResult, getDirectoryStatusOutput, error) {
+		result, err := service.GetDirectoryStatus(ctx, input.NAS)
+		if err != nil {
+			return nil, getDirectoryStatusOutput{}, err
+		}
+		return nil, getDirectoryStatusOutput{NAS: result.NAS, Status: result.Status}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_directory_users",
+		Title:       "Get synced directory users",
+		Description: "List the synced Active Directory / LDAP users, scoped to the NAS's active directory mode (empty when the NAS is neither joined nor bound). These principals are owned by the directory server and are read-only here; only non-secret identity fields (name, uid, description) are returned. This tool never changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDirectoryInput) (*mcp.CallToolResult, getDirectoryUsersOutput, error) {
+		result, err := service.GetDirectoryUsers(ctx, input.NAS)
+		if err != nil {
+			return nil, getDirectoryUsersOutput{}, err
+		}
+		return nil, getDirectoryUsersOutput{NAS: result.NAS, Users: result.Users}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_directory_groups",
+		Title:       "Get synced directory groups",
+		Description: "List the synced Active Directory / LDAP groups, scoped to the NAS's active directory mode (empty when the NAS is neither joined nor bound). Read-only; only non-secret identity fields (name, gid, description) are returned. This tool never changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getDirectoryInput) (*mcp.CallToolResult, getDirectoryGroupsOutput, error) {
+		result, err := service.GetDirectoryGroups(ctx, input.NAS)
+		if err != nil {
+			return nil, getDirectoryGroupsOutput{}, err
+		}
+		return nil, getDirectoryGroupsOutput{NAS: result.NAS, Groups: result.Groups}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

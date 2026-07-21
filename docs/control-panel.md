@@ -641,6 +641,79 @@ same session; a config restore overwrites the system configuration wholesale and
 can lock the administrator out). No install or restore path is exposed on any
 surface — CLI, MCP, or the read-only gateway.
 
+## Directory services — Domain/LDAP (read-only)
+
+DSM's Control Panel → Domain/LDAP page joins the NAS to an existing Active
+Directory domain or binds it to an LDAP server (a *directory client* — this
+module never hosts a directory). Active Directory (`SYNO.Core.Directory.Domain`)
+and LDAP (`SYNO.Core.Directory.LDAP`) are separate API families with independent
+failure boundaries: a NAS in neither mode reports `mode: none` cleanly, and one
+area's API being absent reports `(not supported)` without disabling the other or
+the capabilities surface.
+
+```console
+dsmctl directory capabilities --nas office
+dsmctl directory status --nas office --json
+dsmctl directory users --nas office --json
+dsmctl directory groups --nas office --json
+```
+
+- **Status** derives a stable `mode` (`ad` / `ldap` / `none`) and reports each
+  area's non-secret state. Active Directory reads `SYNO.Core.Directory.Domain`
+  (`get`, v1) — `enable_domain` is the join flag, and the joined identity
+  (domain FQDN, workgroup/NetBIOS, DNS, domain controller, OU, connection status)
+  is populated by DSM only once joined — enriched with the non-secret join
+  options from `SYNO.Core.Directory.Domain.Conf` (`get`) and the periodic
+  user/group sync schedule from `SYNO.Core.Directory.Domain.Schedule` (`get`,
+  v1). LDAP reads `SYNO.Core.Directory.LDAP` (`get`) — `enable_client` is the
+  bind flag — reporting server address, base DN, bind DN, encryption, profile,
+  and schema, enriched with the offered profile list from
+  `SYNO.Core.Directory.LDAP.Profile` (`list`). **v2 of the LDAP `get` is
+  preferred** (it carries `server_address` and `expand_nested_groups`); v1 falls
+  back to the `host` field.
+- **Users / groups** list the synced directory principals through the core
+  `SYNO.Core.User` / `SYNO.Core.Group` (`list`, v1) APIs with a `type` filter
+  (`domain` for AD, `ldap` for LDAP — the dedicated `SYNO.Core.Directory.Domain.User/.Group`
+  APIs do not exist on DSM 7.3), scoped to the NAS's active mode. These
+  principals are owned by the directory server and are **read-only**; only
+  non-secret identity fields (name, uid/gid, description, source) are surfaced.
+  A NAS in `mode: none` returns an empty list without a DSM call, and a DSM
+  "not joined/bound" error is treated as an empty list rather than a failure.
+
+**Secret suppression is mandatory on read.** The AD domain-join password and the
+LDAP bind password are secrets: DSM never returns them on `get`, and the decoders
+read only the explicit non-secret keys (never a whole-object passthrough).
+Synced-principal password hashes, Kerberos keytab bytes, and machine-account
+material are never modeled. A unit test injects `password` / `bind_pw` /
+`keytab` canaries into every decoded shape and asserts the re-encoded models
+carry no trace (`TestDecodersNeverLeakSecrets`), and a live `--json` grep
+confirms it.
+
+MCP exposes the same reads through `get_directory_capabilities`,
+`get_directory_status`, `get_directory_users`, and `get_directory_groups`. All
+are read-only and never change NAS authentication.
+
+Verified live on DSM 7.3 (a lab NAS that is neither AD-joined nor LDAP-bound):
+`SYNO.Core.Directory.Domain` v1 `get` → `{"enable_domain":false}`;
+`SYNO.Core.Directory.Domain.Conf` v1/v2 `get` (`buildDatabaseWithMembership`,
+`direct_connect_trust`, `disable_domain_admins`, `domain_nested_group`,
+`enable_rpc_enum_usergroup`, `enable_sync_time`, `encrypt_ad_ldap`);
+`SYNO.Core.Directory.Domain.Schedule` v1 `get` (`date_type`);
+`SYNO.Core.Directory.LDAP` v2 `get` (`enable_client`, `server_address`,
+`base_dn`, `encryption`, `profile`, `ldap_schema`, `is_syno_server`,
+`expand_nested_groups`, `nested_group_level`, `tls_reqcert`, `update_min`,
+`error`); `SYNO.Core.Directory.LDAP.Profile` v1 `list`
+(`standard`/`mac`/`domino`/`customized`); and `SYNO.Core.User` / `SYNO.Core.Group`
+v1 `list` with `type=domain`/`type=ldap` (`{offset,total,users/groups}`). Because
+the lab is unjoined/unbound, the joined-domain identity fields and the populated
+principal shapes are decoded leniently (an unknown/absent key yields an
+empty/zero field, never a wrong value); the AD `join`/`leave` and LDAP
+`bind`/`unbind` guarded writes are a deferred follow-on and are **HIGH risk**
+(each changes authentication for the whole NAS and can lock out an administrator
+whose only account is a domain account), and — like the other guarded modules —
+will supply the bind/join password via `credential_ref` and be excluded from the
+read-only gateway.
+
 ## Adding another module
 
 Add a dedicated type under `internal/domain/controlpanel`, an operation package

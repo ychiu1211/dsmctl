@@ -62,8 +62,8 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools() error = %v", err)
 	}
-	if len(tools.Tools) != 240 {
-		t.Fatalf("ListTools() returned %d tools, want 240", len(tools.Tools))
+	if len(tools.Tools) != 244 {
+		t.Fatalf("ListTools() returned %d tools, want 244", len(tools.Tools))
 	}
 	for _, tool := range tools.Tools {
 		if scope, ok := ToolScope(tool.Name); !ok || scope == "" {
@@ -135,6 +135,10 @@ func TestNewRegistersToolSchemas(t *testing.T) {
 		"get_disk_smart_capabilities":           false,
 		"get_disk_health":                       false,
 		"get_disk_smart_attributes":             false,
+		"get_directory_capabilities":            false,
+		"get_directory_status":                  false,
+		"get_directory_users":                   false,
+		"get_directory_groups":                  false,
 		"get_drive_admin_capabilities":          false,
 		"get_drive_admin_status":                false,
 		"get_drive_admin_connections":           false,
