@@ -89,15 +89,18 @@ type ReverseProxyRules struct {
 	Rules []ReverseProxyRule `json:"rules" jsonschema:"Reverse-proxy rules"`
 }
 
-// Capabilities reports which Login Portal reads dsmctl currently exposes for the
-// selected NAS. Each read area is gated on its own DSM API so a NAS missing one
-// still reports the others. Guarded writes are a deferred follow-on, so Mutations
-// is always false in this slice.
+// Capabilities reports which Login Portal reads and guarded writes dsmctl exposes
+// for the selected NAS. Each area is gated on its own DSM API so a NAS missing
+// one still reports the others.
 type Capabilities struct {
-	Module                string `json:"module" jsonschema:"Stable module name: login-portal"`
-	DSMWebServiceRead     bool   `json:"dsm_web_service_read" jsonschema:"Whether the DSM web-service access settings can be read"`
-	ExternalDomainRead    bool   `json:"external_domain_read" jsonschema:"Whether the customized external-hostname setting can be read"`
-	ApplicationPortalRead bool   `json:"application_portal_read" jsonschema:"Whether the per-application portal list can be read"`
-	ReverseProxyRead      bool   `json:"reverse_proxy_read" jsonschema:"Whether the reverse-proxy rule list can be read"`
-	Mutations             bool   `json:"mutations" jsonschema:"Whether any guarded write is available (always false in the read slice)"`
+	Module                 string `json:"module" jsonschema:"Stable module name: login-portal"`
+	DSMWebServiceRead      bool   `json:"dsm_web_service_read" jsonschema:"Whether the DSM web-service access settings can be read"`
+	ExternalDomainRead     bool   `json:"external_domain_read" jsonschema:"Whether the customized external-hostname setting can be read"`
+	ApplicationPortalRead  bool   `json:"application_portal_read" jsonschema:"Whether the per-application portal list can be read"`
+	ReverseProxyRead       bool   `json:"reverse_proxy_read" jsonschema:"Whether the reverse-proxy rule list can be read"`
+	DSMWebServiceWrite     bool   `json:"dsm_web_service_write" jsonschema:"Whether the DSM web-service access settings can be changed"`
+	ExternalDomainWrite    bool   `json:"external_domain_write" jsonschema:"Whether the customized external-hostname setting can be changed"`
+	ApplicationPortalWrite bool   `json:"application_portal_write" jsonschema:"Whether an application portal can be changed"`
+	ReverseProxyWrite      bool   `json:"reverse_proxy_write" jsonschema:"Whether reverse-proxy rules can be created or deleted"`
+	Mutations              bool   `json:"mutations" jsonschema:"Whether any guarded write is available"`
 }

@@ -29,6 +29,7 @@ import (
 	"github.com/ychiu1211/dsmctl/internal/domain/rsyncservice"
 	"github.com/ychiu1211/dsmctl/internal/domain/san"
 	"github.com/ychiu1211/dsmctl/internal/domain/accountprotection"
+	"github.com/ychiu1211/dsmctl/internal/domain/loginportal"
 	"github.com/ychiu1211/dsmctl/internal/domain/securityadvisor"
 	"github.com/ychiu1211/dsmctl/internal/domain/servicediscovery"
 	"github.com/ychiu1211/dsmctl/internal/domain/share"
@@ -1421,8 +1422,59 @@ type getReverseProxyRulesOutput struct {
 
 type getLoginPortalCapabilitiesOutput struct {
 	NAS          string                           `json:"nas" jsonschema:"NAS profile used for the request"`
-	Capabilities synology.LoginPortalCapabilities `json:"capabilities" jsonschema:"Login Portal reads currently exposed by dsmctl"`
+	Capabilities synology.LoginPortalCapabilities `json:"capabilities" jsonschema:"Login Portal reads and guarded writes currently exposed by dsmctl"`
 	Report       synology.CompatibilityReport     `json:"report" jsonschema:"Discovered APIs and selected Login Portal backends"`
+}
+
+type planDSMWebServiceChangeInput struct {
+	NAS     string                          `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request loginportal.DSMWebServiceChange `json:"request" jsonschema:"Patch-only DSM web-service intent; a change that would sever the current dsmctl transport needs allow_connectivity_break"`
+}
+
+type planDSMWebServiceChangeOutput struct {
+	Plan application.DSMWebServicePlan `json:"plan" jsonschema:"Validated plan bound to the complete observed settings, current transport, and approval hash"`
+}
+
+type applyDSMWebServicePlanInput struct {
+	Plan         application.DSMWebServicePlan `json:"plan" jsonschema:"Unmodified plan returned by plan_login_portal_dsm_change"`
+	ApprovalHash string                       `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved plan"`
+}
+
+type loginPortalApplyOutput struct {
+	Result application.LoginPortalApplyResult `json:"result" jsonschema:"Mutation result after stale-state and postcondition checks"`
+}
+
+type planApplicationPortalChangeInput struct {
+	NAS     string                              `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request loginportal.ApplicationPortalChange `json:"request" jsonschema:"Patch-only application-portal intent keyed by app_id"`
+}
+
+type planApplicationPortalChangeOutput struct {
+	Plan application.ApplicationPortalPlan `json:"plan" jsonschema:"Validated plan bound to the observed portal and approval hash"`
+}
+
+type applyApplicationPortalPlanInput struct {
+	Plan         application.ApplicationPortalPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_login_portal_application_change"`
+	ApprovalHash string                           `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved plan"`
+}
+
+type planReverseProxyCreateInput struct {
+	NAS     string                             `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request loginportal.ReverseProxyRuleCreate `json:"request" jsonschema:"Reverse-proxy rule to create; secret header values use credential_ref (env:NAME)"`
+}
+
+type planReverseProxyDeleteInput struct {
+	NAS     string                             `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+	Request loginportal.ReverseProxyRuleDelete `json:"request" jsonschema:"Reverse-proxy rule to delete, keyed by uuid"`
+}
+
+type planReverseProxyOutput struct {
+	Plan application.ReverseProxyPlan `json:"plan" jsonschema:"Validated plan bound to the complete observed rule set and approval hash"`
+}
+
+type applyReverseProxyPlanInput struct {
+	Plan         application.ReverseProxyPlan `json:"plan" jsonschema:"Unmodified plan returned by plan_login_portal_reverse_proxy_create or plan_login_portal_reverse_proxy_delete"`
+	ApprovalHash string                       `json:"approval_hash" jsonschema:"Exact SHA-256 hash from the approved plan"`
 }
 
 type getDriveAdminCapabilitiesOutput struct {
@@ -3916,6 +3968,97 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getReverseProxyRulesOutput{}, err
 		}
 		return nil, getReverseProxyRulesOutput{NAS: result.NAS, Rules: result.Rules}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_login_portal_dsm_change",
+		Title:       "Plan a DSM web-service change",
+		Description: "Validate a patch-only DSM web-service change (http_port, https_port, https_enabled, http_redirect_enabled, hsts_enabled, http2_enabled, custom_domain_enabled, custom_domain, external_hostname) and return an approval plan bound to the complete observed settings and the transport dsmctl is connected on. Every DSM web-service change is high risk because it changes how DSM itself is reached. The never-break-the-current-session guard refuses, without allow_connectivity_break, any change that would sever the current transport (moving/disabling the current HTTPS port or scheme, forcing a redirect that bounces the current HTTP session, or enabling HSTS which browsers cache). This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planDSMWebServiceChangeInput) (*mcp.CallToolResult, planDSMWebServiceChangeOutput, error) {
+		plan, err := service.PlanDSMWebServiceChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planDSMWebServiceChangeOutput{}, err
+		}
+		return nil, planDSMWebServiceChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_login_portal_dsm_plan",
+		Title:       "Apply an approved DSM web-service plan",
+		Description: "Apply an unmodified DSM web-service plan only while its approval hash and the complete observed state (settings plus the current transport) still match, then re-read to verify every requested field took effect. The write is patch-only: unspecified fields are preserved by merging into a freshly read state. A change that would sever the transport dsmctl is connected on is refused unless the plan carried allow_connectivity_break, in which case the postcondition re-read fails loudly if DSM becomes unreachable.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyDSMWebServicePlanInput) (*mcp.CallToolResult, loginPortalApplyOutput, error) {
+		result, err := service.ApplyDSMWebServicePlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, loginPortalApplyOutput{}, err
+		}
+		return nil, loginPortalApplyOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_login_portal_application_change",
+		Title:       "Plan an application-portal change",
+		Description: "Validate a patch-only application-portal change (redirect_https, alias, http_port, https_port) keyed by app_id and return an approval plan bound to the observed portal. Classified medium risk: an alias or custom port changes how (and whether) the application is reached. The write is patch-only; sibling fields are preserved. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planApplicationPortalChangeInput) (*mcp.CallToolResult, planApplicationPortalChangeOutput, error) {
+		plan, err := service.PlanApplicationPortalChange(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planApplicationPortalChangeOutput{}, err
+		}
+		return nil, planApplicationPortalChangeOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_login_portal_application_plan",
+		Title:       "Apply an approved application-portal plan",
+		Description: "Apply an unmodified application-portal plan only while its approval hash and the observed portal still match, then re-read to verify every requested field took effect. The write is patch-only: sibling fields are preserved by merging into a freshly read portal.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyApplicationPortalPlanInput) (*mcp.CallToolResult, loginPortalApplyOutput, error) {
+		result, err := service.ApplyApplicationPortalPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, loginPortalApplyOutput{}, err
+		}
+		return nil, loginPortalApplyOutput{Result: result}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_login_portal_reverse_proxy_create",
+		Title:       "Plan a reverse-proxy rule creation",
+		Description: "Validate a reverse-proxy rule to create (description, frontend, backend, and optional custom headers) and return an approval plan bound to the COMPLETE observed rule set, so a concurrent edit invalidates a stale plan. A secret header value must use credential_ref (env:NAME or vault:<id>); it is resolved only at apply time and never stored in the plan or hash. Classified medium risk: a new rule can publish an internal service to callers that reach the frontend. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planReverseProxyCreateInput) (*mcp.CallToolResult, planReverseProxyOutput, error) {
+		plan, err := service.PlanReverseProxyCreate(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planReverseProxyOutput{}, err
+		}
+		return nil, planReverseProxyOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_login_portal_reverse_proxy_delete",
+		Title:       "Plan a reverse-proxy rule deletion",
+		Description: "Validate a reverse-proxy rule to delete (keyed by uuid) and return an approval plan bound to the COMPLETE observed rule set, so a concurrent create/delete/reorder by another session invalidates a stale plan. This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planReverseProxyDeleteInput) (*mcp.CallToolResult, planReverseProxyOutput, error) {
+		plan, err := service.PlanReverseProxyDelete(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planReverseProxyOutput{}, err
+		}
+		return nil, planReverseProxyOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_login_portal_reverse_proxy_plan",
+		Title:       "Apply an approved reverse-proxy plan",
+		Description: "Apply an unmodified reverse-proxy create or delete plan only while its approval hash and the COMPLETE observed rule set still match, then re-read to verify the rule was created (a rule now listens on the frontend) or deleted (the uuid is gone). Secret header values are resolved from their credential_ref only now, at apply time.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyReverseProxyPlanInput) (*mcp.CallToolResult, loginPortalApplyOutput, error) {
+		result, err := service.ApplyReverseProxyPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, loginPortalApplyOutput{}, err
+		}
+		return nil, loginPortalApplyOutput{Result: result}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

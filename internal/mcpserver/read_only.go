@@ -47,6 +47,16 @@ func NewReadOnly(service *application.Service, version string) *mcp.Server {
 		"apply_terminal_plan",
 		"plan_snmp_change",
 		"apply_snmp_plan",
+		// Login Portal guarded writes (WI-070). A DSM web-service change changes how
+		// DSM itself is reached (high risk); the application-portal and reverse-proxy
+		// writes change external exposure. All are stripped from the read-only gateway.
+		"plan_login_portal_dsm_change",
+		"apply_login_portal_dsm_plan",
+		"plan_login_portal_application_change",
+		"apply_login_portal_application_plan",
+		"plan_login_portal_reverse_proxy_create",
+		"plan_login_portal_reverse_proxy_delete",
+		"apply_login_portal_reverse_proxy_plan",
 		"plan_certificate_change",
 		"apply_certificate_plan",
 		"plan_filestation_change",
