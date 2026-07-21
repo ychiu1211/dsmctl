@@ -10,18 +10,18 @@ import (
 )
 
 // The JSON bodies below are the exact live shapes captured from DS918+ units:
-// 10.17.37.51 (freshly reset, no internet) and 10.17.36.255 (crashed, online
+// 192.0.2.51 (freshly reset, no internet) and 192.0.2.255 (crashed, online
 // reinstall available), plus the install-progress shape observed during a live
 // online reinstall.
 
 const notInstallState = `{"success":true,"data":{"has_disk":true,"dsinfo":{
-  "model":"DS918+","serial":"17A0PDN900703","mac_addr":"00:11:32:82:76:35","ip_addr":"10.17.37.51","hostname":"DiskStation",
+  "model":"DS918+","serial":"TESTSERIAL0001","mac_addr":"00:00:5E:00:53:01","ip_addr":"192.0.2.51","hostname":"DiskStation",
   "build_ver":"7.3.2-86009","disk_count":4,"disk_size_enough":true,"is_installing":false,"https_admin_port":"5001",
   "internet_ok":"false","internet_install_ok":false,"internet_migrate_ok":false,"internet_reinstall_ok":false,
   "internet_install_version":"","status":"not_install"}}}`
 
 const sysCrashOnlineState = `{"success":true,"data":{"has_disk":true,"dsinfo":{
-  "model":"DS918+","serial":"17C0PDN818400","mac_addr":"00:11:32:85:99:5f","ip_addr":"10.17.36.255","hostname":"DiskStation",
+  "model":"DS918+","serial":"TESTSERIAL0002","mac_addr":"00:00:5E:00:53:02","ip_addr":"192.0.2.255","hostname":"DiskStation",
   "build_ver":"7.3-81067","disk_count":4,"disk_size_enough":true,"is_installing":false,"https_admin_port":"5001",
   "internet_ok":"true","internet_install_ok":true,"internet_migrate_ok":true,"internet_reinstall_ok":true,
   "internet_reinstall_version":"DSM 7.3.1-86003","status":"sys_crash"}}}`
@@ -48,7 +48,7 @@ func TestGetStateNotInstallNoInternet(t *testing.T) {
 	if state.Status != "not_install" || state.Installed() || state.NeedsInstall() != "not_install" {
 		t.Fatalf("state = %#v", state)
 	}
-	if state.Model != "DS918+" || state.Serial != "17A0PDN900703" || state.DiskCount != 4 {
+	if state.Model != "DS918+" || state.Serial != "TESTSERIAL0001" || state.DiskCount != 4 {
 		t.Fatalf("device fields = %#v", state)
 	}
 	plan := state.OnlineInstallPlan()

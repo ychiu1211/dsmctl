@@ -4,7 +4,7 @@ import "testing"
 
 // conn is the management tuple used across the evaluator tests: the operator's
 // session source as the NAS sees it, on the DSM port, over tcp.
-var conn = Connection{Source: "10.17.36.69", Port: 5001, Protocol: "tcp"}
+var conn = Connection{Source: "192.0.2.69", Port: 5001, Protocol: "tcp"}
 
 func global(policy string, rules ...Rule) ProfileRules {
 	return ProfileRules{Profile: "default", Adapters: []AdapterPolicy{{Adapter: GlobalAdapter, Policy: policy, Rules: rules, Total: len(rules)}}}
@@ -22,10 +22,10 @@ func TestProfileAllowsSession(t *testing.T) {
 	denyAll := rule(PolicyDeny, "tcp", PortAll, "", SourceAll, "")
 	allowDSMPort := rule(PolicyAllow, "tcp", PortList, "5001", SourceAll, "")
 	allowOtherPort := rule(PolicyAllow, "tcp", PortList, "5000", SourceAll, "")
-	allowFromMe := rule(PolicyAllow, "tcp", PortList, "5001", SourceIP, "10.17.36.69")
+	allowFromMe := rule(PolicyAllow, "tcp", PortList, "5001", SourceIP, "192.0.2.69")
 	allowFromOther := rule(PolicyAllow, "tcp", PortList, "5001", SourceIP, "10.0.0.9")
-	allowNetmask := rule(PolicyAllow, "tcp", PortList, "5001", SourceNetmask, "10.17.36.0/24")
-	allowRange := rule(PolicyAllow, "tcp", PortAll, "", SourceIPRange, "10.17.36.1-10.17.36.200")
+	allowNetmask := rule(PolicyAllow, "tcp", PortList, "5001", SourceNetmask, "192.0.2.0/24")
+	allowRange := rule(PolicyAllow, "tcp", PortAll, "", SourceIPRange, "192.0.2.1-192.0.2.200")
 	allowServiceSet := rule(PolicyAllow, "tcp", PortService, "DSM", SourceAll, "")
 	denyServiceSet := rule(PolicyDeny, "tcp", PortService, "DSM", SourceAll, "")
 	allowRangeUDP := rule(PolicyAllow, "udp", PortAll, "", SourceAll, "")

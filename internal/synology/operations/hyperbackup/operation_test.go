@@ -85,16 +85,16 @@ const (
 		"last_bkp_error_code":4401,"last_bkp_result":"done","last_bkp_success_time":"2026/07/21 01:21:37",
 		"last_bkp_time":"2026/07/21 01:20:57","state":"backupable","status":"none","task_id":1}`
 	targetBody = `{"capability":{"support_download":true},"data_comp":false,"data_enc":false,
-		"format_type":"image","host_name":"Derek_3018xs","is_online":true,"last_detect_time":"",
-		"owner_id":1026,"owner_name":"deryck","support_multi_version":true,"uni_key":"0011327DEB57_1_1784567984"}`
+		"format_type":"image","host_name":"test-nas","is_online":true,"last_detect_time":"",
+		"owner_id":1026,"owner_name":"testuser","support_multi_version":true,"uni_key":"00005E005305_1_1784567984"}`
 	versionsBody = `{"backup_data_type":"data","permit_delete":{"permitted":true},"total":1,
 		"version_info_list":[{"complete_time":1784568084,"complete_time_local":"2026/07/21 01:21:24",
 			"has_history":true,"locked":false,"modify":"0","name":"2026/07/21 01:20:58","permit_delete":true,
 			"start_time_local":"2026/07/21 01:20:58","status":"success","timestamp":1784568058,"version_id":"1"}]}`
 	logsBody = `{"error_count":0,"info_count":3,"offset":3,"total":3,"warn_count":0,"log_list":[
-		{"event":"[Local][dsmctl-probe-task] Backup task finished successfully.","level":"info","time":"2026/07/21 01:21:37","user":"deryck"},
-		{"event":"[Local][dsmctl-probe-task] Backup task started.","level":"info","time":"2026/07/21 01:20:57","user":"deryck"},
-		{"event":"Setting of backup task [dsmctl-probe-task] was created","level":"info","time":"2026/07/21 01:19:57","user":"deryck"}]}`
+		{"event":"[Local][dsmctl-probe-task] Backup task finished successfully.","level":"info","time":"2026/07/21 01:21:37","user":"testuser"},
+		{"event":"[Local][dsmctl-probe-task] Backup task started.","level":"info","time":"2026/07/21 01:20:57","user":"testuser"},
+		{"event":"Setting of backup task [dsmctl-probe-task] was created","level":"info","time":"2026/07/21 01:19:57","user":"testuser"}]}`
 	vaultConfigBody  = `{"parallel_backup_limit":2}`
 	vaultTargetsBody = `{"target_list":[]}`
 	// Live payload from a real inbound image_remote backup (nas255 -> nas51).
@@ -181,7 +181,7 @@ func TestDetailComposesGetStatusTarget(t *testing.T) {
 		progress.Percent != 42 || progress.Step != "backup_data" || !progress.CanCancel {
 		t.Fatalf("progress = %#v (string counters must decode)", progress)
 	}
-	if !detail.Target.Online || detail.Target.HostName != "Derek_3018xs" || !detail.Target.MultiVersionSupport {
+	if !detail.Target.Online || detail.Target.HostName != "test-nas" || !detail.Target.MultiVersionSupport {
 		t.Fatalf("target = %#v", detail.Target)
 	}
 	if detail.Task.Status != "backup" {
@@ -219,7 +219,7 @@ func TestLogsDecodeLiveShape(t *testing.T) {
 	if logs.Total != 3 || logs.InfoCount != 3 || logs.ErrorCount != 0 || len(logs.Entries) != 3 {
 		t.Fatalf("logs = %#v", logs)
 	}
-	if logs.Entries[0].Level != "info" || logs.Entries[0].User != "deryck" ||
+	if logs.Entries[0].Level != "info" || logs.Entries[0].User != "testuser" ||
 		!strings.Contains(logs.Entries[0].Event, "finished successfully") {
 		t.Fatalf("entry = %#v", logs.Entries[0])
 	}

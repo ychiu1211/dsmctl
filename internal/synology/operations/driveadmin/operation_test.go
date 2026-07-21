@@ -362,7 +362,7 @@ func TestExecuteObservabilityReads(t *testing.T) {
 		t.Fatalf("files = %#v", files)
 	}
 
-	executor = &capturingExecutor{response: json.RawMessage(`{"activated":false,"activation_time":0,"serial_number":"1790PXN037200"}`)}
+	executor = &capturingExecutor{response: json.RawMessage(`{"activated":false,"activation_time":0,"serial_number":"TEST1234567890"}`)}
 	activation, _, err := ExecuteActivation(context.Background(), driveTarget("4.0.3-27892", true), executor)
 	if err != nil {
 		t.Fatalf("ExecuteActivation() error = %v", err)
@@ -370,7 +370,7 @@ func TestExecuteObservabilityReads(t *testing.T) {
 	if executor.request.API != ActivationAPIName || executor.request.Method != "get" {
 		t.Fatalf("request = %#v", executor.request)
 	}
-	if activation.Activated || activation.SerialNumber != "1790PXN037200" || activation.ActivationUnix != 0 {
+	if activation.Activated || activation.SerialNumber != "TEST1234567890" || activation.ActivationUnix != 0 {
 		t.Fatalf("activation = %#v", activation)
 	}
 }
@@ -381,7 +381,7 @@ func TestExecutePrivilegeListRequestShapeAndDecode(t *testing.T) {
 		"offset": 0, "total": 3,
 		"users": [
 			{"enabled": false, "name": "admin", "status": "disabled"},
-			{"enabled": true, "name": "deryck", "status": "normal"},
+			{"enabled": true, "name": "testuser", "status": "normal"},
 			{"enabled": false, "name": "sunny", "status": "normal"}
 		]
 	}`)}

@@ -115,7 +115,7 @@ func TestEncodeDecodeRuleRoundTrip(t *testing.T) {
 	original := firewall.Rule{
 		Enabled: true, Name: "web", Policy: "allow", Protocol: "tcp",
 		PortDirection: "destination", PortGroup: "ports", Ports: "5000,5001",
-		SourceGroup: "netmask", Source: "10.17.36.0/24", Log: true,
+		SourceGroup: "netmask", Source: "192.0.2.0/24", Log: true,
 	}
 	encoded := encodeRule(original)
 	section := map[string]any{"rules": []any{encoded}}
@@ -127,8 +127,8 @@ func TestEncodeDecodeRuleRoundTrip(t *testing.T) {
 
 func TestDecodeCurrentConnection(t *testing.T) {
 	data := json.RawMessage(`{"items":[
-		{"from":"10.17.36.69","who":"deryck","is_current_connected":true,"_sid":"SECRET"},
-		{"from":"10.17.36.70","who":"other","is_current_connected":false}
+		{"from":"192.0.2.69","who":"testuser","is_current_connected":true,"_sid":"SECRET"},
+		{"from":"192.0.2.70","who":"other","is_current_connected":false}
 	],"total":2}`)
 	sources, err := decodeCurrentConnection(data)
 	if err != nil {
@@ -137,7 +137,7 @@ func TestDecodeCurrentConnection(t *testing.T) {
 	if len(sources) != 2 {
 		t.Fatalf("sources = %#v", sources)
 	}
-	if sources[0].From != "10.17.36.69" || !sources[0].Current || sources[0].Who != "deryck" {
+	if sources[0].From != "192.0.2.69" || !sources[0].Current || sources[0].Who != "testuser" {
 		t.Fatalf("first source = %#v", sources[0])
 	}
 	if sources[1].Current {

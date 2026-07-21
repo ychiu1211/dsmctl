@@ -106,7 +106,7 @@ func TestExecuteGeneralDecodesLiveShape(t *testing.T) {
 	if selection.Backend != "network-general-get-v2" || selection.Version != 2 {
 		t.Fatalf("selection = %#v", selection)
 	}
-	if general.Hostname != "Derek_3018xs" || general.DefaultGateway.Interface != "eth0" {
+	if general.Hostname != "test-nas" || general.DefaultGateway.Interface != "eth0" {
 		t.Fatalf("general = %#v", general)
 	}
 	req := exec.requests[0]

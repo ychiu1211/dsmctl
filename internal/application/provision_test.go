@@ -296,7 +296,7 @@ func TestProvisionDiscoveredNASRefusesExistingNameAndMissingCreator(t *testing.T
 }
 
 func TestDeriveProvisionProfileName(t *testing.T) {
-	if got := deriveProvisionProfileName("10.17.37.51"); got != "nas-10.17.37.51" {
+	if got := deriveProvisionProfileName("192.0.2.51"); got != "nas-192.0.2.51" {
 		t.Fatalf("deriveProvisionProfileName = %q", got)
 	}
 	if got := deriveProvisionProfileName("!!!"); got != "provisioned-nas" {

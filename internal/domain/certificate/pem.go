@@ -99,7 +99,7 @@ func DesiredFromLeaf(leaf *x509.Certificate, refName string, hasIntermediate boo
 
 // sansFromLeaf collects the leaf's Subject Alternative Names as DSM's CRT.list
 // reports them: DNS names verbatim plus IP addresses in string form (e.g.
-// "10.17.36.235"). Omitting the IP SANs made an IP-covering import's
+// "192.0.2.235"). Omitting the IP SANs made an IP-covering import's
 // postcondition re-read mismatch the observed set and falsely report the cert
 // "not found in the store after apply" even though the import succeeded.
 func sansFromLeaf(leaf *x509.Certificate) []string {

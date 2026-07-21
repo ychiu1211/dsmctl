@@ -88,7 +88,7 @@ func firewallTestClient() *fakeFirewallClient {
 			"default": {Profile: "default", IsActive: true, Adapters: []synology.FirewallAdapterPolicy{adapter("global", "none")}},
 			"custom":  {Profile: "custom", Adapters: []synology.FirewallAdapterPolicy{adapter("global", "none")}},
 		},
-		sessions: []synology.FirewallSessionSource{{From: "10.17.36.69", Who: "deryck", Current: true}},
+		sessions: []synology.FirewallSessionSource{{From: "192.0.2.69", Who: "testuser", Current: true}},
 		port:     5001,
 		persist:  true,
 		caps: synology.FirewallCapabilities{
@@ -149,7 +149,7 @@ func TestGuardOverrideProceeds(t *testing.T) {
 // change when the source cannot be determined and no keep_reachable is supplied.
 func TestGuardFailsClosedWithoutSource(t *testing.T) {
 	client := firewallTestClient()
-	client.sessions = []synology.FirewallSessionSource{{From: "10.17.36.69", Current: false}} // none current
+	client.sessions = []synology.FirewallSessionSource{{From: "192.0.2.69", Current: false}} // none current
 	client.profiles["default"] = synology.FirewallProfileRules{Profile: "default", IsActive: true, Adapters: []synology.FirewallAdapterPolicy{adapter("global", "drop", allowRule("5001"))}}
 
 	_, err := planFirewallEnableWithClient(context.Background(), "lab", client, firewall.EnableChange{Enabled: true})
@@ -162,10 +162,10 @@ func TestGuardFailsClosedWithoutSource(t *testing.T) {
 // the session when the live source cannot be read, and still refuses a lockout.
 func TestGuardKeepReachableSuppliesSource(t *testing.T) {
 	client := firewallTestClient()
-	client.sessions = []synology.FirewallSessionSource{{From: "10.17.36.69", Current: false}}
+	client.sessions = []synology.FirewallSessionSource{{From: "192.0.2.69", Current: false}}
 	client.profiles["default"] = synology.FirewallProfileRules{Profile: "default", IsActive: true, Adapters: []synology.FirewallAdapterPolicy{adapter("global", "drop", allowRule("5001"))}}
 
-	plan, err := planFirewallEnableWithClient(context.Background(), "lab", client, firewall.EnableChange{Enabled: true, KeepReachable: "10.17.36.69"})
+	plan, err := planFirewallEnableWithClient(context.Background(), "lab", client, firewall.EnableChange{Enabled: true, KeepReachable: "192.0.2.69"})
 	if err != nil {
 		t.Fatalf("keep_reachable + allow rule should permit, got %v", err)
 	}
@@ -174,7 +174,7 @@ func TestGuardKeepReachableSuppliesSource(t *testing.T) {
 	}
 	// The same keep_reachable but a drop profile with no allow rule must refuse.
 	client.profiles["default"] = synology.FirewallProfileRules{Profile: "default", IsActive: true, Adapters: []synology.FirewallAdapterPolicy{adapter("global", "drop")}}
-	if _, err := planFirewallEnableWithClient(context.Background(), "lab", client, firewall.EnableChange{Enabled: true, KeepReachable: "10.17.36.69"}); err == nil {
+	if _, err := planFirewallEnableWithClient(context.Background(), "lab", client, firewall.EnableChange{Enabled: true, KeepReachable: "192.0.2.69"}); err == nil {
 		t.Fatal("keep_reachable into a deny-all profile must refuse")
 	}
 }

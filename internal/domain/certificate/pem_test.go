@@ -228,9 +228,9 @@ func TestDesiredFromLeafIncludesIPSANs(t *testing.T) {
 	key := rsaKey(t)
 	template := &x509.Certificate{
 		SerialNumber: big.NewInt(42),
-		Subject:      pkix.Name{CommonName: "10.17.36.235"},
+		Subject:      pkix.Name{CommonName: "192.0.2.235"},
 		DNSNames:     []string{"nas.example.com"},
-		IPAddresses:  []net.IP{net.ParseIP("10.17.36.235")},
+		IPAddresses:  []net.IP{net.ParseIP("192.0.2.235")},
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
@@ -249,11 +249,11 @@ func TestDesiredFromLeafIncludesIPSANs(t *testing.T) {
 		switch san {
 		case "nas.example.com":
 			hasDNS = true
-		case "10.17.36.235":
+		case "192.0.2.235":
 			hasIP = true
 		}
 	}
 	if !hasDNS || !hasIP {
-		t.Fatalf("SubjectAltNames = %v; want both nas.example.com and 10.17.36.235", desired.SubjectAltNames)
+		t.Fatalf("SubjectAltNames = %v; want both nas.example.com and 192.0.2.235", desired.SubjectAltNames)
 	}
 }

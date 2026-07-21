@@ -64,11 +64,11 @@ gotcha (live-verified): `install.cgi` rejects a chunked upload with
 `error_upload`, so the body is sent with an exact `Content-Length`. `--pat <file>`
 uses a local image instead. Documented as the `nas-install` Claude skill.
 
-Live runs (DS918+): `10.17.36.255` (sys_crash, online) → online-reinstalled DSM
-7.3.1-86003 → provisioned admin `deryck` (password in Windows Credential
-Manager). `10.17.37.51` (not_install, no device internet) → host auto-downloaded
+Live runs (DS918+): `192.0.2.255` (sys_crash, online) → online-reinstalled DSM
+7.3.1-86003 → provisioned admin `testuser` (password in Windows Credential
+Manager). `192.0.2.51` (not_install, no device internet) → host auto-downloaded
 DSM 7.3.2-86009 and offline-installed it (after fixing the Content-Length upload)
-→ provisioned admin `deryck`. (Note: a stray concurrent `admin`/empty setup login
+→ provisioned admin `testuser`. (Note: a stray concurrent `admin`/empty setup login
 makes `User.create` return 105; run provision against a clean setup session.)
 
 Follow-ons shipped this session:

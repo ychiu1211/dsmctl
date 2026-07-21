@@ -4,8 +4,8 @@ import "testing"
 
 func labInterfaces() []Interface {
 	return []Interface{
-		{Name: "eth0", IPv4: "10.17.36.235", Netmask: "255.255.248.0", GatewayV4: "10.17.39.254", UseDHCP: true, MTU: 1500, LinkStatus: LinkConnected},
-		{Name: "eth1", IPv4: "10.17.37.35", Netmask: "255.255.248.0", GatewayV4: "10.17.39.254", UseDHCP: true, MTU: 1500, LinkStatus: LinkConnected},
+		{Name: "eth0", IPv4: "192.0.2.235", Netmask: "255.255.248.0", GatewayV4: "198.51.100.254", UseDHCP: true, MTU: 1500, LinkStatus: LinkConnected},
+		{Name: "eth1", IPv4: "192.0.2.35", Netmask: "255.255.248.0", GatewayV4: "198.51.100.254", UseDHCP: true, MTU: 1500, LinkStatus: LinkConnected},
 		{Name: "eth2", IPv4: "169.254.148.8", Netmask: "255.255.0.0", UseDHCP: true, MTU: 1500, LinkStatus: LinkDisconnected},
 	}
 }
@@ -15,14 +15,14 @@ func intptr(i int) *int       { return &i }
 func boolptr(b bool) *bool    { return &b }
 
 func TestResolveManagementPathMatchesTransportNIC(t *testing.T) {
-	path := ResolveManagementPath(Transport{Host: "10.17.36.235", Port: 5001}, labInterfaces(), "10.17.39.254")
+	path := ResolveManagementPath(Transport{Host: "192.0.2.235", Port: 5001}, labInterfaces(), "198.51.100.254")
 	if path.Ambiguous {
 		t.Fatalf("path should not be ambiguous: %+v", path)
 	}
-	if path.Interface != "eth0" || path.InterfaceIP != "10.17.36.235" {
-		t.Fatalf("management NIC = %q (%q), want eth0 (10.17.36.235)", path.Interface, path.InterfaceIP)
+	if path.Interface != "eth0" || path.InterfaceIP != "192.0.2.235" {
+		t.Fatalf("management NIC = %q (%q), want eth0 (192.0.2.235)", path.Interface, path.InterfaceIP)
 	}
-	if path.DefaultGateway != "10.17.39.254" {
+	if path.DefaultGateway != "198.51.100.254" {
 		t.Fatalf("default gateway = %q", path.DefaultGateway)
 	}
 	if !path.IsManagementInterface("eth0") || path.IsManagementInterface("eth1") {
@@ -31,7 +31,7 @@ func TestResolveManagementPathMatchesTransportNIC(t *testing.T) {
 }
 
 func TestResolveManagementPathHostnameIsAmbiguous(t *testing.T) {
-	path := ResolveManagementPath(Transport{Host: "mynas.example.com", Port: 5001}, labInterfaces(), "10.17.39.254")
+	path := ResolveManagementPath(Transport{Host: "mynas.example.com", Port: 5001}, labInterfaces(), "198.51.100.254")
 	if !path.Ambiguous {
 		t.Fatalf("a hostname connection must be ambiguous: %+v", path)
 	}
@@ -43,16 +43,16 @@ func TestResolveManagementPathHostnameIsAmbiguous(t *testing.T) {
 
 func TestResolveManagementPathUnmatchedIPIsAmbiguous(t *testing.T) {
 	// A NATed/relayed address that no NIC bears.
-	path := ResolveManagementPath(Transport{Host: "192.168.99.99", Port: 5001}, labInterfaces(), "10.17.39.254")
+	path := ResolveManagementPath(Transport{Host: "192.168.99.99", Port: 5001}, labInterfaces(), "198.51.100.254")
 	if !path.Ambiguous {
 		t.Fatalf("an unmatched transport IP must be ambiguous: %+v", path)
 	}
 }
 
 func TestGuardRefusesManagementNICChange(t *testing.T) {
-	path := ResolveManagementPath(Transport{Host: "10.17.36.235", Port: 5001}, labInterfaces(), "10.17.39.254")
+	path := ResolveManagementPath(Transport{Host: "192.0.2.235", Port: 5001}, labInterfaces(), "198.51.100.254")
 	current := labInterfaces()[0] // eth0
-	change := InterfaceChange{Name: "eth0", IPv4: strptr("10.17.36.240")}
+	change := InterfaceChange{Name: "eth0", IPv4: strptr("192.0.2.240")}
 	v := EvaluateInterfaceChange(path, current, change)
 	if !v.Protected || !v.Severs {
 		t.Fatalf("changing the management NIC must be protected+severing: %+v", v)
@@ -69,8 +69,8 @@ func TestGuardRefusesManagementNICChange(t *testing.T) {
 }
 
 func TestGuardRefusesManagementNICToDHCP(t *testing.T) {
-	path := ResolveManagementPath(Transport{Host: "10.17.36.235", Port: 5001}, labInterfaces(), "10.17.39.254")
-	current := Interface{Name: "eth0", IPv4: "10.17.36.235", Netmask: "255.255.248.0", UseDHCP: false, MTU: 1500}
+	path := ResolveManagementPath(Transport{Host: "192.0.2.235", Port: 5001}, labInterfaces(), "198.51.100.254")
+	current := Interface{Name: "eth0", IPv4: "192.0.2.235", Netmask: "255.255.248.0", UseDHCP: false, MTU: 1500}
 	// Switching the management NIC to DHCP (address may change) must be refused.
 	v := EvaluateInterfaceChange(path, current, InterfaceChange{Name: "eth0", UseDHCP: boolptr(true)})
 	if v.Allowed {
@@ -79,7 +79,7 @@ func TestGuardRefusesManagementNICToDHCP(t *testing.T) {
 }
 
 func TestGuardRefusesManagementNICMTU(t *testing.T) {
-	path := ResolveManagementPath(Transport{Host: "10.17.36.235", Port: 5001}, labInterfaces(), "10.17.39.254")
+	path := ResolveManagementPath(Transport{Host: "192.0.2.235", Port: 5001}, labInterfaces(), "198.51.100.254")
 	current := labInterfaces()[0]
 	v := EvaluateInterfaceChange(path, current, InterfaceChange{Name: "eth0", MTU: intptr(9000)})
 	if v.Allowed {
@@ -88,7 +88,7 @@ func TestGuardRefusesManagementNICMTU(t *testing.T) {
 }
 
 func TestGuardAllowsNonManagementNICChange(t *testing.T) {
-	path := ResolveManagementPath(Transport{Host: "10.17.36.235", Port: 5001}, labInterfaces(), "10.17.39.254")
+	path := ResolveManagementPath(Transport{Host: "192.0.2.235", Port: 5001}, labInterfaces(), "198.51.100.254")
 	current := labInterfaces()[1] // eth1
 	v := EvaluateInterfaceChange(path, current, InterfaceChange{Name: "eth1", MTU: intptr(1400)})
 	if v.Protected || !v.Allowed {
@@ -97,7 +97,7 @@ func TestGuardAllowsNonManagementNICChange(t *testing.T) {
 }
 
 func TestGuardAmbiguousRefusesEveryInterface(t *testing.T) {
-	path := ResolveManagementPath(Transport{Host: "nas.ddns.net", Port: 5001}, labInterfaces(), "10.17.39.254")
+	path := ResolveManagementPath(Transport{Host: "nas.ddns.net", Port: 5001}, labInterfaces(), "198.51.100.254")
 	current := labInterfaces()[1] // eth1, normally non-management
 	v := EvaluateInterfaceChange(path, current, InterfaceChange{Name: "eth1", MTU: intptr(1400)})
 	if v.Allowed {
@@ -106,21 +106,21 @@ func TestGuardAmbiguousRefusesEveryInterface(t *testing.T) {
 }
 
 func TestGuardRefusesDefaultGatewayChange(t *testing.T) {
-	path := ResolveManagementPath(Transport{Host: "10.17.36.235", Port: 5001}, labInterfaces(), "10.17.39.254")
-	current := General{DefaultGatewayV4: "10.17.39.254", Hostname: "Derek_3018xs"}
-	v := EvaluateGeneralChange(path, current, GeneralChange{DefaultGatewayV4: strptr("10.17.39.1")})
+	path := ResolveManagementPath(Transport{Host: "192.0.2.235", Port: 5001}, labInterfaces(), "198.51.100.254")
+	current := General{DefaultGatewayV4: "198.51.100.254", Hostname: "test-nas"}
+	v := EvaluateGeneralChange(path, current, GeneralChange{DefaultGatewayV4: strptr("198.51.100.1")})
 	if !v.Protected || !v.Severs || v.Allowed {
 		t.Fatalf("a default-gateway change must be protected, severing, and refused: %+v", v)
 	}
-	v = EvaluateGeneralChange(path, current, GeneralChange{DefaultGatewayV4: strptr("10.17.39.1"), AllowConnectivityBreak: true})
+	v = EvaluateGeneralChange(path, current, GeneralChange{DefaultGatewayV4: strptr("198.51.100.1"), AllowConnectivityBreak: true})
 	if !v.Allowed || !v.Overridden {
 		t.Fatalf("override must allow the gateway change but flag it: %+v", v)
 	}
 }
 
 func TestGuardAllowsHostnameAndDNSChange(t *testing.T) {
-	path := ResolveManagementPath(Transport{Host: "10.17.36.235", Port: 5001}, labInterfaces(), "10.17.39.254")
-	current := General{DefaultGatewayV4: "10.17.39.254", Hostname: "Derek_3018xs", DNSPrimary: "10.17.250.253"}
+	path := ResolveManagementPath(Transport{Host: "192.0.2.235", Port: 5001}, labInterfaces(), "198.51.100.254")
+	current := General{DefaultGatewayV4: "198.51.100.254", Hostname: "test-nas", DNSPrimary: "203.0.113.253"}
 	v := EvaluateGeneralChange(path, current, GeneralChange{Hostname: strptr("renamed"), DNSPrimary: strptr("8.8.8.8")})
 	if v.Protected || !v.Allowed {
 		t.Fatalf("a hostname/DNS change must be permitted (medium risk): %+v", v)

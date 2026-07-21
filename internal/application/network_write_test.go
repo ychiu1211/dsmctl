@@ -57,18 +57,18 @@ func (c *fakeNetworkClient) ApplyNetworkInterfaceChange(_ context.Context, chang
 func networkTestClient() *fakeNetworkClient {
 	return &fakeNetworkClient{
 		general: synology.NetworkGeneral{
-			Hostname: "Derek_3018xs", DefaultGatewayV4: "10.17.39.254", DNSPrimary: "10.17.250.253",
-			DNSSecondary: "10.17.250.253", ARPIgnore: true, IPConflictDetect: true, UseDHCPDomain: true,
+			Hostname: "test-nas", DefaultGatewayV4: "198.51.100.254", DNSPrimary: "203.0.113.253",
+			DNSSecondary: "203.0.113.253", ARPIgnore: true, IPConflictDetect: true, UseDHCPDomain: true,
 		},
 		interfaces: []synology.NetworkInterface{
-			{Name: "eth0", IPv4: "10.17.36.235", Netmask: "255.255.248.0", GatewayV4: "10.17.39.254", UseDHCP: true, MTU: 1500, LinkStatus: "connected"},
-			{Name: "eth1", IPv4: "10.17.37.35", Netmask: "255.255.248.0", GatewayV4: "10.17.39.254", UseDHCP: true, MTU: 1500, LinkStatus: "connected"},
+			{Name: "eth0", IPv4: "192.0.2.235", Netmask: "255.255.248.0", GatewayV4: "198.51.100.254", UseDHCP: true, MTU: 1500, LinkStatus: "connected"},
+			{Name: "eth1", IPv4: "192.0.2.35", Netmask: "255.255.248.0", GatewayV4: "198.51.100.254", UseDHCP: true, MTU: 1500, LinkStatus: "connected"},
 			{Name: "eth2", IPv4: "169.254.148.8", Netmask: "255.255.0.0", UseDHCP: true, MTU: 1500, LinkStatus: "disconnected"},
 		},
 		caps:    synology.NetworkCapabilities{Module: "network", GeneralRead: true, InterfacesRead: true, GeneralWrite: true, InterfaceWriteWireUnverified: true, Mutations: true},
-		host:    "10.17.36.235",
+		host:    "192.0.2.235",
 		port:    5001,
-		sources: []string{"10.17.36.69"},
+		sources: []string{"192.0.2.69"},
 		persist: true,
 	}
 }
@@ -81,7 +81,7 @@ func bp(b bool) *bool       { return &b }
 
 func TestPlanRefusesManagementNICChange(t *testing.T) {
 	client := networkTestClient()
-	_, err := planNetworkInterfaceWithClient(context.Background(), "lab", client, network.InterfaceChange{Name: "eth0", IPv4: strp("10.17.36.240")})
+	_, err := planNetworkInterfaceWithClient(context.Background(), "lab", client, network.InterfaceChange{Name: "eth0", IPv4: strp("192.0.2.240")})
 	if err == nil || !strings.Contains(err.Error(), "never-sever guard refuses") {
 		t.Fatalf("expected management-NIC refusal, got %v", err)
 	}
@@ -89,7 +89,7 @@ func TestPlanRefusesManagementNICChange(t *testing.T) {
 
 func TestPlanRefusesDefaultGatewayChange(t *testing.T) {
 	client := networkTestClient()
-	_, err := planNetworkGeneralWithClient(context.Background(), "lab", client, network.GeneralChange{DefaultGatewayV4: strp("10.17.39.1")})
+	_, err := planNetworkGeneralWithClient(context.Background(), "lab", client, network.GeneralChange{DefaultGatewayV4: strp("198.51.100.1")})
 	if err == nil || !strings.Contains(err.Error(), "never-sever guard refuses") {
 		t.Fatalf("expected default-gateway refusal, got %v", err)
 	}
@@ -114,7 +114,7 @@ func TestPlanAllowsNonManagementNICChange(t *testing.T) {
 
 func TestPlanManagementNICChangeOverridden(t *testing.T) {
 	client := networkTestClient()
-	plan, err := planNetworkInterfaceWithClient(context.Background(), "lab", client, network.InterfaceChange{Name: "eth0", IPv4: strp("10.17.36.240"), AllowConnectivityBreak: true})
+	plan, err := planNetworkInterfaceWithClient(context.Background(), "lab", client, network.InterfaceChange{Name: "eth0", IPv4: strp("192.0.2.240"), AllowConnectivityBreak: true})
 	if err != nil {
 		t.Fatalf("override should allow the plan, got %v", err)
 	}
@@ -193,7 +193,7 @@ func TestGeneralPlanStaleRejected(t *testing.T) {
 
 func TestGeneralPlanNoopRejected(t *testing.T) {
 	client := networkTestClient()
-	_, err := planNetworkGeneralWithClient(context.Background(), "lab", client, network.GeneralChange{Hostname: strp("Derek_3018xs")})
+	_, err := planNetworkGeneralWithClient(context.Background(), "lab", client, network.GeneralChange{Hostname: strp("test-nas")})
 	if err == nil || !strings.Contains(err.Error(), "would not change") {
 		t.Fatalf("expected no-op rejection, got %v", err)
 	}

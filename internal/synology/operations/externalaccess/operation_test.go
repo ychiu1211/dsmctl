@@ -42,8 +42,8 @@ func targetWith(apis map[string][2]int) compatibility.Target {
 
 const (
 	accountQueryV2Body     = `{"account":"a@b.com","activated":true,"auth_key":"SECRET","is_logged_in":true}`
-	accountPackageV1Body   = `{"auth_key":"SECRET","myds_id":"511437","serial":"1790PXN037200","ds_major":"7"}`
-	quickConnectGetBody    = `{"ddns_domain":"direct.quickconnect.to","domain":"quickconnect.to","enabled":true,"myds_account":"a@b.com","region":"tw","server_alias":"myalias","server_id":"087738683"}`
+	accountPackageV1Body   = `{"auth_key":"SECRET","myds_id":"123456","serial":"TEST1234567890","ds_major":"7"}`
+	quickConnectGetBody    = `{"ddns_domain":"direct.quickconnect.to","domain":"quickconnect.to","enabled":true,"myds_account":"a@b.com","region":"tw","server_alias":"myalias","server_id":"000000000"}`
 	quickConnectRelayBody  = `{"relay_enabled":true}`
 	quickConnectStatusBody = `{"alias_status":"success","status":"connected"}`
 	quickConnectPerm       = `{"services":[{"enabled":true,"id":"dsm_portal"},{"enabled":false,"id":"file_sharing"}]}`
@@ -64,7 +64,7 @@ func TestReadAccountComposesCoreAndPackage(t *testing.T) {
 	if !selection.Supported || selection.Version != 2 {
 		t.Fatalf("selection = %#v", selection)
 	}
-	want := externalaccess.AccountState{LoggedIn: true, Activated: true, Account: "a@b.com", MyDSID: "511437", Serial: "1790PXN037200"}
+	want := externalaccess.AccountState{LoggedIn: true, Activated: true, Account: "a@b.com", MyDSID: "123456", Serial: "TEST1234567890"}
 	if !reflect.DeepEqual(state, want) {
 		t.Fatalf("state = %#v, want %#v", state, want)
 	}

@@ -122,7 +122,7 @@ func accountProtectionTestClient() *fakeAccountProtectionClient {
 			Allow: accountprotection.IPList{Kind: "allow"},
 			Block: accountprotection.IPList{Kind: "block"},
 		},
-		connections: []synology.ActiveConnection{{From: "10.17.36.69", Who: "deryck"}},
+		connections: []synology.ActiveConnection{{From: "192.0.2.69", Who: "testuser"}},
 		capabilities: synology.AccountProtectionCapabilities{
 			Module: accountprotection.ModuleName, AutoBlockRead: true, AutoBlockListRead: true, AccountProtectionRead: true, EnforceTwoFactorRead: true,
 			AutoBlockWrite: true, AutoBlockListWrite: true, AccountProtectionWrite: true, EnforceTwoFactorWrite: true, Mutations: true,
@@ -354,16 +354,16 @@ func TestListBlockAddTestNetIsMediumAndPatchOnly(t *testing.T) {
 }
 
 func TestListBlockAddActiveSourceRefusedWithoutOverride(t *testing.T) {
-	client := accountProtectionTestClient() // active connection from 10.17.36.69
-	if _, err := planAutoBlockListWithClient(context.Background(), "lab", client, accountprotection.IPListEdit{Kind: accountprotection.KindBlock, IP: "10.17.36.69"}); err == nil || !strings.Contains(err.Error(), "lock out the active connection") {
+	client := accountProtectionTestClient() // active connection from 192.0.2.69
+	if _, err := planAutoBlockListWithClient(context.Background(), "lab", client, accountprotection.IPListEdit{Kind: accountprotection.KindBlock, IP: "192.0.2.69"}); err == nil || !strings.Contains(err.Error(), "lock out the active connection") {
 		t.Fatalf("self-block error = %v", err)
 	}
 	// A subnet containing the active source is likewise refused.
-	if _, err := planAutoBlockListWithClient(context.Background(), "lab", client, accountprotection.IPListEdit{Kind: accountprotection.KindBlock, IP: "10.17.36.0/24"}); err == nil || !strings.Contains(err.Error(), "lock out") {
+	if _, err := planAutoBlockListWithClient(context.Background(), "lab", client, accountprotection.IPListEdit{Kind: accountprotection.KindBlock, IP: "192.0.2.0/24"}); err == nil || !strings.Contains(err.Error(), "lock out") {
 		t.Fatalf("self-block subnet error = %v", err)
 	}
 	// With the explicit override it proceeds and is high risk.
-	plan, err := planAutoBlockListWithClient(context.Background(), "lab", client, accountprotection.IPListEdit{Kind: accountprotection.KindBlock, IP: "10.17.36.69", AllowLockoutOverride: true})
+	plan, err := planAutoBlockListWithClient(context.Background(), "lab", client, accountprotection.IPListEdit{Kind: accountprotection.KindBlock, IP: "192.0.2.69", AllowLockoutOverride: true})
 	if err != nil {
 		t.Fatalf("override plan error = %v", err)
 	}
@@ -393,9 +393,9 @@ func TestListAllowAddBroadSubnetIsHigh(t *testing.T) {
 
 func TestListAllowRemoveActiveSourceRefusedWithoutOverride(t *testing.T) {
 	client := accountProtectionTestClient()
-	client.lists.Allow.Entries = []accountprotection.IPRule{{IP: "10.17.36.0/24"}}
+	client.lists.Allow.Entries = []accountprotection.IPRule{{IP: "192.0.2.0/24"}}
 	client.lists.Allow.Total = 1
-	if _, err := planAutoBlockListWithClient(context.Background(), "lab", client, accountprotection.IPListEdit{Kind: accountprotection.KindAllow, IP: "10.17.36.0/24", Remove: true}); err == nil || !strings.Contains(err.Error(), "expose the active connection") {
+	if _, err := planAutoBlockListWithClient(context.Background(), "lab", client, accountprotection.IPListEdit{Kind: accountprotection.KindAllow, IP: "192.0.2.0/24", Remove: true}); err == nil || !strings.Contains(err.Error(), "expose the active connection") {
 		t.Fatalf("allow-remove self-lockout error = %v", err)
 	}
 }

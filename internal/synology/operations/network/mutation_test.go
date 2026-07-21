@@ -14,7 +14,7 @@ import (
 func TestExecuteGeneralSetRequestShapeV2(t *testing.T) {
 	exec := &recordingExecutor{responses: map[string]json.RawMessage{}}
 	input := GeneralSetInput{General: network.General{
-		Hostname: "Derek_3018xs", DefaultGatewayV4: "10.17.39.254", DefaultGatewayV6: "",
+		Hostname: "test-nas", DefaultGatewayV4: "198.51.100.254", DefaultGatewayV6: "",
 		DNSManual: true, DNSPrimary: "8.8.8.8", DNSSecondary: "8.8.4.4",
 		UseDHCPDomain: true, IPv4First: false, MultiGateway: false, ARPIgnore: true, IPConflictDetect: true,
 	}}
@@ -32,7 +32,7 @@ func TestExecuteGeneralSetRequestShapeV2(t *testing.T) {
 		t.Fatal("a network write must not be marked read-only")
 	}
 	want := map[string]any{
-		"server_name": "Derek_3018xs", "gateway": "10.17.39.254", "v6gateway": "",
+		"server_name": "test-nas", "gateway": "198.51.100.254", "v6gateway": "",
 		"dns_manual": true, "dns_primary": "8.8.8.8", "dns_secondary": "8.8.4.4",
 		"use_dhcp_domain": true, "ipv4_first": false, "multi_gateway": false, "arp_ignore": true,
 		"enable_ip_conflict_detect": true,
@@ -65,7 +65,7 @@ func TestExecuteGeneralSetV1OmitsIPConflict(t *testing.T) {
 // the wire is unverified.
 func TestExecuteInterfaceSetRequestShape(t *testing.T) {
 	exec := &recordingExecutor{responses: map[string]json.RawMessage{}}
-	input := InterfaceSetInput{Interface: network.Interface{Name: "eth1", IPv4: "10.17.37.35", Netmask: "255.255.248.0", GatewayV4: "10.17.39.254", UseDHCP: true, MTU: 1500}}
+	input := InterfaceSetInput{Interface: network.Interface{Name: "eth1", IPv4: "192.0.2.35", Netmask: "255.255.248.0", GatewayV4: "198.51.100.254", UseDHCP: true, MTU: 1500}}
 	if _, _, err := ExecuteInterfaceSet(context.Background(), netTarget(2), exec, input); err != nil {
 		t.Fatalf("error = %v", err)
 	}
@@ -73,7 +73,7 @@ func TestExecuteInterfaceSetRequestShape(t *testing.T) {
 	if req.API != EthernetAPIName || req.Method != "set" {
 		t.Fatalf("request = %#v", req)
 	}
-	if req.JSONParameters["ifname"] != "eth1" || req.JSONParameters["ip"] != "10.17.37.35" || req.JSONParameters["mask"] != "255.255.248.0" {
+	if req.JSONParameters["ifname"] != "eth1" || req.JSONParameters["ip"] != "192.0.2.35" || req.JSONParameters["mask"] != "255.255.248.0" {
 		t.Fatalf("body = %#v", req.JSONParameters)
 	}
 	if req.JSONParameters["use_dhcp"] != true || req.JSONParameters["mtu"] != 1500 {
@@ -83,9 +83,9 @@ func TestExecuteInterfaceSetRequestShape(t *testing.T) {
 
 func TestDecodeCurrentSources(t *testing.T) {
 	data := json.RawMessage(`{"items":[
-		{"from":"10.17.36.69","who":"deryck","is_current_connected":false,"_sid":"SECRET"},
-		{"from":"10.17.36.69","who":"deryck"},
-		{"from":"10.17.36.70"}
+		{"from":"192.0.2.69","who":"testuser","is_current_connected":false,"_sid":"SECRET"},
+		{"from":"192.0.2.69","who":"testuser"},
+		{"from":"192.0.2.70"}
 	],"total":3}`)
 	sources := decodeCurrentSources(data)
 	if len(sources) != 2 {

@@ -128,7 +128,7 @@ Sliced read-first, then guarded write, so the read slice can ship independently.
       relay/status/permission are skipped (null) when their versioned APIs are
       absent; a missing area's API does not disable the others.
 - [x] Slice A live verification on the DSM 7.3 lab: read account, QuickConnect
-      (enabled, id `derekchiu3018`, relay on, connected, four exposed services),
+      (enabled, id `testnas3018`, relay on, connected, four exposed services),
       DDNS (no records, WAN address), and port forwarding (no router, no rules)
       with no token leak.
 - [x] Port-forwarding read view (`SYNO.Core.PortForwarding.Rules` load,
@@ -156,7 +156,7 @@ Sliced read-first, then guarded write, so the read slice can ship independently.
       `services` must be passed as the slice (a pre-marshaled string
       double-encodes to a quoted string DSM rejects).
     - **Config (enable/alias/region) and DDNS CRUD are NOT live-verified** (by
-      explicit decision): the lab's alias `derekchiu3018` is a real,
+      explicit decision): the lab's alias `testnas3018` is a real,
       globally-unique registered id that must not be changed for a test, and
       DDNS record creation registers a real public hostname the lab has no
       provider identity for. Field names come from the DSM WebAPI source; the

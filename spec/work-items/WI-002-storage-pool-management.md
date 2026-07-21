@@ -94,8 +94,8 @@ inventory fields and keep volume mutations in their own operation package.
 Enabling storage creation on a *freshly installed* NAS (and on lab hardware with off-HCL
 drives) exposed several validation gates in `internal/application/storage_management.go` that
 were too strict for the fresh-disk case. All are live-verified building an all-disk Btrfs RAID5
-on a fresh DS918+ (DSM 7.3.2, 10.17.37.51) and keeping a reused pool on another (DSM 7.3.1,
-10.17.36.255), and are covered by new unit tests:
+on a fresh DS918+ (DSM 7.3.2, 192.0.2.51) and keeping a reused pool on another (DSM 7.3.1,
+192.0.2.255), and are covered by new unit tests:
 
 - **`sys_partition_normal` disks are eligible.** A free drive on any DSM box carries the
   mirrored DSM system partition and reports `status: "sys_partition_normal"` until it joins a

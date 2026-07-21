@@ -11,15 +11,15 @@ import (
 const generalLive = `{
   "arp_ignore": true,
   "dns_manual": false,
-  "dns_primary": "10.17.250.253",
-  "dns_secondary": "10.17.250.253",
+  "dns_primary": "203.0.113.253",
+  "dns_secondary": "203.0.113.253",
   "enable_ip_conflict_detect": true,
   "enable_windomain": false,
-  "gateway": "10.17.39.254",
-  "gateway_info": {"ifname": "eth0", "ip": "10.17.36.235", "mask": "255.255.248.0", "status": "connected", "type": "lan", "use_dhcp": true},
+  "gateway": "198.51.100.254",
+  "gateway_info": {"ifname": "eth0", "ip": "192.0.2.235", "mask": "255.255.248.0", "status": "connected", "type": "lan", "use_dhcp": true},
   "ipv4_first": false,
   "multi_gateway": false,
-  "server_name": "Derek_3018xs",
+  "server_name": "test-nas",
   "use_dhcp_domain": true,
   "v6gateway": ""
 }`
@@ -29,19 +29,19 @@ func TestDecodeGeneralLive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error = %v", err)
 	}
-	if g.Hostname != "Derek_3018xs" {
+	if g.Hostname != "test-nas" {
 		t.Errorf("hostname = %q", g.Hostname)
 	}
-	if g.DefaultGatewayV4 != "10.17.39.254" || g.DefaultGatewayV6 != "" {
+	if g.DefaultGatewayV4 != "198.51.100.254" || g.DefaultGatewayV6 != "" {
 		t.Errorf("gateway v4=%q v6=%q", g.DefaultGatewayV4, g.DefaultGatewayV6)
 	}
-	if g.DNSPrimary != "10.17.250.253" || g.DNSManual {
+	if g.DNSPrimary != "203.0.113.253" || g.DNSManual {
 		t.Errorf("dns primary=%q manual=%v", g.DNSPrimary, g.DNSManual)
 	}
 	if !g.IPConflictDetect || g.MultiGateway {
 		t.Errorf("ip_conflict=%v multi_gateway=%v", g.IPConflictDetect, g.MultiGateway)
 	}
-	if g.DefaultGateway.Interface != "eth0" || !g.DefaultGateway.UseDHCP || g.DefaultGateway.IP != "10.17.36.235" {
+	if g.DefaultGateway.Interface != "eth0" || !g.DefaultGateway.UseDHCP || g.DefaultGateway.IP != "192.0.2.235" {
 		t.Errorf("gateway interface = %#v", g.DefaultGateway)
 	}
 }
@@ -61,7 +61,7 @@ func TestDecodeGeneralRejectsUnknownShape(t *testing.T) {
 // interfacesLive is the exact SYNO.Core.Network.Ethernet list body observed on
 // the lab (two connected NICs, two disconnected).
 const interfacesLive = `[
-  {"block":0,"dns":"10.17.250.253","duplex":true,"enable_vlan":false,"gateway":"10.17.39.254","ifname":"eth0","ip":"10.17.36.235","ipv6":[],"is_default_gateway":false,"mask":"255.255.248.0","max_supported_speed":1000,"mtu":1500,"mtu_config":1500,"speed":1000,"status":"connected","type":"lan","use_dhcp":true,"vlan_id":0},
+  {"block":0,"dns":"203.0.113.253","duplex":true,"enable_vlan":false,"gateway":"198.51.100.254","ifname":"eth0","ip":"192.0.2.235","ipv6":[],"is_default_gateway":false,"mask":"255.255.248.0","max_supported_speed":1000,"mtu":1500,"mtu_config":1500,"speed":1000,"status":"connected","type":"lan","use_dhcp":true,"vlan_id":0},
   {"block":0,"dns":"","duplex":true,"enable_vlan":false,"gateway":"","ifname":"eth2","ip":"169.254.148.8","ipv6":[],"is_default_gateway":false,"mask":"255.255.0.0","max_supported_speed":1000,"mtu":9000,"mtu_config":9000,"speed":-1,"status":"disconnected","type":"lan","use_dhcp":true,"vlan_id":0}
 ]`
 
@@ -74,13 +74,13 @@ func TestDecodeInterfacesLive(t *testing.T) {
 		t.Fatalf("count = %d", len(ifaces))
 	}
 	eth0 := ifaces[0]
-	if eth0.Name != "eth0" || eth0.IPv4 != "10.17.36.235" || eth0.Netmask != "255.255.248.0" {
+	if eth0.Name != "eth0" || eth0.IPv4 != "192.0.2.235" || eth0.Netmask != "255.255.248.0" {
 		t.Errorf("eth0 = %#v", eth0)
 	}
 	if eth0.MTU != 1500 || !eth0.UseDHCP || !eth0.FullDuplex || eth0.SpeedMbps != 1000 || eth0.MaxSpeedMbps != 1000 {
 		t.Errorf("eth0 link = %#v", eth0)
 	}
-	if eth0.LinkStatus != "connected" || eth0.GatewayV4 != "10.17.39.254" {
+	if eth0.LinkStatus != "connected" || eth0.GatewayV4 != "198.51.100.254" {
 		t.Errorf("eth0 status = %#v", eth0)
 	}
 	eth2 := ifaces[1]

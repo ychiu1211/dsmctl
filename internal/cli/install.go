@@ -43,7 +43,7 @@ func newInstallCommand(opts *options) *cobra.Command {
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if strings.TrimSpace(targetURL) == "" {
-				return errors.New("--url is required, e.g. http://10.17.36.255:5000")
+				return errors.New("--url is required, e.g. http://192.0.2.255:5000")
 			}
 			if createVolume && strings.TrimSpace(adminUser) == "" {
 				return errors.New("--create-volume needs --admin-user: the volume is created as the provisioned administrator")
@@ -174,7 +174,7 @@ func newInstallCommand(opts *options) *cobra.Command {
 			return nil
 		},
 	}
-	command.Flags().StringVar(&targetURL, "url", "", "Web Assistant URL of the device, e.g. http://10.17.36.255:5000")
+	command.Flags().StringVar(&targetURL, "url", "", "Web Assistant URL of the device, e.g. http://192.0.2.255:5000")
 	command.Flags().StringVar(&patFile, "pat", "", "install from a local .pat file (offline); when the device has no internet, the matching image is auto-downloaded")
 	command.Flags().BoolVar(&doInstall, "install", false, "actually perform the install (DESTRUCTIVE); without it, only report state")
 	command.Flags().BoolVar(&assumeYes, "yes", false, "skip the interactive serial confirmation (for automation)")

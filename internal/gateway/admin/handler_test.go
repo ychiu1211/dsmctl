@@ -43,7 +43,7 @@ func TestAuthenticatedLANDiscovery(t *testing.T) {
 	var received discovery.Query
 	handler.discoverer = discovererFunc(func(_ context.Context, query discovery.Query) (application.DiscoverResult, error) {
 		received = query
-		return application.DiscoverResult{Devices: []discovery.Device{{Hostname: "office-nas", Model: "DS923+", IPAddress: "10.17.32.82", IPv4Addresses: []string{"10.17.32.82"}, State: discovery.StateReady}}}, nil
+		return application.DiscoverResult{Devices: []discovery.Device{{Hostname: "office-nas", Model: "DS923+", IPAddress: "192.0.2.82", IPv4Addresses: []string{"192.0.2.82"}, State: discovery.StateReady}}}, nil
 	})
 
 	unauthorized := performJSON(handler, http.MethodPost, "/admin/api/discovery", `{"timeout_seconds":3}`, "")
@@ -57,7 +57,7 @@ func TestAuthenticatedLANDiscovery(t *testing.T) {
 	if received.Timeout != 3*time.Second {
 		t.Fatalf("discovery timeout = %s", received.Timeout)
 	}
-	if body := response.Body.String(); !strings.Contains(body, `"hostname":"office-nas"`) || !strings.Contains(body, `"ip_address":"10.17.32.82"`) {
+	if body := response.Body.String(); !strings.Contains(body, `"hostname":"office-nas"`) || !strings.Contains(body, `"ip_address":"192.0.2.82"`) {
 		t.Fatalf("discovery response = %s", body)
 	}
 	invalid := performJSON(handler, http.MethodPost, "/admin/api/discovery", `{"timeout_seconds":61}`, token)
