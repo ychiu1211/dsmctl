@@ -731,6 +731,54 @@ func TestPasswordEnrollmentValidateOnlyDoesNotStore(t *testing.T) {
 	}
 }
 
+func TestRevealPasswordReturnsStoredPasswordToAdmin(t *testing.T) {
+	dsm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		_ = req.ParseForm()
+		w.Header().Set("Content-Type", "application/json")
+		switch req.Form.Get("api") + "." + req.Form.Get("method") {
+		case "SYNO.API.Info.query":
+			fmt.Fprint(w, `{"success":true,"data":{"SYNO.API.Auth":{"path":"entry.cgi","minVersion":1,"maxVersion":7}}}`)
+		case "SYNO.API.Auth.login":
+			fmt.Fprint(w, `{"success":true,"data":{"sid":"temporary-sid"}}`)
+		case "SYNO.API.Auth.logout":
+			fmt.Fprint(w, `{"success":true,"data":{}}`)
+		default:
+			fmt.Fprint(w, `{"success":false,"error":{"code":102}}`)
+		}
+	}))
+	defer dsm.Close()
+
+	handler, repository, manager, adminSession := newTestHandler(t)
+	defer manager.Close(context.Background())
+	profile, err := repository.CreateProfile(context.Background(), state.ProfileInput{Name: "reveal", URL: dsm.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Nothing stored yet -> 404.
+	if missing := performJSON(handler, http.MethodPost, "/admin/api/profiles/reveal/credentials/password/reveal", `{}`, adminSession); missing.Code != http.StatusNotFound {
+		t.Fatalf("reveal with no password = %d, want 404", missing.Code)
+	}
+	// Enroll and store a password.
+	enroll := fmt.Sprintf(`{"account":"operator","expected_revision":%d,"password":"top-secret-pw"}`, profile.Revision)
+	if resp := performJSON(handler, http.MethodPost, "/admin/api/profiles/reveal/credentials/password", enroll, adminSession); resp.Code != http.StatusOK {
+		t.Fatalf("enroll status = %d, body=%s", resp.Code, resp.Body.String())
+	}
+	// A signed-in admin can reveal the stored plaintext.
+	response := performJSON(handler, http.MethodPost, "/admin/api/profiles/reveal/credentials/password/reveal", `{}`, adminSession)
+	if response.Code != http.StatusOK {
+		t.Fatalf("reveal status = %d, body=%s", response.Code, response.Body.String())
+	}
+	var out struct {
+		Password string `json:"password"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Password != "top-secret-pw" {
+		t.Fatalf("revealed password = %q, want the stored password", out.Password)
+	}
+}
+
 func TestAdminWebLoginEnrollmentStoresRenewableVaultSession(t *testing.T) {
 	dsm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		_ = req.ParseForm()

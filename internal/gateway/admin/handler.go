@@ -451,6 +451,8 @@ func (h *Handler) profile(w http.ResponseWriter, req *http.Request) {
 		h.credentialStatus(w, req, name)
 	case "credentials/password":
 		h.passwordEnrollment(w, req, name)
+	case "credentials/password/reveal":
+		h.revealPassword(w, req, name)
 	case "credentials/session":
 		h.removeSession(w, req, name)
 	case "credentials/trusted-device":
@@ -917,6 +919,28 @@ func (h *Handler) credentialStatus(w http.ResponseWriter, req *http.Request, nam
 		"password_stored": profile.PasswordStored, "trusted_device_stored": profile.TrustedDeviceStored,
 		"session": meta,
 	})
+}
+
+// revealPassword returns the stored plaintext password for a NAS to the
+// signed-in administrator. It is admin-session-gated (like every other route
+// here) and audited as credential.reveal; it is never exposed on the MCP
+// surface. POST so the plaintext response is not cached.
+func (h *Handler) revealPassword(w http.ResponseWriter, req *http.Request, name string) {
+	if req.Method != http.MethodPost {
+		methodNotAllowed(w, http.MethodPost)
+		return
+	}
+	password, err := h.repository.RevealPassword(req.Context(), name)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "no password stored for this NAS")
+			return
+		}
+		writeRepositoryError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]string{"nas": name, "password": password})
 }
 
 func (h *Handler) passwordEnrollment(w http.ResponseWriter, req *http.Request, name string) {
@@ -1435,6 +1459,8 @@ func adminAuditAction(req *http.Request) string {
 		return "approval.lifecycle"
 	case strings.HasPrefix(path, "/admin/api/audit"):
 		return "audit.query"
+	case strings.HasSuffix(path, "/credentials/password/reveal"):
+		return "credential.reveal"
 	case strings.Contains(path, "/credentials/") || strings.Contains(path, "/weblogin/"):
 		return "credential.manage"
 	case strings.Contains(path, "/secrets") || strings.HasPrefix(path, "/admin/api/orphan-secrets"):
