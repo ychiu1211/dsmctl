@@ -1210,6 +1210,21 @@ type getDirectoryGroupsOutput struct {
 	Groups synology.DirectoryGroups `json:"groups" jsonschema:"Synced domain/LDAP groups, scoped to the active mode"`
 }
 
+type getKMIPInput struct {
+	NAS string `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
+}
+
+type getKMIPCapabilitiesOutput struct {
+	NAS          string                       `json:"nas" jsonschema:"NAS profile used for the request"`
+	Capabilities synology.KMIPCapabilities    `json:"capabilities" jsonschema:"KMIP read surface currently exposed by dsmctl"`
+	Report       synology.CompatibilityReport `json:"report" jsonschema:"Discovered APIs and the selected KMIP compatibility backend"`
+}
+
+type getKMIPStatusOutput struct {
+	NAS    string              `json:"nas" jsonschema:"NAS profile used for the request"`
+	Status synology.KMIPStatus `json:"status" jsonschema:"KMIP role/status: local server and external client configuration with non-secret certificate bindings"`
+}
+
 type planResourceRecordingChangeInput struct {
 	NAS     string                 `json:"nas,omitempty" jsonschema:"NAS profile name; omit to use the configured default"`
 	Request resmon.RecordingChange `json:"request" jsonschema:"History-recording toggle intent; set enable to true or false"`
@@ -4003,6 +4018,32 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getDirectoryGroupsOutput{}, err
 		}
 		return nil, getDirectoryGroupsOutput{NAS: result.NAS, Groups: result.Groups}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_kmip_capabilities",
+		Title:       "Get KMIP capabilities",
+		Description: "Report whether the KMIP (Key Management Interoperability Protocol) status read is available for a NAS and the DSM API backend selected, plus whether the NAS itself advertises KMIP support (DSM support_kmip). KMIP is DSM-core (Storage Manager, SYNO.Storage.CGI.KMIP); a DSM build without the family is reported as not supported without disabling other modules. This tool never changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getKMIPInput) (*mcp.CallToolResult, getKMIPCapabilitiesOutput, error) {
+		result, err := service.GetKMIPCapabilities(ctx, input.NAS)
+		if err != nil {
+			return nil, getKMIPCapabilitiesOutput{}, err
+		}
+		return nil, getKMIPCapabilitiesOutput{NAS: result.NAS, Capabilities: result.Capabilities, Report: result.Report}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_kmip_status",
+		Title:       "Get KMIP status",
+		Description: "Read the Control Panel / Storage Manager KMIP status: whether this NAS runs a local KMIP server (holding keys for other Synology devices) and/or acts as a KMIP client escrowing its own keys to an external KMIP server, the external server it targets, last-connection health, and the non-secret certificate identities bound to each role. Private keys, escrowed/wrapped key material, pre-shared secrets, and client credentials are never surfaced. A NAS that reports KMIP as unsupported reads successfully as the disabled state. This tool never changes DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getKMIPInput) (*mcp.CallToolResult, getKMIPStatusOutput, error) {
+		result, err := service.GetKMIPStatus(ctx, input.NAS)
+		if err != nil {
+			return nil, getKMIPStatusOutput{}, err
+		}
+		return nil, getKMIPStatusOutput{NAS: result.NAS, Status: result.Status}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

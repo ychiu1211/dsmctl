@@ -784,6 +784,69 @@ whose only account is a domain account), and — like the other guarded modules 
 will supply the bind/join password via `credential_ref` and be excluded from the
 read-only gateway.
 
+## KMIP key management (read-only)
+
+DSM's Control Panel → Security / Storage Manager KMIP surface configures how
+encryption keys are managed via the Key Management Interoperability Protocol:
+whether this NAS runs a **local KMIP server** (holding keys for other Synology
+devices) and/or acts as a **KMIP client** escrowing its own encrypted-share keys
+to an external KMIP server, plus each role's connection status and bound
+certificate identity.
+
+```console
+dsmctl kmip capabilities --nas office
+dsmctl kmip status --nas office --json
+```
+
+- **One combined config API.** The family is `SYNO.Storage.CGI.KMIP` (v1), whose
+  only read method is `get`; it returns both roles at once. DSM exposes **no**
+  split client/server API families and **no** separate escrowed-key or
+  registered-client list method — every candidate (`list`, `query`, `status`,
+  `list_client`, `list_key`, `test`, …) returns code 103 "method does not exist",
+  so there is no key/object inventory to surface. The family lives under
+  `SYNO.Storage.CGI.*` (Storage Manager) and is **DSM-core** — no package gates
+  it.
+- **Two support signals.** `kmip.read` (the capability) is supported whenever the
+  API family is advertised (normal on DSM 7.x). The separate `support_kmip` field
+  reports whether the NAS model/edition actually offers KMIP; a NAS that reports
+  `support_kmip:"no"` still **reads successfully** as the disabled state (the
+  honest not-configured view) rather than erroring. A DSM build without the family
+  reports `(not supported)` and fails closed.
+- **Status** surfaces the local server (enabled, listening port, key-database
+  location, bound certificate), the client (enabled, target external server
+  address/port, connected-server name, last-connection health, bound
+  certificate), and the raw `kmip_mode`. Ports default to `5696`.
+
+**Secret suppression is mandatory on read.** KMIP handles cryptographic key
+material. The decoder reads an explicit non-secret whitelist only — enable flags,
+hostnames, ports, the key-database path, connection status, and non-secret
+certificate-binding metadata (id, subject/issuer common name, fingerprint,
+not-after). It never reads a private key, escrowed/wrapped/managed key bytes, a
+pre-shared secret, a passphrase, or a client credential, and never a whole-object
+passthrough. A unit test injects `private_key` / `key_material` / `secret` /
+`passphrase` / `password` / `wrapped_key` / `managed_key` / `pre_shared_key`
+canaries into the root and both certificate blocks and asserts the re-encoded
+model carries no trace (`TestDecodersNeverLeakSecrets`), and a live `--json` grep
+confirms it.
+
+MCP exposes the same reads through `get_kmip_capabilities` and `get_kmip_status`.
+Both are read-only and never change DSM.
+
+Verified live on DSM 7.3-81168 (DS3018xs, KMIP unconfigured): the family is
+advertised (`SYNO.Storage.CGI.KMIP`, path `entry.cgi`, v1-1) and `get` returns
+`support_kmip:"no"`, `client_enable:false`, `server_enable:false`,
+`conn_success:false`, string ports `kmip_server_port`/`kmip_conn_server_port`
+(`"5696"`), empty `kmip_server`/`kmip_conn_server_desc`/`kmip_db_loc`/`kmip_mode`,
+and `client_cert_info`/`server_cert_info` `null`. Because the lab is unconfigured,
+the populated `*_cert_info` object shape is wire-unverified — the certificate
+binding decodes leniently from a conservative non-secret metadata whitelist (an
+unknown/absent key yields an empty field, never key material). The enable/disable
+server, configure/clear client, and certificate-bind guarded writes are a
+deferred follow-on and are **HIGH risk** (each changes security posture and can
+render encrypted shares unmountable), will supply the client private key /
+credential via `credential_ref`, and — like the other guarded modules — will be
+excluded from the read-only gateway.
+
 ## Adding another module
 
 Add a dedicated type under `internal/domain/controlpanel`, an operation package

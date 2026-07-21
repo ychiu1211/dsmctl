@@ -1,7 +1,7 @@
 ---
 id: WI-079
 title: KMIP key management
-status: proposed
+status: in_progress
 priority: P3
 owner: ""
 depends_on: [WI-006]
@@ -137,19 +137,24 @@ Sliced read-first, then guarded write, so the read slice ships independently.
 
 ## Acceptance criteria
 
-- [ ] Slice A: `kmip capabilities|status` (CLI) and the matching `get_kmip_*`
+- [x] Slice A: `kmip capabilities|status` (CLI) and the matching `get_kmip_*`
       MCP tool(s) return normalized client/server role, connection status, and
       certificate binding; escrowed-key output (if any) is identifiers/metadata
       only, and a unit test asserts no key bytes, private-key material, or KMIP
       credential ever appear in the decoded state or `--json` output.
-- [ ] The exact `SYNO.Core.KMIP.*` family, versions, methods, and read fields
-      are confirmed with a throwaway `DSMCTL_DUMP` probe on the lab and recorded
-      in the memory map before the decoder is finalized; malformed shapes error
-      rather than returning an empty success.
-- [ ] Compatibility: `kmip.read` selects its own backend and reports a stable
+      (`TestDecodersNeverLeakSecrets`; live `--json` on the lab confirmed.)
+- [x] The exact family, versions, methods, and read fields are confirmed with a
+      throwaway live probe on the lab and recorded in the map before the decoder
+      is finalized; malformed shapes error rather than returning an empty success.
+      **Correction: the real family is `SYNO.Storage.CGI.KMIP` v1 `get` (a single
+      combined config API, DSM-core under Storage Manager), NOT the spec's guessed
+      `SYNO.Core.KMIP.*`.** No split client/server families and no escrowed-key /
+      registered-client list method exist (all returned code 103).
+- [x] Compatibility: `kmip.read` selects its own backend and reports a stable
       operation/API/version; on a NAS/DSM without KMIP the module reports
       `(not supported)` and does not disable or error any other Control Panel
-      module.
+      module. (A NAS with the family present but `support_kmip:"no"` reads
+      successfully as the disabled state — the lab's live path.)
 - [ ] Slice B: KMIP client configure/detach and local-server enable/disable via
       guarded hash-bound plan/apply, each with a request-capture test and a
       postcondition re-read; every mutation classified HIGH risk; the read-only

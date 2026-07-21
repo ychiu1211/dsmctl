@@ -81,6 +81,8 @@ type Client interface {
 	DirectoryUsersList(ctx context.Context) (synology.DirectoryUsers, error)
 	DirectoryGroupsList(ctx context.Context) (synology.DirectoryGroups, error)
 	DirectoryCapabilitiesState(ctx context.Context) (synology.DirectoryCapabilities, synology.CompatibilityReport, error)
+	KMIPStatusState(ctx context.Context) (synology.KMIPStatus, error)
+	KMIPCapabilitiesState(ctx context.Context) (synology.KMIPCapabilities, synology.CompatibilityReport, error)
 	ResourceMonitorState(ctx context.Context) (synology.ResourceUtilization, error)
 	ResourceMonitorHistory(ctx context.Context, query resmon.HistoryQuery) (synology.ResourceHistory, error)
 	ResourceMonitorSetting(ctx context.Context) (synology.ResourceRecordingSetting, error)

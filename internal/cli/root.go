@@ -51,6 +51,7 @@ func New(version string) *cobra.Command {
 		newHardwareCommand(opts),
 		newInstallCommand(opts),
 		newFirewallCommand(opts),
+		newKMIPCommand(opts),
 		newLogCommand(opts),
 		newNASCommand(opts),
 		newNetworkCommand(opts),
