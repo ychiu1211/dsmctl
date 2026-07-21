@@ -402,6 +402,52 @@ func decodeLogs(data json.RawMessage) (hyperbackup.Logs, error) {
 	return logs, nil
 }
 
+func decodeCandidateDir(data json.RawMessage) (string, error) {
+	var resp struct {
+		CandidateDir *string `json:"candidate_dir"`
+	}
+	if err := unmarshalObject(data, "Hyper Backup candidate directory", &resp); err != nil {
+		return "", err
+	}
+	if resp.CandidateDir == nil || strings.TrimSpace(*resp.CandidateDir) == "" {
+		return "", errors.New("decode Hyper Backup candidate directory: required field \"candidate_dir\" is missing")
+	}
+	return strings.TrimSpace(*resp.CandidateDir), nil
+}
+
+func decodeRepositoryCreate(data json.RawMessage) (int, error) {
+	var resp struct {
+		RepoID *flexInt `json:"repo_id"`
+	}
+	if err := unmarshalObject(data, "Hyper Backup repository create result", &resp); err != nil {
+		return 0, err
+	}
+	if resp.RepoID == nil {
+		return 0, errors.New("decode Hyper Backup repository create result: required field \"repo_id\" is missing")
+	}
+	return int(*resp.RepoID), nil
+}
+
+// decodeTaskCreate reads the created task id. Task.create has been observed to
+// answer HTTP 200 with an empty body on success (lab, image_local), so an
+// empty or id-less response decodes to 0 and the caller recovers the id from
+// the postcondition re-read instead of failing a create that DSM accepted.
+func decodeTaskCreate(data json.RawMessage) (int, error) {
+	if len(bytes.TrimSpace(data)) == 0 {
+		return 0, nil
+	}
+	var resp struct {
+		TaskID *flexInt `json:"task_id"`
+	}
+	if err := unmarshalObject(data, "Hyper Backup task create result", &resp); err != nil {
+		return 0, err
+	}
+	if resp.TaskID == nil {
+		return 0, nil
+	}
+	return int(*resp.TaskID), nil
+}
+
 func decodeVaultConfig(data json.RawMessage) (hyperbackup.Vault, error) {
 	var resp struct {
 		ParallelBackupLimit *flexInt `json:"parallel_backup_limit"`

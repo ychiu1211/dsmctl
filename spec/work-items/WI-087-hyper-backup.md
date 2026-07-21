@@ -53,6 +53,19 @@ changes):
   currently running one; apply re-plans and fails on stale state; postcondition
   re-reads status (run: task is running or has a fresh last-backup time;
   cancel: task is no longer actively backing up).
+- **Create a folder backup task** (Slice B, added 2026-07-21) — the apply
+  runs `SYNO.Backup.Target` v1 `get_candidate_dir` (destination
+  authentication/share probe + directory proposal) → `SYNO.Backup.Repository`
+  v1 `create` → `SYNO.Backup.Task` v1 `create` (empty-body success tolerated;
+  the postcondition re-read recovers the task id). Destination modes:
+  `local_share` (image_local), `target_nas` (a dsmctl profile — host, account,
+  and the stored credential resolved at apply via the manager's keyring-first
+  resolver; nothing secret in the plan), or `host`+`account`+`password_ref`.
+  Remote transfers default to port 6281 with transfer encryption on and
+  `ssl_trust_mode:"ignore"` (no certificate verification). The plan binds to
+  the sorted set of existing task names (collision refusal + drift
+  detection). Created tasks are unscheduled. `pwd` is marked as an encrypted
+  parameter so plain-HTTP profiles get DSM's transport envelope.
 
 ## Non-goals (deferred)
 

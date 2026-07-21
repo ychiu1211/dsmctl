@@ -146,15 +146,48 @@ func (c *Client) HyperBackupVault(ctx context.Context) (HyperBackupVault, error)
 	return vault, nil
 }
 
-// ApplyHyperBackupTaskChange performs a guarded task action (backup now or
-// cancel). The caller (application plan/apply) has already validated the
-// change and confirmed the target task's state.
-func (c *Client) ApplyHyperBackupTaskChange(ctx context.Context, change HyperBackupTaskChange) (HyperBackupTaskMutationResult, error) {
+// HyperBackupTaskSecrets carries the destination credential a task create
+// resolved at apply time (from a dsmctl profile's stored credential or a
+// credential reference). It exists only in memory for the DSM calls and is
+// never part of plans, results, or logs.
+type HyperBackupTaskSecrets struct {
+	DestinationHost     string
+	DestinationAccount  string
+	DestinationPassword string
+	DestinationShare    string
+	DestinationPort     int
+	TransferEncryption  bool
+}
+
+// ApplyHyperBackupTaskChange performs a guarded task action (backup now,
+// cancel, or create). The caller (application plan/apply) has already
+// validated the change, confirmed the target task's state, and resolved the
+// destination credential for a create.
+func (c *Client) ApplyHyperBackupTaskChange(ctx context.Context, change HyperBackupTaskChange, secrets HyperBackupTaskSecrets) (HyperBackupTaskMutationResult, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if err := c.preparePackageScopedTargetLocked(ctx, hyperbackupops.APINames()...); err != nil {
 		return HyperBackupTaskMutationResult{}, fmt.Errorf("prepare Hyper Backup mutation target: %w", err)
+	}
+	if change.Action == hyperbackup.TaskActionCreate {
+		if change.Create == nil {
+			return HyperBackupTaskMutationResult{}, fmt.Errorf("a create action requires the create description")
+		}
+		input := hyperbackupops.TaskCreateInput{
+			Spec:     *change.Create,
+			Host:     secrets.DestinationHost,
+			Account:  secrets.DestinationAccount,
+			Password: secrets.DestinationPassword,
+			Share:    secrets.DestinationShare,
+			Port:     secrets.DestinationPort,
+			SSL:      secrets.TransferEncryption,
+		}
+		result, _, err := hyperbackupops.ExecuteTaskCreate(ctx, c.target, lockedExecutor{client: c}, input)
+		if err != nil {
+			return HyperBackupTaskMutationResult{}, hyperBackupReadError("task create", c.hyperBackupEvidenceLocked(hyperbackupops.PackageID), err)
+		}
+		return result, nil
 	}
 	result, _, err := hyperbackupops.ExecuteTaskRun(ctx, c.target, lockedExecutor{client: c}, change)
 	if err != nil {
@@ -181,6 +214,7 @@ func (c *Client) HyperBackupCapabilities(ctx context.Context) (HyperBackupCapabi
 		hyperbackupops.SelectLogs,
 		hyperbackupops.SelectVault,
 		hyperbackupops.SelectTaskRun,
+		hyperbackupops.SelectTaskCreate,
 	}
 	selections := make([]compatibility.Selection, 0, len(selectors))
 	for _, selectOperation := range selectors {
@@ -198,6 +232,7 @@ func (c *Client) HyperBackupCapabilities(ctx context.Context) (HyperBackupCapabi
 		hyperbackupops.LogReadCapabilityName,
 		hyperbackupops.VaultReadCapabilityName,
 		hyperbackupops.TaskRunCapabilityName,
+		hyperbackupops.TaskCreateCapabilityName,
 	}
 	for index, name := range capabilityNames {
 		if supported(index) {
@@ -214,6 +249,7 @@ func (c *Client) HyperBackupCapabilities(ctx context.Context) (HyperBackupCapabi
 		LogRead:      supported(3),
 		VaultRead:    supported(4),
 		TaskRun:      supported(5),
+		TaskCreate:   supported(6),
 	}
 	return capabilities, c.target.Report(selections...), nil
 }

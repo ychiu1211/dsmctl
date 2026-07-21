@@ -299,6 +299,85 @@ func TestTaskCancelSendsObservedTaskState(t *testing.T) {
 	}
 }
 
+func TestTaskCreateRemoteFlow(t *testing.T) {
+	target := hbTarget("4.2.2-4262", "")
+	executor := &captureExecutor{responses: map[string]string{
+		"SYNO.Backup.Target get_candidate_dir": `{"candidate_dir":"DiskStation_1","deststatus":0}`,
+		"SYNO.Backup.Repository create":        `{"repo_id":7}`,
+		"SYNO.Backup.Task create":              `{"task_id":9,"reboot_is_needed_before_backup":false}`,
+	}}
+	input := TaskCreateInput{
+		Spec: hyperbackup.TaskCreate{
+			TaskName:      "nightly",
+			SourceFolders: []string{"/homes"},
+		},
+		Host: "10.17.37.51", Account: "deryck", Password: "secret",
+		Share: "hb_vault", Port: 6281, SSL: true,
+	}
+	result, _, err := ExecuteTaskCreate(context.Background(), target, executor, input)
+	if err != nil {
+		t.Fatalf("ExecuteTaskCreate() error = %v", err)
+	}
+	if result.TaskID != 9 || result.RepositoryID != 7 || result.Directory != "DiskStation_1" || result.Method != "create" {
+		t.Fatalf("result = %#v", result)
+	}
+	if len(executor.requests) != 3 {
+		t.Fatalf("requests = %d, want candidate->repository->task", len(executor.requests))
+	}
+	repo := executor.requests[1]
+	if repo.API != RepositoryAPIName || repo.JSONParameters["transfer_type"] != "image_remote" ||
+		repo.JSONParameters["dest"] != "10.17.37.51" || repo.JSONParameters["target_id"] != "DiskStation_1" ||
+		repo.JSONParameters["is_webapi_authen"] != false || repo.JSONParameters["ssl_trust_mode"] != "ignore" {
+		t.Fatalf("repository create params = %#v", repo.JSONParameters)
+	}
+	if len(repo.EncryptedParameters) != 1 || repo.EncryptedParameters[0] != "pwd" {
+		t.Fatalf("pwd must be marked for transport protection: %#v", repo.EncryptedParameters)
+	}
+	task := executor.requests[2]
+	if task.JSONParameters["action"] != "create" || task.JSONParameters["repo_id"] != 7 {
+		t.Fatalf("task create params = %#v", task.JSONParameters)
+	}
+	source, ok := task.JSONParameters["source"].(map[string]any)
+	if !ok {
+		t.Fatalf("task create source = %#v", task.JSONParameters["source"])
+	}
+	folders, ok := source["file_list"].([]string)
+	if !ok || len(folders) != 1 || folders[0] != "/homes" {
+		t.Fatalf("file_list = %#v", source["file_list"])
+	}
+}
+
+func TestTaskCreateLocalOmitsRemoteAuth(t *testing.T) {
+	target := hbTarget("4.2.2-4262", "")
+	executor := &captureExecutor{responses: map[string]string{
+		"SYNO.Backup.Target get_candidate_dir": `{"candidate_dir":"Box_1","deststatus":0}`,
+		"SYNO.Backup.Repository create":        `{"repo_id":2}`,
+		// Task.create can answer an empty body on success (lab-observed).
+		"SYNO.Backup.Task create": ``,
+	}}
+	input := TaskCreateInput{
+		Spec:  hyperbackup.TaskCreate{TaskName: "local", SourceFolders: []string{"/Share/data"}, Directory: "custom_dir"},
+		Share: "Backups",
+	}
+	result, _, err := ExecuteTaskCreate(context.Background(), target, executor, input)
+	if err != nil {
+		t.Fatalf("ExecuteTaskCreate() error = %v", err)
+	}
+	if result.TaskID != 0 || result.RepositoryID != 2 || result.Directory != "custom_dir" {
+		t.Fatalf("result = %#v (empty create body must fall back to postcondition id recovery)", result)
+	}
+	repo := executor.requests[1]
+	if repo.JSONParameters["transfer_type"] != "image_local" || repo.JSONParameters["share"] != "Backups" {
+		t.Fatalf("repository create params = %#v", repo.JSONParameters)
+	}
+	if _, hasPwd := repo.JSONParameters["pwd"]; hasPwd {
+		t.Fatalf("local create must not carry credentials: %#v", repo.JSONParameters)
+	}
+	if repo.JSONParameters["target_id"] != "custom_dir" {
+		t.Fatalf("requested directory must override the candidate: %#v", repo.JSONParameters["target_id"])
+	}
+}
+
 func TestFailsClosedWithoutPackage(t *testing.T) {
 	target := hbTarget("", "")
 	if _, _, err := ExecuteTasks(context.Background(), target, routeExecutor{t: t, routes: map[string]string{}}); !compatibility.IsUnsupported(err) {

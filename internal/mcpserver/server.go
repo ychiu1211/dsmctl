@@ -2607,7 +2607,7 @@ func New(service *application.Service, version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "plan_hyper_backup_task_change",
 		Title:       "Plan a Hyper Backup task action",
-		Description: "Validate a run-backup-now or cancel request for one backup task and return an approval plan bound to the observed task state (an apply fails if the task has since started, finished, or changed). This tool never mutates DSM.",
+		Description: "Validate a run-backup-now or cancel request for one backup task, or a create request for a new folder-backup task (destination: a local shared folder, another NAS known to dsmctl via target_nas, or an explicit host with a password_ref), and return an approval plan bound to the observed task state. Destination credentials are resolved only at apply and never enter the plan. This tool never mutates DSM.",
 		Annotations: readOnlyAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planHyperBackupTaskChangeInput) (*mcp.CallToolResult, planHyperBackupTaskChangeOutput, error) {
 		plan, err := service.PlanHyperBackupTaskChange(ctx, input.NAS, input.Request)
@@ -2620,7 +2620,7 @@ func New(service *application.Service, version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "apply_hyper_backup_task_plan",
 		Title:       "Apply an approved Hyper Backup task plan",
-		Description: "Apply an unmodified task plan only while its approval hash and the observed task state still match, then verify the postcondition (the run started, or the running backup stopped). Running a backup writes a new version to the destination; canceling records the interrupted run with result cancel.",
+		Description: "Apply an unmodified task plan only while its approval hash and the observed task state still match, then verify the postcondition (the run started, the running backup stopped, or the created task exists). Running a backup writes a new version to the destination; canceling records the interrupted run with result cancel; creating registers a repository, creates the destination directory, and stores the destination credential in Hyper Backup's configuration on the source NAS.",
 		Annotations: mutationAnnotations(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyHyperBackupTaskPlanInput) (*mcp.CallToolResult, applyHyperBackupTaskPlanOutput, error) {
 		result, err := service.ApplyHyperBackupTaskPlan(ctx, input.Plan, input.ApprovalHash)

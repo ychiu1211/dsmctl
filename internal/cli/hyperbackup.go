@@ -217,7 +217,7 @@ func newBackupTaskPlanCommand(opts *options) *cobra.Command {
 	var inputPath, outputPath string
 	command := &cobra.Command{
 		Use:   "plan",
-		Short: "Validate a backup/cancel task action and emit an approval plan as JSON",
+		Short: "Validate a backup/cancel/create task request and emit an approval plan as JSON",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			var request hyperbackup.TaskChange
@@ -288,6 +288,7 @@ func writeBackupCapabilities(cmd *cobra.Command, result application.HyperBackupC
 	fmt.Fprintf(writer, "Log read:\t%s\n", yesNo(c.LogRead))
 	fmt.Fprintf(writer, "Vault read:\t%s\n", yesNo(c.VaultRead))
 	fmt.Fprintf(writer, "Task run/cancel (guarded):\t%s\n", yesNo(c.TaskRun))
+	fmt.Fprintf(writer, "Task create (guarded):\t%s\n", yesNo(c.TaskCreate))
 	fmt.Fprintln(writer, "\nOPERATIONS")
 	fmt.Fprintln(writer, "OPERATION\tSUPPORTED\tBACKEND\tAPI\tVERSION")
 	for _, operation := range result.Report.Operations {

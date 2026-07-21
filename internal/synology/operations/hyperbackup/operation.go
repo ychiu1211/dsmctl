@@ -26,6 +26,7 @@ const VaultPackageID = "HyperBackupVault"
 const (
 	TaskAPIName        = "SYNO.Backup.Task"
 	TargetAPIName      = "SYNO.Backup.Target"
+	RepositoryAPIName  = "SYNO.Backup.Repository"
 	VersionAPIName     = "SYNO.Backup.Version"
 	LogAPIName         = "SYNO.SDS.Backup.Client.Common.Log"
 	VaultConfigAPIName = "SYNO.Backup.Service.VersionBackup.Config"
@@ -37,6 +38,7 @@ const (
 	LogReadCapabilityName     = "hyper_backup.log.read"
 	VaultReadCapabilityName   = "hyper_backup.vault.read"
 	TaskRunCapabilityName     = "hyper_backup.task.run"
+	TaskCreateCapabilityName  = "hyper_backup.task.create"
 )
 
 // baselinePackage gates the client-side variants on Hyper Backup 4.x, the
@@ -301,9 +303,152 @@ var taskRunOperation = compatibility.Operation[hyperbackup.TaskChange, hyperback
 	},
 }
 
+// TaskCreateInput is the fully resolved input for the create operation. The
+// application layer has already resolved the destination (profile or
+// credential reference) into host/account/password; the password exists only
+// in memory for the DSM calls and is never logged (the client's per-request
+// log records names, not parameter values).
+type TaskCreateInput struct {
+	Spec hyperbackup.TaskCreate
+	// Destination resolution. Host is empty for the local mode.
+	Host     string
+	Account  string
+	Password string
+	Share    string
+	Port     int
+	SSL      bool
+}
+
+// destinationParameters builds the destination half of every create-flow call
+// (candidate-dir proposal, repository create, task create), live-verified on
+// 4.2.2 for both image_local and image_remote.
+func (input TaskCreateInput) destinationParameters() (map[string]any, []string) {
+	if input.Host == "" {
+		return map[string]any{
+			"target_type":   "image",
+			"transfer_type": "image_local",
+			"share":         input.Share,
+		}, nil
+	}
+	return map[string]any{
+		"target_type":      "image",
+		"transfer_type":    "image_remote",
+		"dest":             input.Host,
+		"port":             input.Port,
+		"sslcheck":         input.SSL,
+		"ssl_trust_mode":   "ignore",
+		"verify_cert":      false,
+		"is_webapi_authen": false,
+		"account":          input.Account,
+		"pwd":              input.Password,
+		"share":            input.Share,
+	}, []string{"pwd"}
+}
+
+var taskCreateOperation = compatibility.Operation[TaskCreateInput, hyperbackup.TaskMutationResult]{
+	Name: TaskCreateCapabilityName,
+	Variants: []compatibility.Variant[TaskCreateInput, hyperbackup.TaskMutationResult]{
+		{
+			Name: "hyperbackup-task-create-v1", API: TaskAPIName, Version: 1, Priority: 10,
+			Match: compatibility.All(
+				compatibility.APIVersion(TaskAPIName, 1),
+				compatibility.APIVersion(TargetAPIName, 1),
+				baselinePackage,
+			),
+			Execute: func(ctx context.Context, executor compatibility.Executor, input TaskCreateInput) (hyperbackup.TaskMutationResult, error) {
+				destination, secretNames := input.destinationParameters()
+				withDestination := func(extra map[string]any) map[string]any {
+					merged := make(map[string]any, len(destination)+len(extra))
+					for k, v := range destination {
+						merged[k] = v
+					}
+					for k, v := range extra {
+						merged[k] = v
+					}
+					return merged
+				}
+				// The candidate-dir proposal doubles as the destination check:
+				// it authenticates against a remote vault (or validates the
+				// local share) before anything is created.
+				candidateData, err := executor.Execute(ctx, compatibility.Request{
+					API: TargetAPIName, Version: 1, Method: "get_candidate_dir",
+					JSONParameters: destination, EncryptedParameters: secretNames,
+				})
+				if err != nil {
+					return hyperbackup.TaskMutationResult{}, fmt.Errorf("call %s.get_candidate_dir (destination check): %w", TargetAPIName, err)
+				}
+				directory, err := decodeCandidateDir(candidateData)
+				if err != nil {
+					return hyperbackup.TaskMutationResult{}, err
+				}
+				if input.Spec.Directory != "" {
+					directory = input.Spec.Directory
+				}
+				repositoryData, err := executor.Execute(ctx, compatibility.Request{
+					API: RepositoryAPIName, Version: 1, Method: "create",
+					JSONParameters: withDestination(map[string]any{
+						"target_id": directory,
+						"name":      input.Spec.TaskName,
+					}),
+					EncryptedParameters: secretNames,
+				})
+				if err != nil {
+					return hyperbackup.TaskMutationResult{}, fmt.Errorf("call %s.create: %w", RepositoryAPIName, err)
+				}
+				repositoryID, err := decodeRepositoryCreate(repositoryData)
+				if err != nil {
+					return hyperbackup.TaskMutationResult{}, err
+				}
+				taskData, err := executor.Execute(ctx, compatibility.Request{
+					API: TaskAPIName, Version: 1, Method: "create",
+					JSONParameters: withDestination(map[string]any{
+						"action":    "create",
+						"name":      input.Spec.TaskName,
+						"repo_id":   repositoryID,
+						"target_id": directory,
+						"source": map[string]any{
+							"app_list":  []string{},
+							"file_list": input.Spec.SourceFolders,
+						},
+						"backup_params": map[string]any{
+							"enable_data_compress": input.Spec.Compression,
+							"enable_notify":        input.Spec.Notify,
+						},
+					}),
+					EncryptedParameters: secretNames,
+				})
+				if err != nil {
+					return hyperbackup.TaskMutationResult{}, fmt.Errorf("call %s.create: %w", TaskAPIName, err)
+				}
+				taskID, err := decodeTaskCreate(taskData)
+				if err != nil {
+					return hyperbackup.TaskMutationResult{}, err
+				}
+				return hyperbackup.TaskMutationResult{
+					API: TaskAPIName, Version: 1, Method: "create",
+					TaskID: taskID, RepositoryID: repositoryID, Directory: directory,
+				}, nil
+			},
+		},
+	},
+}
+
+func SelectTaskCreate(target compatibility.Target) (compatibility.Selection, error) {
+	_, selection, err := taskCreateOperation.Select(target)
+	return selection, err
+}
+
+func ExecuteTaskCreate(ctx context.Context, target compatibility.Target, executor compatibility.Executor, input TaskCreateInput) (hyperbackup.TaskMutationResult, compatibility.Selection, error) {
+	result, selection, err := taskCreateOperation.Run(ctx, target, executor, input)
+	if err == nil {
+		result.Backend = selection.Backend
+	}
+	return result, selection, err
+}
+
 func APINames() []string {
 	return []string{
-		TaskAPIName, TargetAPIName, VersionAPIName, LogAPIName,
+		TaskAPIName, TargetAPIName, RepositoryAPIName, VersionAPIName, LogAPIName,
 		VaultConfigAPIName, VaultTargetAPIName,
 	}
 }

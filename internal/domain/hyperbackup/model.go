@@ -189,22 +189,53 @@ type TaskAction string
 const (
 	TaskActionBackup TaskAction = "backup"
 	TaskActionCancel TaskAction = "cancel"
+	TaskActionCreate TaskAction = "create"
 )
 
+// TaskCreate describes a new folder backup task. The destination is exactly
+// one of: a shared folder on the source NAS itself (LocalShare), another NAS
+// known to dsmctl (TargetNAS — its address, account, and stored credential are
+// resolved at apply time and never enter the plan), or an explicit remote
+// Synology NAS (Host + Account + PasswordRef). The created task has no
+// schedule; it runs when triggered (run-now action or the DSM UI).
+type TaskCreate struct {
+	TaskName      string   `json:"task_name" jsonschema:"Name of the new backup task; must not collide with an existing task"`
+	SourceFolders []string `json:"source_folders" jsonschema:"Absolute shared-folder paths on the source NAS to back up, such as /homes or /Share/projects"`
+
+	LocalShare string `json:"local_share,omitempty" jsonschema:"Local destination mode: shared-folder name on the source NAS itself"`
+
+	TargetNAS string `json:"target_nas,omitempty" jsonschema:"Remote destination mode A: dsmctl profile name of the destination NAS; host, account, and the stored credential are resolved at apply time"`
+
+	Host        string  `json:"host,omitempty" jsonschema:"Remote destination mode B: destination NAS address"`
+	Account     string  `json:"account,omitempty" jsonschema:"Remote mode B: DSM account on the destination NAS"`
+	PasswordRef *string `json:"password_ref,omitempty" jsonschema:"Remote mode B: credential reference (env:NAME) resolved at apply time; the secret never enters the plan"`
+
+	DestinationShare   string `json:"destination_share,omitempty" jsonschema:"Remote modes: shared folder on the destination NAS that stores the backup"`
+	Directory          string `json:"directory,omitempty" jsonschema:"Destination directory name; empty uses the destination's proposed name"`
+	Port               int    `json:"port,omitempty" jsonschema:"Remote modes: Hyper Backup Vault service port; default 6281"`
+	TransferEncryption *bool  `json:"transfer_encryption,omitempty" jsonschema:"Remote modes: encrypt the transfer channel; default true (the destination certificate is not verified)"`
+	Compression        bool   `json:"compression,omitempty" jsonschema:"Enable transfer/storage compression"`
+	Notify             bool   `json:"notify,omitempty" jsonschema:"Enable DSM notifications for run results"`
+}
+
 // TaskChange is the intent for a guarded task action. Backup starts a run on
-// an idle task; cancel stops the running backup of a task.
+// an idle task; cancel stops the running backup of a task; create makes a new
+// folder backup task.
 type TaskChange struct {
-	Action TaskAction `json:"action" jsonschema:"Task action: backup (run now) or cancel"`
-	TaskID int        `json:"task_id" jsonschema:"Target backup task identifier"`
+	Action TaskAction  `json:"action" jsonschema:"Task action: backup (run now), cancel, or create"`
+	TaskID int         `json:"task_id,omitempty" jsonschema:"Target backup task identifier for backup and cancel"`
+	Create *TaskCreate `json:"create,omitempty" jsonschema:"New-task description when action is create"`
 }
 
 // TaskMutationResult records the DSM backend used for a task action.
 type TaskMutationResult struct {
-	Backend string `json:"backend" jsonschema:"Selected DSM compatibility backend"`
-	API     string `json:"api" jsonschema:"DSM WebAPI used for the action"`
-	Version int    `json:"version" jsonschema:"DSM WebAPI version used for the action"`
-	Method  string `json:"method" jsonschema:"DSM WebAPI method used for the action"`
-	TaskID  int    `json:"task_id" jsonschema:"Task the action targeted"`
+	Backend      string `json:"backend" jsonschema:"Selected DSM compatibility backend"`
+	API          string `json:"api" jsonschema:"DSM WebAPI used for the action"`
+	Version      int    `json:"version" jsonschema:"DSM WebAPI version used for the action"`
+	Method       string `json:"method" jsonschema:"DSM WebAPI method used for the action"`
+	TaskID       int    `json:"task_id" jsonschema:"Task the action targeted or created"`
+	RepositoryID int    `json:"repository_id,omitempty" jsonschema:"Repository created for a new task"`
+	Directory    string `json:"directory,omitempty" jsonschema:"Destination directory of a created task"`
 }
 
 // Capabilities reports which Hyper Backup reads and actions dsmctl exposes for
@@ -219,4 +250,5 @@ type Capabilities struct {
 	LogRead      bool            `json:"log_read" jsonschema:"Whether the Hyper Backup log feed can be read"`
 	VaultRead    bool            `json:"vault_read" jsonschema:"Whether the Hyper Backup Vault view can be read"`
 	TaskRun      bool            `json:"task_run" jsonschema:"Whether guarded run/cancel task actions are available"`
+	TaskCreate   bool            `json:"task_create" jsonschema:"Whether the guarded folder-backup task create is available"`
 }

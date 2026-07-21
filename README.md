@@ -173,13 +173,19 @@ echo '{"bt":{"max_upload_rate":15}}' | dsmctl download settings plan --nas offic
 dsmctl download settings apply --nas office -f bt.plan.json --approve <hash-from-plan>
 ```
 
-Hyper Backup tasks are run and canceled through the same contract (the plan is
-bound to the observed task state, so it goes stale if the task starts or
-finishes in the meantime):
+Hyper Backup tasks are run, canceled, and created through the same contract
+(the plan is bound to the observed task state, so it goes stale if the task
+inventory changes in the meantime). A create can target a shared folder on the
+NAS itself, another NAS known to dsmctl (`target_nas` — the stored credential
+is resolved at apply time and never enters the plan), or an explicit host with
+a `password_ref`:
 
 ```console
 echo '{"action":"backup","task_id":1}' | dsmctl backup tasks plan --nas office -o run.plan.json
 dsmctl backup tasks apply --nas office -f run.plan.json --approve <hash-from-plan>
+echo '{"action":"create","create":{"task_name":"nightly-homes","source_folders":["/homes"],"target_nas":"vault-nas","destination_share":"hb_vault"}}' \
+  | dsmctl backup tasks plan --nas office -o create.plan.json
+dsmctl backup tasks apply --nas office -f create.plan.json --approve <hash-from-plan>
 ```
 
 The one External Access write so far is the QuickConnect relay toggle, through

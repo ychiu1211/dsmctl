@@ -12,6 +12,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"strings"
 	"sync"
@@ -102,7 +103,7 @@ type Client interface {
 	HyperBackupLogs(ctx context.Context, offset, limit int) (synology.HyperBackupLogs, error)
 	HyperBackupVault(ctx context.Context) (synology.HyperBackupVault, error)
 	HyperBackupCapabilities(ctx context.Context) (synology.HyperBackupCapabilities, synology.CompatibilityReport, error)
-	ApplyHyperBackupTaskChange(ctx context.Context, change synology.HyperBackupTaskChange) (synology.HyperBackupTaskMutationResult, error)
+	ApplyHyperBackupTaskChange(ctx context.Context, change synology.HyperBackupTaskChange, secrets synology.HyperBackupTaskSecrets) (synology.HyperBackupTaskMutationResult, error)
 }
 
 type Option func(*Manager)
@@ -182,6 +183,37 @@ func NewManager(cfg *config.Config, resolver credentials.Resolver, options ...Op
 		option(manager)
 	}
 	return manager
+}
+
+// OutboundCredential resolves one profile's connection identity — host,
+// username, and password — for use as an OUTBOUND credential: one NAS
+// authenticating to another (for example a Hyper Backup destination). The
+// password comes from the same keyring-first resolver logins use and is
+// returned for immediate in-process use inside a DSM call, never for display.
+func (m *Manager) OutboundCredential(ctx context.Context, requested string) (name, host, username, password string, err error) {
+	m.profileGate.RLock()
+	defer m.profileGate.RUnlock()
+
+	cfg, err := m.snapshot(ctx)
+	if err != nil {
+		return "", "", "", "", err
+	}
+	name, profile, err := cfg.Resolve(requested)
+	if err != nil {
+		return "", "", "", "", err
+	}
+	parsed, err := neturl.Parse(profile.URL)
+	if err != nil || parsed.Hostname() == "" {
+		return "", "", "", "", fmt.Errorf("profile %q has no usable URL to derive a destination host from", name)
+	}
+	if m.credentials == nil {
+		return "", "", "", "", fmt.Errorf("no credential resolver is configured")
+	}
+	password, err = m.credentials.Password(ctx, name, profile)
+	if err != nil {
+		return "", "", "", "", fmt.Errorf("resolve the stored password for profile %q: %w", name, err)
+	}
+	return name, parsed.Hostname(), profile.Username, password, nil
 }
 
 // Client resolves a NAS profile and lazily creates one reusable authenticated

@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/ychiu1211/dsmctl/internal/domain/hyperbackup"
@@ -168,7 +169,7 @@ type hyperBackupTaskClient interface {
 	HyperBackupTasks(context.Context) (synology.HyperBackupTasks, error)
 	HyperBackupTaskStatus(context.Context, int) (synology.HyperBackupTaskStatus, error)
 	HyperBackupCapabilities(context.Context) (synology.HyperBackupCapabilities, synology.CompatibilityReport, error)
-	ApplyHyperBackupTaskChange(context.Context, synology.HyperBackupTaskChange) (synology.HyperBackupTaskMutationResult, error)
+	ApplyHyperBackupTaskChange(context.Context, synology.HyperBackupTaskChange, synology.HyperBackupTaskSecrets) (synology.HyperBackupTaskMutationResult, error)
 }
 
 func (s *Service) hyperBackupTaskClient(ctx context.Context, requestedNAS string) (string, hyperBackupTaskClient, error) {
@@ -244,14 +245,85 @@ func (s *Service) ApplyHyperBackupTaskPlan(ctx context.Context, plan HyperBackup
 	if current.ObservedFingerprint != plan.ObservedFingerprint || current.Hash != plan.Hash {
 		return HyperBackupTaskApplyResult{}, fmt.Errorf("task plan is stale; create a new plan")
 	}
-	result, err := client.ApplyHyperBackupTaskChange(ctx, plan.Request)
+	secrets, err := s.resolveHyperBackupTaskSecrets(ctx, plan.Request)
+	if err != nil {
+		return HyperBackupTaskApplyResult{}, err
+	}
+	result, err := client.ApplyHyperBackupTaskChange(ctx, plan.Request, secrets)
 	if err != nil {
 		return HyperBackupTaskApplyResult{}, authenticationError(plan.NAS, err)
 	}
-	if err := verifyHyperBackupTaskPostcondition(ctx, client, plan.Request, plan.Observed); err != nil {
+	if plan.Request.Action == hyperbackup.TaskActionCreate {
+		taskID, err := verifyHyperBackupCreatePostcondition(ctx, client, *plan.Request.Create)
+		if err != nil {
+			return HyperBackupTaskApplyResult{}, fmt.Errorf("verify task create: %w", err)
+		}
+		result.TaskID = taskID
+	} else if err := verifyHyperBackupTaskPostcondition(ctx, client, plan.Request, plan.Observed); err != nil {
 		return HyperBackupTaskApplyResult{}, fmt.Errorf("verify task action: %w", err)
 	}
 	return HyperBackupTaskApplyResult{NAS: plan.NAS, PlanHash: plan.Hash, Applied: true, Result: result}, nil
+}
+
+// resolveHyperBackupTaskSecrets resolves the destination connection for a
+// create at apply time. TargetNAS mode resolves the profile's address,
+// account, and stored credential through the same keyring-first resolver
+// logins use; the explicit host mode resolves the password_ref credential
+// reference. The plaintext exists only in memory for the DSM calls and never
+// enters plans, results, or logs. Run/cancel need no secrets.
+func (s *Service) resolveHyperBackupTaskSecrets(ctx context.Context, change hyperbackup.TaskChange) (synology.HyperBackupTaskSecrets, error) {
+	secrets := synology.HyperBackupTaskSecrets{}
+	if change.Action != hyperbackup.TaskActionCreate || change.Create == nil {
+		return secrets, nil
+	}
+	create := *change.Create
+	if strings.TrimSpace(create.LocalShare) != "" {
+		secrets.DestinationShare = strings.TrimSpace(create.LocalShare)
+		return secrets, nil
+	}
+	secrets.DestinationShare = strings.TrimSpace(create.DestinationShare)
+	secrets.DestinationPort = create.Port
+	if secrets.DestinationPort == 0 {
+		secrets.DestinationPort = 6281
+	}
+	secrets.TransferEncryption = create.TransferEncryption == nil || *create.TransferEncryption
+	if strings.TrimSpace(create.TargetNAS) != "" {
+		if s.manager == nil {
+			return synology.HyperBackupTaskSecrets{}, fmt.Errorf("no NAS manager is available to resolve profile %q", create.TargetNAS)
+		}
+		_, host, username, password, err := s.manager.OutboundCredential(ctx, create.TargetNAS)
+		if err != nil {
+			return synology.HyperBackupTaskSecrets{}, fmt.Errorf("resolve destination profile %q: %w", create.TargetNAS, err)
+		}
+		secrets.DestinationHost = host
+		secrets.DestinationAccount = username
+		secrets.DestinationPassword = password
+		return secrets, nil
+	}
+	password, err := s.secretReferences.ResolveSecret(ctx, *create.PasswordRef)
+	if err != nil {
+		return synology.HyperBackupTaskSecrets{}, fmt.Errorf("resolve destination password_ref: %w", err)
+	}
+	secrets.DestinationHost = strings.TrimSpace(create.Host)
+	secrets.DestinationAccount = strings.TrimSpace(create.Account)
+	secrets.DestinationPassword = password
+	return secrets, nil
+}
+
+// verifyHyperBackupCreatePostcondition re-reads the task list and returns the
+// created task's id. The create response body can arrive empty on success, so
+// this re-read is the authoritative source of the new task's identity.
+func verifyHyperBackupCreatePostcondition(ctx context.Context, client hyperBackupTaskClient, create hyperbackup.TaskCreate) (int, error) {
+	tasks, err := client.HyperBackupTasks(ctx)
+	if err != nil {
+		return 0, err
+	}
+	for _, task := range tasks.Tasks {
+		if strings.EqualFold(task.Name, create.TaskName) {
+			return task.TaskID, nil
+		}
+	}
+	return 0, fmt.Errorf("no task named %q is present after create", create.TaskName)
 }
 
 func planHyperBackupTaskWithClient(ctx context.Context, nas string, client hyperBackupTaskClient, request hyperbackup.TaskChange) (HyperBackupTaskPlan, error) {
@@ -259,12 +331,19 @@ func planHyperBackupTaskWithClient(ctx context.Context, nas string, client hyper
 	if err != nil {
 		return HyperBackupTaskPlan{}, authenticationError(nas, err)
 	}
-	if !capabilities.TaskRead || !capabilities.TaskRun {
+	if request.Action == hyperbackup.TaskActionCreate {
+		if !capabilities.TaskRead || !capabilities.TaskCreate {
+			return HyperBackupTaskPlan{}, fmt.Errorf("NAS %q does not expose a verified Hyper Backup task create backend", nas)
+		}
+	} else if !capabilities.TaskRead || !capabilities.TaskRun {
 		return HyperBackupTaskPlan{}, fmt.Errorf("NAS %q does not expose a verified Hyper Backup task read/run backend", nas)
 	}
 	tasks, err := client.HyperBackupTasks(ctx)
 	if err != nil {
 		return HyperBackupTaskPlan{}, authenticationError(nas, err)
+	}
+	if request.Action == hyperbackup.TaskActionCreate {
+		return planHyperBackupTaskCreate(nas, request, tasks)
 	}
 	var target *synology.HyperBackupTask
 	for index := range tasks.Tasks {
@@ -311,6 +390,62 @@ func planHyperBackupTaskWithClient(ctx context.Context, nas string, client hyper
 	return plan, nil
 }
 
+// planHyperBackupTaskCreate validates a create against the observed task list
+// (no name collision) and binds the plan to the set of existing task names, so
+// an apply fails when the task inventory changed in between. The destination
+// credential is not touched at plan time — connectivity and share validity are
+// checked by the destination probe inside the apply.
+func planHyperBackupTaskCreate(nas string, request hyperbackup.TaskChange, tasks synology.HyperBackupTasks) (HyperBackupTaskPlan, error) {
+	create := *request.Create
+	names := make([]string, 0, len(tasks.Tasks))
+	for _, task := range tasks.Tasks {
+		if strings.EqualFold(task.Name, create.TaskName) {
+			return HyperBackupTaskPlan{}, fmt.Errorf("a backup task named %q already exists on NAS %q (task %d)", task.Name, nas, task.TaskID)
+		}
+		names = append(names, task.Name)
+	}
+	sort.Strings(names)
+	plan := HyperBackupTaskPlan{
+		APIVersion: hyperBackupAPIVersion, NAS: nas, Request: request,
+		Observed: HyperBackupTaskSummary{Name: create.TaskName},
+	}
+	fingerprint, err := hashJSON(names)
+	if err != nil {
+		return HyperBackupTaskPlan{}, err
+	}
+	plan.ObservedFingerprint = fingerprint
+
+	destination := ""
+	warnings := []string{
+		"the created task has no schedule; it runs only when triggered (run-now action or the DSM UI)",
+	}
+	switch {
+	case strings.TrimSpace(create.LocalShare) != "":
+		destination = fmt.Sprintf("shared folder %q on %s itself", create.LocalShare, nas)
+	case strings.TrimSpace(create.TargetNAS) != "":
+		destination = fmt.Sprintf("NAS profile %q, shared folder %q", create.TargetNAS, create.DestinationShare)
+		warnings = append(warnings,
+			fmt.Sprintf("the stored credential of profile %q is resolved at apply and saved into Hyper Backup's task configuration on %s", create.TargetNAS, nas),
+			"the destination NAS certificate is not verified (transfer encryption without certificate pinning)")
+	default:
+		destination = fmt.Sprintf("host %q, shared folder %q", create.Host, create.DestinationShare)
+		warnings = append(warnings,
+			"the password_ref credential is resolved at apply and saved into Hyper Backup's task configuration on the source NAS",
+			"the destination NAS certificate is not verified (transfer encryption without certificate pinning)")
+	}
+	plan.Risk = "medium"
+	plan.Warnings = warnings
+	plan.Summary = []string{
+		fmt.Sprintf("create backup task %q backing up %s to %s", create.TaskName, strings.Join(create.SourceFolders, ", "), destination),
+		"a destination directory is created (or the requested one is used) and a repository is registered on the source NAS",
+	}
+	plan.Hash, err = hyperBackupTaskPlanHash(plan)
+	if err != nil {
+		return HyperBackupTaskPlan{}, err
+	}
+	return plan, nil
+}
+
 // validateHyperBackupTaskChangeShape rejects everything invalid regardless of
 // NAS state.
 func validateHyperBackupTaskChangeShape(change hyperbackup.TaskChange) error {
@@ -319,8 +454,74 @@ func validateHyperBackupTaskChangeShape(change hyperbackup.TaskChange) error {
 		if change.TaskID <= 0 {
 			return fmt.Errorf("a %s action requires a positive task_id", change.Action)
 		}
+		if change.Create != nil {
+			return fmt.Errorf("a %s action must not carry a create description", change.Action)
+		}
+	case hyperbackup.TaskActionCreate:
+		if change.TaskID != 0 {
+			return fmt.Errorf("a create action must not carry a task_id")
+		}
+		if change.Create == nil {
+			return fmt.Errorf("a create action requires the create description")
+		}
+		return validateHyperBackupTaskCreateShape(*change.Create)
 	default:
-		return fmt.Errorf("unsupported task action %q; use backup or cancel", change.Action)
+		return fmt.Errorf("unsupported task action %q; use backup, cancel, or create", change.Action)
+	}
+	return nil
+}
+
+func validateHyperBackupTaskCreateShape(create hyperbackup.TaskCreate) error {
+	if strings.TrimSpace(create.TaskName) == "" {
+		return fmt.Errorf("create requires a task_name")
+	}
+	if len(create.SourceFolders) == 0 {
+		return fmt.Errorf("create requires at least one source folder")
+	}
+	for _, folder := range create.SourceFolders {
+		trimmed := strings.TrimSpace(folder)
+		if !strings.HasPrefix(trimmed, "/") || len(trimmed) < 2 {
+			return fmt.Errorf("source folder %q must be an absolute shared-folder path such as /homes", folder)
+		}
+	}
+	modes := 0
+	if strings.TrimSpace(create.LocalShare) != "" {
+		modes++
+	}
+	if strings.TrimSpace(create.TargetNAS) != "" {
+		modes++
+	}
+	if strings.TrimSpace(create.Host) != "" {
+		modes++
+	}
+	if modes != 1 {
+		return fmt.Errorf("create requires exactly one destination mode: local_share, target_nas, or host")
+	}
+	remote := strings.TrimSpace(create.LocalShare) == ""
+	if remote && strings.TrimSpace(create.DestinationShare) == "" {
+		return fmt.Errorf("a remote destination requires destination_share (the shared folder on the destination NAS)")
+	}
+	if !remote && strings.TrimSpace(create.DestinationShare) != "" {
+		return fmt.Errorf("destination_share applies only to remote destinations; use local_share alone for a local destination")
+	}
+	if strings.TrimSpace(create.Host) != "" {
+		if strings.TrimSpace(create.Account) == "" {
+			return fmt.Errorf("an explicit host destination requires an account")
+		}
+		if create.PasswordRef == nil || strings.TrimSpace(*create.PasswordRef) == "" {
+			return fmt.Errorf("an explicit host destination requires a password_ref credential reference")
+		}
+	}
+	if strings.TrimSpace(create.Host) == "" {
+		if strings.TrimSpace(create.Account) != "" || create.PasswordRef != nil {
+			return fmt.Errorf("account and password_ref apply only to the explicit host destination mode")
+		}
+	}
+	if create.Port < 0 || create.Port > 65535 {
+		return fmt.Errorf("port must be a valid TCP port")
+	}
+	if !remote && (create.Port != 0 || create.TransferEncryption != nil) {
+		return fmt.Errorf("port and transfer_encryption apply only to remote destinations")
 	}
 	return nil
 }

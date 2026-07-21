@@ -49,20 +49,47 @@ MCP exposes the same reads through `get_hyper_backup_capabilities`,
 `get_hyper_backup_tasks`, `get_hyper_backup_task`, `get_hyper_backup_versions`,
 `get_hyper_backup_logs`, and `get_hyper_backup_vault`.
 
-## Guarded run/cancel
+## Guarded run/cancel/create
 
 `dsmctl backup tasks plan` / `apply` (MCP: `plan_hyper_backup_task_change` /
 `apply_hyper_backup_task_plan`) run one task's backup now (`SYNO.Backup.Task`
-`backup`) or cancel its running backup (`cancel`, which also sends the task's
-live `task_state`). The plan binds to the observed task — id, name, state,
-activity, last backup time and result — so an apply fails when the task has
-since started, finished, or changed; the intent is validated against the live
-state at plan time (backup requires an idle `backupable` task, cancel requires
-a running one), re-validated at apply, and verified afterwards (a run leaves
-the task actively backing up or with a fresh last-backup time; a cancel leaves
-it no longer backing up, with the interrupted run recorded as result
-`cancel`). Both tools are stripped from the read-only remote gateway.
+`backup`), cancel its running backup (`cancel`, which also sends the task's
+live `task_state`), or **create a new folder backup task**. The plan binds to
+the observed task state — for run/cancel the target task's id, state,
+activity, and last result; for create the full set of existing task names —
+so an apply fails when anything changed in between. Both tools are stripped
+from the read-only remote gateway.
 
-Task create/edit/delete, restores, suspend/resume, integrity checks, rotation
-writes, statistics, and Vault writes are deferred — see
-[WI-087](../spec/work-items/WI-087-hyper-backup.md).
+A create backs up a list of shared-folder paths on the source NAS to exactly
+one destination:
+
+- `local_share` — a shared folder on the source NAS itself (`image_local`);
+- `target_nas` — **another NAS known to dsmctl**: the profile's address,
+  account, and stored credential are resolved from the OS credential store at
+  apply time and never enter the plan (`image_remote`, Hyper Backup Vault on
+  the destination);
+- `host` + `account` + `password_ref` — an explicit remote Synology NAS with
+  the credential supplied as a reference resolved at apply.
+
+```console
+echo '{"action":"create","create":{"task_name":"nightly-homes","source_folders":["/homes"],
+  "target_nas":"nas51","destination_share":"hb_vault"}}' \
+  | dsmctl backup tasks plan --nas nas255 -o create.plan.json
+dsmctl backup tasks apply --nas nas255 -f create.plan.json --approve <hash>
+```
+
+The apply probes the destination first (`SYNO.Backup.Target`
+`get_candidate_dir` — authentication and share check, and the proposed
+directory name unless `directory` overrides it), registers the repository
+(`SYNO.Backup.Repository` `create`), creates the task (`SYNO.Backup.Task`
+`create` — a response that arrives empty still succeeds; the postcondition
+re-read recovers the new task id), and verifies the task exists. Remote
+transfers use the Vault port (default 6281) with transfer encryption on by
+default; the destination certificate is not verified. The created task has no
+schedule — it runs when triggered. The destination credential is stored by
+DSM inside the task configuration on the source NAS (that is how Hyper Backup
+works); the plan warns about it.
+
+Task edit/delete, restores, schedules, suspend/resume, integrity checks,
+rotation writes, statistics, client-side encryption, and Vault writes are
+deferred — see [WI-087](../spec/work-items/WI-087-hyper-backup.md).
