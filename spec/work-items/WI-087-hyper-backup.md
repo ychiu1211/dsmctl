@@ -67,6 +67,19 @@ changes):
   detection). Created tasks are unscheduled. `pwd` is marked as an encrypted
   parameter so plain-HTTP profiles get DSM's transport envelope.
 
+### Backup sources (create)
+
+- **Folders** (Slice B) and **applications** (Slice C) are both shipped and
+  live-verified NAS-to-NAS.
+- **LUN backup** (Slice D) is explored but **not shipped**: it uses
+  `SYNO.Backup.MultiVerLun` `enum_lun` + `is_multi_ver_lun` task create, but on
+  the lab DS918+ `enum_lun` fails closed with error 33 (`ERR_LUNCONF`) because
+  the MultiVerLun framework only enumerates block-level LUNs (`LUN`/`LUN_THICK`)
+  and a single all-consumed-btrfs-volume box can only create file-based regular
+  LUNs. With no way to live-verify the create on available hardware, it stays
+  out per the never-ship-unverified-writes rule; the wire flow is recorded in
+  the memory map for a future block-LUN-capable environment.
+
 ## Non-goals (deferred)
 
 - Task create/edit/delete, relink/reauth, suspend/resume, discard, integrity
