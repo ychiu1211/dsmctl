@@ -1,9 +1,12 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -13,8 +16,45 @@ import (
 )
 
 func newSystemCommand(opts *options) *cobra.Command {
-	command := &cobra.Command{Use: "system", Short: "Inspect DSM system information"}
-	command.AddCommand(newSystemInfoCommand(opts))
+	command := &cobra.Command{Use: "system", Short: "Inspect and manage DSM system settings"}
+	command.AddCommand(newSystemInfoCommand(opts), newSystemSetNameCommand(opts))
+	return command
+}
+
+func newSystemSetNameCommand(opts *options) *cobra.Command {
+	var assumeYes bool
+	command := &cobra.Command{
+		Use:   "set-name <server-name>",
+		Short: "Set the DSM server name (hostname)",
+		Long: "Change the DSM server name (the hostname shown in Control Panel and on the\n" +
+			"network). It reads the current name, applies the change, and verifies it by\n" +
+			"re-reading; it fails closed if DSM does not report the requested name. Requires\n" +
+			"confirmation unless --yes is given.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := strings.TrimSpace(args[0])
+			service, err := loadService(opts)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			out := cmd.OutOrStdout()
+			if !assumeYes {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Change the DSM server name to %q? [y/N]: ", name)
+				answer, _ := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
+				if answer = strings.ToLower(strings.TrimSpace(answer)); answer != "y" && answer != "yes" {
+					return errors.New("server name was not changed")
+				}
+			}
+			result, err := service.SetServerName(cmd.Context(), opts.nas, name)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "Server name changed from %q to %q on NAS %q.\n", result.Previous, result.ServerName, result.NAS)
+			return nil
+		},
+	}
+	command.Flags().BoolVar(&assumeYes, "yes", false, "skip the confirmation prompt (for automation)")
 	return command
 }
 
