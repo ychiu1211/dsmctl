@@ -17,6 +17,12 @@ type HyperBackupVersions = hyperbackup.Versions
 type HyperBackupLogs = hyperbackup.Logs
 type HyperBackupVault = hyperbackup.Vault
 type HyperBackupApplications = hyperbackup.Applications
+type HyperBackupLuns = hyperbackup.Luns
+type HyperBackupLunBackupTasks = hyperbackup.LunBackupTasks
+type HyperBackupLunBackupTask = hyperbackup.LunBackupTask
+type HyperBackupLunBackupCreate = hyperbackup.LunBackupCreate
+type HyperBackupLunBackupChange = hyperbackup.LunBackupChange
+type HyperBackupLunBackupMutationResult = hyperbackup.LunBackupMutationResult
 type HyperBackupTaskChange = hyperbackup.TaskChange
 type HyperBackupTaskMutationResult = hyperbackup.TaskMutationResult
 type HyperBackupCapabilities = hyperbackup.Capabilities
@@ -147,6 +153,77 @@ func (c *Client) HyperBackupApplications(ctx context.Context) (HyperBackupApplic
 	return applications, nil
 }
 
+// HyperBackupLuns lists the LUNs legacy Hyper Backup LUN backup can protect
+// (file/regular LUNs).
+func (c *Client) HyperBackupLuns(ctx context.Context) (HyperBackupLuns, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.preparePackageScopedTargetLocked(ctx, hyperbackupops.APINames()...); err != nil {
+		return HyperBackupLuns{}, fmt.Errorf("prepare Hyper Backup target: %w", err)
+	}
+	evidence := c.hyperBackupEvidenceLocked(hyperbackupops.PackageID)
+	luns, _, err := hyperbackupops.ExecuteLuns(ctx, c.target, lockedExecutor{client: c})
+	if err != nil {
+		return HyperBackupLuns{}, hyperBackupReadError("LUNs", evidence, err)
+	}
+	luns.Package = evidence
+	c.target.AddCapability(hyperbackupops.LunReadCapabilityName)
+	return luns, nil
+}
+
+// HyperBackupLunBackupTasks lists the legacy LUN backup tasks.
+func (c *Client) HyperBackupLunBackupTasks(ctx context.Context) (HyperBackupLunBackupTasks, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.preparePackageScopedTargetLocked(ctx, hyperbackupops.APINames()...); err != nil {
+		return HyperBackupLunBackupTasks{}, fmt.Errorf("prepare Hyper Backup target: %w", err)
+	}
+	evidence := c.hyperBackupEvidenceLocked(hyperbackupops.PackageID)
+	tasks, _, err := hyperbackupops.ExecuteLunBackupTasks(ctx, c.target, lockedExecutor{client: c})
+	if err != nil {
+		return HyperBackupLunBackupTasks{}, hyperBackupReadError("LUN backup tasks", evidence, err)
+	}
+	tasks.Package = evidence
+	c.target.AddCapability(hyperbackupops.LunReadCapabilityName)
+	return tasks, nil
+}
+
+// HyperBackupLunBackupTaskStatus reads one LUN backup task's live status. The
+// application layer uses it to bind and verify a create plan.
+func (c *Client) HyperBackupLunBackupTaskStatus(ctx context.Context, taskName string) (HyperBackupLunBackupTask, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.preparePackageScopedTargetLocked(ctx, hyperbackupops.APINames()...); err != nil {
+		return HyperBackupLunBackupTask{}, fmt.Errorf("prepare Hyper Backup target: %w", err)
+	}
+	evidence := c.hyperBackupEvidenceLocked(hyperbackupops.PackageID)
+	task, _, err := hyperbackupops.ExecuteLunBackupTaskStatus(ctx, c.target, lockedExecutor{client: c}, taskName)
+	if err != nil {
+		return HyperBackupLunBackupTask{}, hyperBackupReadError(fmt.Sprintf("LUN backup task %q", taskName), evidence, err)
+	}
+	return task, nil
+}
+
+// ApplyHyperBackupLunBackupCreate creates a guarded local LUN backup task
+// (loclunbkp). The caller has already validated the intent and confirmed the
+// LUN and destination.
+func (c *Client) ApplyHyperBackupLunBackupCreate(ctx context.Context, spec HyperBackupLunBackupCreate) (HyperBackupLunBackupMutationResult, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.preparePackageScopedTargetLocked(ctx, hyperbackupops.APINames()...); err != nil {
+		return HyperBackupLunBackupMutationResult{}, fmt.Errorf("prepare Hyper Backup mutation target: %w", err)
+	}
+	result, _, err := hyperbackupops.ExecuteLunBackupCreate(ctx, c.target, lockedExecutor{client: c}, spec)
+	if err != nil {
+		return HyperBackupLunBackupMutationResult{}, hyperBackupReadError("LUN backup create", c.hyperBackupEvidenceLocked(hyperbackupops.PackageID), err)
+	}
+	return result, nil
+}
+
 // HyperBackupVault reads the Hyper Backup Vault view (inbound targets and the
 // parallel-session limit). It is gated on the HyperBackupVault package.
 func (c *Client) HyperBackupVault(ctx context.Context) (HyperBackupVault, error) {
@@ -236,6 +313,8 @@ func (c *Client) HyperBackupCapabilities(ctx context.Context) (HyperBackupCapabi
 		hyperbackupops.SelectTaskRun,
 		hyperbackupops.SelectTaskCreate,
 		hyperbackupops.SelectApplications,
+		hyperbackupops.SelectLuns,
+		hyperbackupops.SelectLunBackupCreate,
 	}
 	selections := make([]compatibility.Selection, 0, len(selectors))
 	for _, selectOperation := range selectors {
@@ -255,6 +334,8 @@ func (c *Client) HyperBackupCapabilities(ctx context.Context) (HyperBackupCapabi
 		hyperbackupops.TaskRunCapabilityName,
 		hyperbackupops.TaskCreateCapabilityName,
 		hyperbackupops.AppReadCapabilityName,
+		hyperbackupops.LunReadCapabilityName,
+		hyperbackupops.LunBackupCreateCapabilityName,
 	}
 	for index, name := range capabilityNames {
 		if supported(index) {
@@ -270,9 +351,11 @@ func (c *Client) HyperBackupCapabilities(ctx context.Context) (HyperBackupCapabi
 		VersionRead:  supported(2),
 		LogRead:      supported(3),
 		VaultRead:    supported(4),
-		TaskRun:      supported(5),
-		TaskCreate:   supported(6),
-		AppRead:      supported(7),
+		TaskRun:         supported(5),
+		TaskCreate:      supported(6),
+		AppRead:         supported(7),
+		LunRead:         supported(8),
+		LunBackupCreate: supported(9),
 	}
 	return capabilities, c.target.Report(selections...), nil
 }

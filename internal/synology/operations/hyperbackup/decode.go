@@ -493,6 +493,136 @@ func decodeTaskCreate(data json.RawMessage) (int, error) {
 	return int(*resp.TaskID), nil
 }
 
+// ---- legacy LUN backup decoders (SYNO.Backup.Lunbackup, live-verified) ----
+
+func decodeLuns(data json.RawMessage) (hyperbackup.Luns, error) {
+	var resp struct {
+		Items *[]struct {
+			Name *string   `json:"name"`
+			Size flexInt64 `json:"size"`
+			Type *string   `json:"type"`
+			UUID *string   `json:"uuid"`
+		} `json:"items"`
+	}
+	if err := unmarshalObject(data, "Hyper Backup LUN list", &resp); err != nil {
+		return hyperbackup.Luns{}, err
+	}
+	// DSM omits the items key entirely when no LUN is available (already backed
+	// up or none), returning just {total:0} — treat that as an empty list.
+	if resp.Items == nil {
+		return hyperbackup.Luns{Entries: []hyperbackup.Lun{}}, nil
+	}
+	luns := hyperbackup.Luns{Entries: make([]hyperbackup.Lun, 0, len(*resp.Items))}
+	for _, item := range *resp.Items {
+		if item.Name == nil {
+			return hyperbackup.Luns{}, errors.New("decode Hyper Backup LUN list: a LUN is missing \"name\"")
+		}
+		luns.Entries = append(luns.Entries, hyperbackup.Lun{
+			Name:      strings.TrimSpace(*item.Name),
+			Type:      deref(item.Type),
+			UUID:      deref(item.UUID),
+			SizeBytes: int64(item.Size),
+		})
+	}
+	return luns, nil
+}
+
+// decodeLunBackupTasks reads the Task list and keeps only LUN backup entries
+// (type loclunbkp/netlunbkp); their task_id is the name string, so they are a
+// separate space from the image tasks.
+func decodeLunBackupTasks(data json.RawMessage) (hyperbackup.LunBackupTasks, error) {
+	var resp struct {
+		TaskList *[]struct {
+			Name          *string `json:"name"`
+			Type          *string `json:"type"`
+			Status        *string `json:"status"`
+			LastBkpResult *string `json:"last_bkp_result"`
+			Progress      *struct {
+				Progress flexInt `json:"progress"`
+				Step     *string `json:"step"`
+			} `json:"progress"`
+		} `json:"task_list"`
+	}
+	if err := unmarshalObject(data, "Hyper Backup LUN task list", &resp); err != nil {
+		return hyperbackup.LunBackupTasks{}, err
+	}
+	if resp.TaskList == nil {
+		return hyperbackup.LunBackupTasks{}, errors.New("decode Hyper Backup LUN task list: required field \"task_list\" is missing")
+	}
+	tasks := hyperbackup.LunBackupTasks{Entries: make([]hyperbackup.LunBackupTask, 0)}
+	for _, w := range *resp.TaskList {
+		typ := deref(w.Type)
+		if typ != "loclunbkp" && typ != "netlunbkp" {
+			continue
+		}
+		task := hyperbackup.LunBackupTask{
+			TaskName:         deref(w.Name),
+			Type:             typ,
+			Status:           deref(w.Status),
+			LastBackupResult: deref(w.LastBkpResult),
+		}
+		if w.Progress != nil {
+			task.Percent = int(w.Progress.Progress)
+			task.Step = deref(w.Progress.Step)
+		}
+		tasks.Entries = append(tasks.Entries, task)
+	}
+	return tasks, nil
+}
+
+func decodeLunBackupTaskStatus(data json.RawMessage) (hyperbackup.LunBackupTask, error) {
+	var resp struct {
+		TaskName      *string `json:"taskName"`
+		Type          *string `json:"type"`
+		BkpData       *string `json:"bkpdata"`
+		DestShare     *string `json:"dest_share"`
+		DestDir       *string `json:"dest_dir"`
+		Status        *string `json:"status"`
+		LastBkpResult *string `json:"last_bkp_result"`
+		LastBkpTime   *string `json:"last_bkp_time"`
+		UUID          *string `json:"uuid"`
+		Progress      *struct {
+			Progress flexInt `json:"progress"`
+			Step     *string `json:"step"`
+		} `json:"progress"`
+	}
+	if err := unmarshalObject(data, "Hyper Backup LUN task status", &resp); err != nil {
+		return hyperbackup.LunBackupTask{}, err
+	}
+	if resp.TaskName == nil {
+		return hyperbackup.LunBackupTask{}, errors.New("decode Hyper Backup LUN task status: required field \"taskName\" is missing")
+	}
+	task := hyperbackup.LunBackupTask{
+		TaskName:         strings.TrimSpace(*resp.TaskName),
+		Type:             deref(resp.Type),
+		LunSource:        deref(resp.BkpData),
+		DestinationShare: deref(resp.DestShare),
+		DestinationDir:   deref(resp.DestDir),
+		Status:           deref(resp.Status),
+		LastBackupResult: deref(resp.LastBkpResult),
+		LastBackupTime:   deref(resp.LastBkpTime),
+		UUID:             deref(resp.UUID),
+	}
+	if resp.Progress != nil {
+		task.Percent = int(resp.Progress.Progress)
+		task.Step = deref(resp.Progress.Step)
+	}
+	return task, nil
+}
+
+func decodeDefaultDirectory(data json.RawMessage) (string, error) {
+	var resp struct {
+		DefaultDirectory *string `json:"defaultDirectory"`
+	}
+	if err := unmarshalObject(data, "Hyper Backup LUN destination directory", &resp); err != nil {
+		return "", err
+	}
+	if resp.DefaultDirectory == nil || strings.TrimSpace(*resp.DefaultDirectory) == "" {
+		return "", errors.New("decode Hyper Backup LUN destination directory: required field \"defaultDirectory\" is missing")
+	}
+	return strings.TrimSpace(*resp.DefaultDirectory), nil
+}
+
 func decodeVaultConfig(data json.RawMessage) (hyperbackup.Vault, error) {
 	var resp struct {
 		ParallelBackupLimit *flexInt `json:"parallel_backup_limit"`

@@ -48,6 +48,40 @@ type HyperBackupApplicationsResult struct {
 	Applications synology.HyperBackupApplications `json:"applications" jsonschema:"Packages Hyper Backup can include in a backup task, with per-application eligibility"`
 }
 
+type HyperBackupLunsResult struct {
+	NAS  string                 `json:"nas" jsonschema:"NAS profile used for the request"`
+	Luns synology.HyperBackupLuns `json:"luns" jsonschema:"LUNs legacy Hyper Backup LUN backup can protect (file/regular LUNs)"`
+}
+
+type HyperBackupLunBackupTasksResult struct {
+	NAS   string                             `json:"nas" jsonschema:"NAS profile used for the request"`
+	Tasks synology.HyperBackupLunBackupTasks `json:"tasks" jsonschema:"Legacy LUN backup tasks"`
+}
+
+func (s *Service) GetHyperBackupLuns(ctx context.Context, requestedNAS string) (HyperBackupLunsResult, error) {
+	name, client, err := s.manager.Client(ctx, requestedNAS)
+	if err != nil {
+		return HyperBackupLunsResult{}, err
+	}
+	luns, err := client.HyperBackupLuns(ctx)
+	if err != nil {
+		return HyperBackupLunsResult{}, authenticationError(name, err)
+	}
+	return HyperBackupLunsResult{NAS: name, Luns: luns}, nil
+}
+
+func (s *Service) GetHyperBackupLunBackupTasks(ctx context.Context, requestedNAS string) (HyperBackupLunBackupTasksResult, error) {
+	name, client, err := s.manager.Client(ctx, requestedNAS)
+	if err != nil {
+		return HyperBackupLunBackupTasksResult{}, err
+	}
+	tasks, err := client.HyperBackupLunBackupTasks(ctx)
+	if err != nil {
+		return HyperBackupLunBackupTasksResult{}, authenticationError(name, err)
+	}
+	return HyperBackupLunBackupTasksResult{NAS: name, Tasks: tasks}, nil
+}
+
 func (s *Service) GetHyperBackupCapabilities(ctx context.Context, requestedNAS string) (HyperBackupCapabilitiesResult, error) {
 	name, client, err := s.manager.Client(ctx, requestedNAS)
 	if err != nil {
@@ -604,3 +638,230 @@ func hyperBackupTaskPlanHash(plan HyperBackupTaskPlan) (string, error) {
 }
 
 var _ hyperBackupTaskClient = (*synology.Client)(nil)
+
+// --- Guarded legacy LUN backup create (loclunbkp) ---
+
+// HyperBackupLunSummary is the observed source LUN plus the existing LUN
+// backup task names, bound into a create plan so an apply fails when the LUN
+// disappeared or a task with the same name appeared in between.
+type HyperBackupLunSummary struct {
+	Name              string   `json:"name" jsonschema:"Source LUN name observed during planning"`
+	SizeBytes         int64    `json:"size_bytes" jsonschema:"Source LUN capacity observed during planning"`
+	ExistingTaskNames []string `json:"existing_task_names" jsonschema:"Existing LUN backup task names (collision guard)"`
+}
+
+type HyperBackupLunBackupPlan struct {
+	APIVersion          string                      `json:"api_version" jsonschema:"Plan schema version"`
+	NAS                 string                      `json:"nas" jsonschema:"NAS profile selected during planning"`
+	ProfileRevision     uint64                      `json:"profile_revision,omitempty" jsonschema:"Persistent gateway profile revision selected during planning"`
+	Request             hyperbackup.LunBackupChange `json:"request" jsonschema:"Validated LUN backup create intent"`
+	ObservedLun         HyperBackupLunSummary       `json:"observed_lun" jsonschema:"Source LUN and existing task names observed during planning"`
+	ObservedFingerprint string                      `json:"observed_fingerprint" jsonschema:"SHA-256 hash of the observed LUN and task names"`
+	Risk                string                      `json:"risk" jsonschema:"Plan risk level"`
+	Warnings            []string                    `json:"warnings" jsonschema:"Operational warnings"`
+	Summary             []string                    `json:"summary" jsonschema:"Human-readable operations"`
+	Hash                string                      `json:"hash" jsonschema:"SHA-256 approval hash covering intent and observed state"`
+}
+
+type HyperBackupLunBackupApplyResult struct {
+	NAS      string                                    `json:"nas" jsonschema:"NAS profile used for apply"`
+	PlanHash string                                    `json:"plan_hash" jsonschema:"Approved plan hash"`
+	Applied  bool                                      `json:"applied" jsonschema:"Whether DSM accepted the create and postcondition verification passed"`
+	Result   synology.HyperBackupLunBackupMutationResult `json:"result" jsonschema:"Selected DSM mutation backend and created task"`
+}
+
+type hyperBackupLunClient interface {
+	HyperBackupLuns(context.Context) (synology.HyperBackupLuns, error)
+	HyperBackupLunBackupTasks(context.Context) (synology.HyperBackupLunBackupTasks, error)
+	HyperBackupLunBackupTaskStatus(context.Context, string) (synology.HyperBackupLunBackupTask, error)
+	HyperBackupCapabilities(context.Context) (synology.HyperBackupCapabilities, synology.CompatibilityReport, error)
+	ApplyHyperBackupLunBackupCreate(context.Context, synology.HyperBackupLunBackupCreate) (synology.HyperBackupLunBackupMutationResult, error)
+}
+
+func (s *Service) hyperBackupLunClient(ctx context.Context, requestedNAS string) (string, hyperBackupLunClient, error) {
+	name, generic, err := s.manager.Client(ctx, requestedNAS)
+	if err != nil {
+		return "", nil, err
+	}
+	client, ok := generic.(hyperBackupLunClient)
+	if !ok {
+		return "", nil, fmt.Errorf("NAS client does not implement Hyper Backup LUN backup")
+	}
+	return name, client, nil
+}
+
+func (s *Service) PlanHyperBackupLunBackupCreate(ctx context.Context, requestedNAS string, request hyperbackup.LunBackupChange) (HyperBackupLunBackupPlan, error) {
+	if err := validateHyperBackupLunBackupShape(request); err != nil {
+		return HyperBackupLunBackupPlan{}, err
+	}
+	name, client, err := s.hyperBackupLunClient(ctx, requestedNAS)
+	if err != nil {
+		return HyperBackupLunBackupPlan{}, err
+	}
+	plan, err := planHyperBackupLunBackupWithClient(ctx, name, client, request)
+	if err != nil {
+		return HyperBackupLunBackupPlan{}, err
+	}
+	plan.ProfileRevision, err = s.profileRevision(ctx, name)
+	if err == nil {
+		plan.Hash, err = hyperBackupLunBackupPlanHash(plan)
+	}
+	return plan, err
+}
+
+func (s *Service) ApplyHyperBackupLunBackupPlan(ctx context.Context, plan HyperBackupLunBackupPlan, approvalHash string) (HyperBackupLunBackupApplyResult, error) {
+	if strings.TrimSpace(approvalHash) == "" || approvalHash != plan.Hash {
+		return HyperBackupLunBackupApplyResult{}, fmt.Errorf("approval hash does not match the LUN backup plan")
+	}
+	if plan.APIVersion != hyperBackupAPIVersion || strings.TrimSpace(plan.NAS) == "" {
+		return HyperBackupLunBackupApplyResult{}, fmt.Errorf("invalid LUN backup plan metadata")
+	}
+	if err := validateHyperBackupLunBackupShape(plan.Request); err != nil {
+		return HyperBackupLunBackupApplyResult{}, err
+	}
+	expectedHash, err := hyperBackupLunBackupPlanHash(plan)
+	if err != nil {
+		return HyperBackupLunBackupApplyResult{}, err
+	}
+	if expectedHash != plan.Hash {
+		return HyperBackupLunBackupApplyResult{}, fmt.Errorf("LUN backup plan contents were modified after planning")
+	}
+	if err := s.authorizeRemoteApply(ctx, plan.NAS, plan.ProfileRevision, plan.Hash, plan.Risk); err != nil {
+		return HyperBackupLunBackupApplyResult{}, err
+	}
+	if err := s.verifyProfileRevision(ctx, plan.NAS, plan.ProfileRevision); err != nil {
+		return HyperBackupLunBackupApplyResult{}, err
+	}
+	name, client, err := s.hyperBackupLunClient(ctx, plan.NAS)
+	if err != nil {
+		return HyperBackupLunBackupApplyResult{}, err
+	}
+	if name != plan.NAS {
+		return HyperBackupLunBackupApplyResult{}, fmt.Errorf("LUN backup plan NAS %q resolved to different profile %q", plan.NAS, name)
+	}
+	current, err := planHyperBackupLunBackupWithClient(ctx, plan.NAS, client, plan.Request)
+	if err != nil {
+		return HyperBackupLunBackupApplyResult{}, fmt.Errorf("LUN backup plan precondition no longer holds: %w", err)
+	}
+	current.ProfileRevision = plan.ProfileRevision
+	current.Hash, err = hyperBackupLunBackupPlanHash(current)
+	if err != nil {
+		return HyperBackupLunBackupApplyResult{}, err
+	}
+	if current.ObservedFingerprint != plan.ObservedFingerprint || current.Hash != plan.Hash {
+		return HyperBackupLunBackupApplyResult{}, fmt.Errorf("LUN backup plan is stale; create a new plan")
+	}
+	// Fill the LUN size from the observed source LUN so the caller need not
+	// supply it (apply_lun requires lunsize).
+	spec := *plan.Request.Create
+	if spec.SizeBytes == 0 {
+		spec.SizeBytes = plan.ObservedLun.SizeBytes
+	}
+	result, err := client.ApplyHyperBackupLunBackupCreate(ctx, spec)
+	if err != nil {
+		return HyperBackupLunBackupApplyResult{}, authenticationError(plan.NAS, err)
+	}
+	status, err := client.HyperBackupLunBackupTaskStatus(ctx, spec.TaskName)
+	if err != nil {
+		return HyperBackupLunBackupApplyResult{}, fmt.Errorf("verify LUN backup create: %w", err)
+	}
+	if !strings.EqualFold(status.TaskName, spec.TaskName) {
+		return HyperBackupLunBackupApplyResult{}, fmt.Errorf("LUN backup task %q is not present after create", spec.TaskName)
+	}
+	if spec.BackupNow {
+		// The first backup may be queued (waiting), actively running (backup),
+		// or already finished (a non-none last result) by the time we re-read.
+		started := status.Status == "backup" || status.Status == "waiting" ||
+			(status.LastBackupResult != "" && status.LastBackupResult != "none")
+		if !started {
+			return HyperBackupLunBackupApplyResult{}, fmt.Errorf("backup_now did not start (status %q, last result %q)", status.Status, status.LastBackupResult)
+		}
+	}
+	return HyperBackupLunBackupApplyResult{NAS: plan.NAS, PlanHash: plan.Hash, Applied: true, Result: result}, nil
+}
+
+func planHyperBackupLunBackupWithClient(ctx context.Context, nas string, client hyperBackupLunClient, request hyperbackup.LunBackupChange) (HyperBackupLunBackupPlan, error) {
+	create := *request.Create
+	capabilities, _, err := client.HyperBackupCapabilities(ctx)
+	if err != nil {
+		return HyperBackupLunBackupPlan{}, authenticationError(nas, err)
+	}
+	if !capabilities.LunRead || !capabilities.LunBackupCreate {
+		return HyperBackupLunBackupPlan{}, fmt.Errorf("NAS %q does not expose a verified Hyper Backup LUN backup backend", nas)
+	}
+	luns, err := client.HyperBackupLuns(ctx)
+	if err != nil {
+		return HyperBackupLunBackupPlan{}, authenticationError(nas, err)
+	}
+	found := false
+	var sourceSize int64
+	for _, lun := range luns.Entries {
+		if lun.Name == create.LunSource {
+			found, sourceSize = true, lun.SizeBytes
+			break
+		}
+	}
+	if !found {
+		return HyperBackupLunBackupPlan{}, fmt.Errorf("LUN %q was not found on NAS %q (see the luns read for backupable LUNs)", create.LunSource, nas)
+	}
+	tasks, err := client.HyperBackupLunBackupTasks(ctx)
+	if err != nil {
+		return HyperBackupLunBackupPlan{}, authenticationError(nas, err)
+	}
+	names := make([]string, 0, len(tasks.Entries))
+	for _, task := range tasks.Entries {
+		if strings.EqualFold(task.TaskName, create.TaskName) {
+			return HyperBackupLunBackupPlan{}, fmt.Errorf("a LUN backup task named %q already exists on NAS %q", task.TaskName, nas)
+		}
+		names = append(names, task.TaskName)
+	}
+	sort.Strings(names)
+	observed := HyperBackupLunSummary{Name: create.LunSource, SizeBytes: sourceSize, ExistingTaskNames: names}
+	plan := HyperBackupLunBackupPlan{APIVersion: hyperBackupAPIVersion, NAS: nas, Request: request, ObservedLun: observed}
+	plan.ObservedFingerprint, err = hashJSON(observed)
+	if err != nil {
+		return HyperBackupLunBackupPlan{}, err
+	}
+	dest := create.DestinationShare
+	if strings.TrimSpace(create.Directory) != "" {
+		dest = dest + "/" + strings.TrimSpace(create.Directory)
+	}
+	plan.Risk = "medium"
+	plan.Warnings = []string{"the task backs up the LUN's data to a shared folder on this NAS itself (local LUN backup)"}
+	if create.BackupNow {
+		plan.Warnings = append(plan.Warnings, "backup_now runs the first backup immediately after the task is created")
+	}
+	plan.Summary = []string{fmt.Sprintf("create LUN backup task %q backing up LUN %q to %s", create.TaskName, create.LunSource, dest)}
+	plan.Hash, err = hyperBackupLunBackupPlanHash(plan)
+	if err != nil {
+		return HyperBackupLunBackupPlan{}, err
+	}
+	return plan, nil
+}
+
+func validateHyperBackupLunBackupShape(change hyperbackup.LunBackupChange) error {
+	if change.Action != "create" {
+		return fmt.Errorf("unsupported LUN backup action %q; use create", change.Action)
+	}
+	if change.Create == nil {
+		return fmt.Errorf("a create action requires the create description")
+	}
+	create := change.Create
+	if strings.TrimSpace(create.TaskName) == "" {
+		return fmt.Errorf("create requires a task_name")
+	}
+	if strings.TrimSpace(create.LunSource) == "" {
+		return fmt.Errorf("create requires a lun_source (the LUN name from the luns read)")
+	}
+	if strings.TrimSpace(create.DestinationShare) == "" {
+		return fmt.Errorf("create requires a destination_share (a shared folder on this NAS)")
+	}
+	return nil
+}
+
+func hyperBackupLunBackupPlanHash(plan HyperBackupLunBackupPlan) (string, error) {
+	plan.Hash = ""
+	return hashJSON(plan)
+}
+
+var _ hyperBackupLunClient = (*synology.Client)(nil)

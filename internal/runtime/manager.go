@@ -105,6 +105,10 @@ type Client interface {
 	HyperBackupApplications(ctx context.Context) (synology.HyperBackupApplications, error)
 	HyperBackupCapabilities(ctx context.Context) (synology.HyperBackupCapabilities, synology.CompatibilityReport, error)
 	ApplyHyperBackupTaskChange(ctx context.Context, change synology.HyperBackupTaskChange, secrets synology.HyperBackupTaskSecrets) (synology.HyperBackupTaskMutationResult, error)
+	HyperBackupLuns(ctx context.Context) (synology.HyperBackupLuns, error)
+	HyperBackupLunBackupTasks(ctx context.Context) (synology.HyperBackupLunBackupTasks, error)
+	HyperBackupLunBackupTaskStatus(ctx context.Context, taskName string) (synology.HyperBackupLunBackupTask, error)
+	ApplyHyperBackupLunBackupCreate(ctx context.Context, spec synology.HyperBackupLunBackupCreate) (synology.HyperBackupLunBackupMutationResult, error)
 }
 
 type Option func(*Manager)

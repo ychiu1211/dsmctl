@@ -42,6 +42,12 @@ dsmctl backup tasks apply --nas office -f plan.json --approve <hash>
   Hyper Backup can include in a backup task, each with its identifier (what a
   create request's `applications` list accepts), whether it is currently
   backupable (or the reason it is not), and whether it is backed up online.
+- **`luns`** reads `SYNO.Backup.Lunbackup` v1 (`enum_lun`): the LUNs the legacy
+  LUN-backup engine can protect (file/regular LUNs; block-level LUNs use a
+  separate engine dsmctl does not implement). DSM omits already-backed-up LUNs.
+- **`lun-backups`** lists the legacy LUN backup tasks (`loclunbkp` local /
+  `netlunbkp` remote) with activity and last result — a separate task space
+  from the image tasks (their `task_id` is the name string, not an integer).
 - **`vault`** reads `SYNO.Backup.Service.VersionBackup.Config` (`get`) and
   `SYNO.Backup.Service.VersionBackup.Target` (`list`): the parallel inbound
   session limit and each inbound target stored on this NAS — id, share and
@@ -51,8 +57,34 @@ dsmctl backup tasks apply --nas office -f plan.json --approve <hash>
 
 MCP exposes the same reads through `get_hyper_backup_capabilities`,
 `get_hyper_backup_tasks`, `get_hyper_backup_task`, `get_hyper_backup_versions`,
-`get_hyper_backup_logs`, `get_hyper_backup_applications`, and
+`get_hyper_backup_logs`, `get_hyper_backup_applications`,
+`get_hyper_backup_luns`, `get_hyper_backup_lun_backups`, and
 `get_hyper_backup_vault`.
+
+## Guarded LUN backup create
+
+`dsmctl backup lun-backups plan` / `apply` (MCP:
+`plan_hyper_backup_lun_backup_create` / `apply_hyper_backup_lun_backup_plan`)
+create a local LUN backup (`loclunbkp`): back up one file/regular LUN (from the
+`luns` read) to a shared folder on this NAS. The plan binds to the source LUN
+and the set of existing LUN backup task names, so an apply fails if the LUN
+disappeared or the name collides. `backup_now:true` runs the first backup
+immediately (this is `apply_lun`'s own flag — the standalone `bkpnow` method is
+a no-op on 4.2.2).
+
+```console
+echo '{"action":"create","create":{"task_name":"nightly-lun","lun_source":"data-lun",
+  "destination_share":"backups","backup_now":true}}' \
+  | dsmctl backup lun-backups plan --nas office -o lun.plan.json
+dsmctl backup lun-backups apply --nas office -f lun.plan.json --approve <hash>
+```
+
+The apply resolves the LUN size from the observed LUN (so the caller need not
+supply it), proposes the destination directory via `get_local_dest_dir` unless
+`directory` overrides it, creates the task via `apply_lun`, and verifies it
+exists (and, with `backup_now`, that the first backup started). Remote LUN
+backup (`netlunbkp`) is deferred. Both tools are stripped from the read-only
+remote gateway.
 
 ## Guarded run/cancel/create
 

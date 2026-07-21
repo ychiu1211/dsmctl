@@ -12,6 +12,8 @@ package hyperbackup
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/ychiu1211/dsmctl/internal/domain/hyperbackup"
 	"github.com/ychiu1211/dsmctl/internal/synology/compatibility"
@@ -32,15 +34,18 @@ const (
 	LogAPIName         = "SYNO.SDS.Backup.Client.Common.Log"
 	VaultConfigAPIName = "SYNO.Backup.Service.VersionBackup.Config"
 	VaultTargetAPIName = "SYNO.Backup.Service.VersionBackup.Target"
+	LunAPIName         = "SYNO.Backup.Lunbackup"
 
-	TaskReadCapabilityName    = "hyper_backup.task.read"
-	DetailReadCapabilityName  = "hyper_backup.detail.read"
-	VersionReadCapabilityName = "hyper_backup.version.read"
-	LogReadCapabilityName     = "hyper_backup.log.read"
-	VaultReadCapabilityName   = "hyper_backup.vault.read"
-	TaskRunCapabilityName     = "hyper_backup.task.run"
-	TaskCreateCapabilityName  = "hyper_backup.task.create"
-	AppReadCapabilityName     = "hyper_backup.application.read"
+	TaskReadCapabilityName        = "hyper_backup.task.read"
+	DetailReadCapabilityName      = "hyper_backup.detail.read"
+	VersionReadCapabilityName     = "hyper_backup.version.read"
+	LogReadCapabilityName         = "hyper_backup.log.read"
+	VaultReadCapabilityName       = "hyper_backup.vault.read"
+	TaskRunCapabilityName         = "hyper_backup.task.run"
+	TaskCreateCapabilityName      = "hyper_backup.task.create"
+	AppReadCapabilityName         = "hyper_backup.application.read"
+	LunReadCapabilityName         = "hyper_backup.lun.read"
+	LunBackupCreateCapabilityName = "hyper_backup.lun.create"
 )
 
 // baselinePackage gates the client-side variants on Hyper Backup 4.x, the
@@ -500,10 +505,142 @@ func ExecuteTaskCreate(ctx context.Context, target compatibility.Target, executo
 	return result, selection, err
 }
 
+// ---- legacy LUN backup (SYNO.Backup.Lunbackup) — file/regular LUNs ----
+
+var lunsOperation = compatibility.Operation[Input, hyperbackup.Luns]{
+	Name: LunReadCapabilityName,
+	Variants: []compatibility.Variant[Input, hyperbackup.Luns]{{
+		Name: "hyperbackup-lun-enum-v1", API: LunAPIName, Version: 1, Priority: 10,
+		Match: compatibility.All(compatibility.APIVersion(LunAPIName, 1), baselinePackage),
+		Execute: func(ctx context.Context, executor compatibility.Executor, _ Input) (hyperbackup.Luns, error) {
+			data, err := executor.Execute(ctx, compatibility.Request{API: LunAPIName, Version: 1, Method: "enum_lun", ReadOnly: true})
+			if err != nil {
+				return hyperbackup.Luns{}, fmt.Errorf("call %s.enum_lun: %w", LunAPIName, err)
+			}
+			return decodeLuns(data)
+		},
+	}},
+}
+
+// lunBackupTasksOperation lists the LUN backup tasks from the Task list,
+// keeping only loclunbkp/netlunbkp entries (whose task_id is the name string).
+var lunBackupTasksOperation = compatibility.Operation[Input, hyperbackup.LunBackupTasks]{
+	Name: LunReadCapabilityName,
+	Variants: []compatibility.Variant[Input, hyperbackup.LunBackupTasks]{{
+		Name: "hyperbackup-lun-tasks-v1", API: TaskAPIName, Version: 1, Priority: 10,
+		Match: compatibility.All(compatibility.APIVersion(TaskAPIName, 1), compatibility.APIVersion(LunAPIName, 1), baselinePackage),
+		Execute: func(ctx context.Context, executor compatibility.Executor, _ Input) (hyperbackup.LunBackupTasks, error) {
+			data, err := executor.Execute(ctx, compatibility.Request{
+				API: TaskAPIName, Version: 1, Method: "list", ReadOnly: true,
+				JSONParameters: map[string]any{"additional": []string{"last_bkp_result"}},
+			})
+			if err != nil {
+				return hyperbackup.LunBackupTasks{}, fmt.Errorf("call %s.list: %w", TaskAPIName, err)
+			}
+			return decodeLunBackupTasks(data)
+		},
+	}},
+}
+
+// lunBackupCreateOperation creates a local LUN backup (loclunbkp) via apply_lun.
+// backup-now is apply_lun's own bkpnow flag (create-and-immediately-back-up);
+// the standalone bkpnow method is a no-op in 4.2.2, live-verified.
+var lunBackupCreateOperation = compatibility.Operation[hyperbackup.LunBackupCreate, hyperbackup.LunBackupMutationResult]{
+	Name: LunBackupCreateCapabilityName,
+	Variants: []compatibility.Variant[hyperbackup.LunBackupCreate, hyperbackup.LunBackupMutationResult]{{
+		Name: "hyperbackup-lun-create-v1", API: LunAPIName, Version: 1, Priority: 10,
+		Match: compatibility.All(compatibility.APIVersion(LunAPIName, 1), baselinePackage),
+		Execute: func(ctx context.Context, executor compatibility.Executor, spec hyperbackup.LunBackupCreate) (hyperbackup.LunBackupMutationResult, error) {
+			directory := strings.TrimSpace(spec.Directory)
+			if directory == "" {
+				data, err := executor.Execute(ctx, compatibility.Request{
+					API: LunAPIName, Version: 1, Method: "get_local_dest_dir",
+					JSONParameters: map[string]any{"bkpShare": spec.DestinationShare},
+				})
+				if err != nil {
+					return hyperbackup.LunBackupMutationResult{}, fmt.Errorf("call %s.get_local_dest_dir: %w", LunAPIName, err)
+				}
+				if directory, err = decodeDefaultDirectory(data); err != nil {
+					return hyperbackup.LunBackupMutationResult{}, err
+				}
+			}
+			params := map[string]any{
+				"mode":           "create",
+				"oldbkpset":      "",
+				"newbkpset":      spec.TaskName,
+				"bkptype":        "loclunbkp",
+				"lunsource":      spec.LunSource,
+				"lunsize":        strconv.FormatInt(spec.SizeBytes, 10),
+				"scheduleEnable": false,
+				"dest":           spec.DestinationShare + "/" + directory,
+				"desttype":       "locallun",
+				"bkpnow":         spec.BackupNow,
+			}
+			if _, err := executor.Execute(ctx, compatibility.Request{API: LunAPIName, Version: 1, Method: "apply_lun", JSONParameters: params}); err != nil {
+				return hyperbackup.LunBackupMutationResult{}, fmt.Errorf("call %s.apply_lun: %w", LunAPIName, err)
+			}
+			return hyperbackup.LunBackupMutationResult{
+				API: LunAPIName, Version: 1, Method: "apply_lun",
+				TaskName: spec.TaskName, DestinationDir: directory, BackedUp: spec.BackupNow,
+			}, nil
+		},
+	}},
+}
+
+func SelectLuns(target compatibility.Target) (compatibility.Selection, error) {
+	_, selection, err := lunsOperation.Select(target)
+	return selection, err
+}
+
+func ExecuteLuns(ctx context.Context, target compatibility.Target, executor compatibility.Executor) (hyperbackup.Luns, compatibility.Selection, error) {
+	return lunsOperation.Run(ctx, target, executor, Input{})
+}
+
+func ExecuteLunBackupTasks(ctx context.Context, target compatibility.Target, executor compatibility.Executor) (hyperbackup.LunBackupTasks, compatibility.Selection, error) {
+	return lunBackupTasksOperation.Run(ctx, target, executor, Input{})
+}
+
+func SelectLunBackupCreate(target compatibility.Target) (compatibility.Selection, error) {
+	_, selection, err := lunBackupCreateOperation.Select(target)
+	return selection, err
+}
+
+func ExecuteLunBackupCreate(ctx context.Context, target compatibility.Target, executor compatibility.Executor, spec hyperbackup.LunBackupCreate) (hyperbackup.LunBackupMutationResult, compatibility.Selection, error) {
+	result, selection, err := lunBackupCreateOperation.Run(ctx, target, executor, spec)
+	if err == nil {
+		result.Backend = selection.Backend
+	}
+	return result, selection, err
+}
+
+// ExecuteLunBackupTaskStatus reads one LUN backup task's live status via the
+// legacy load_task call (used to bind/verify a create plan; LUN tasks are a
+// separate space from the image Task API).
+func ExecuteLunBackupTaskStatus(ctx context.Context, target compatibility.Target, executor compatibility.Executor, taskName string) (hyperbackup.LunBackupTask, compatibility.Selection, error) {
+	op := compatibility.Operation[Input, hyperbackup.LunBackupTask]{
+		Name: LunReadCapabilityName,
+		Variants: []compatibility.Variant[Input, hyperbackup.LunBackupTask]{{
+			Name: "hyperbackup-lun-load-task-v1", API: LunAPIName, Version: 1, Priority: 10,
+			Match: compatibility.All(compatibility.APIVersion(LunAPIName, 1), baselinePackage),
+			Execute: func(ctx context.Context, ex compatibility.Executor, _ Input) (hyperbackup.LunBackupTask, error) {
+				data, err := ex.Execute(ctx, compatibility.Request{
+					API: LunAPIName, Version: 1, Method: "load_task", ReadOnly: true,
+					JSONParameters: map[string]any{"taskName": taskName},
+				})
+				if err != nil {
+					return hyperbackup.LunBackupTask{}, fmt.Errorf("call %s.load_task: %w", LunAPIName, err)
+				}
+				return decodeLunBackupTaskStatus(data)
+			},
+		}},
+	}
+	return op.Run(ctx, target, executor, Input{})
+}
+
 func APINames() []string {
 	return []string{
 		TaskAPIName, TargetAPIName, RepositoryAPIName, AppBackupAPIName,
-		VersionAPIName, LogAPIName, VaultConfigAPIName, VaultTargetAPIName,
+		VersionAPIName, LogAPIName, VaultConfigAPIName, VaultTargetAPIName, LunAPIName,
 	}
 }
 

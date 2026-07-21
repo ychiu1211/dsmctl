@@ -497,6 +497,34 @@ type getHyperBackupApplicationsOutput struct {
 	Applications synology.HyperBackupApplications `json:"applications" jsonschema:"Packages Hyper Backup can include in a backup task, with per-application eligibility"`
 }
 
+type getHyperBackupLunsOutput struct {
+	NAS  string                 `json:"nas" jsonschema:"NAS profile used for the request"`
+	Luns synology.HyperBackupLuns `json:"luns" jsonschema:"LUNs legacy Hyper Backup LUN backup can protect (file/regular LUNs)"`
+}
+
+type getHyperBackupLunBackupsOutput struct {
+	NAS   string                             `json:"nas" jsonschema:"NAS profile used for the request"`
+	Tasks synology.HyperBackupLunBackupTasks `json:"tasks" jsonschema:"Legacy LUN backup tasks"`
+}
+
+type planHyperBackupLunBackupCreateInput struct {
+	NAS     string                             `json:"nas,omitempty" jsonschema:"NAS profile name; omit for the default"`
+	Request synology.HyperBackupLunBackupChange `json:"request" jsonschema:"LUN backup create intent: action create + the LUN, destination share, and optional backup_now"`
+}
+
+type planHyperBackupLunBackupCreateOutput struct {
+	Plan application.HyperBackupLunBackupPlan `json:"plan" jsonschema:"Validated plan bound to the source LUN and existing task names, plus the approval hash"`
+}
+
+type applyHyperBackupLunBackupPlanInput struct {
+	Plan         application.HyperBackupLunBackupPlan `json:"plan" jsonschema:"Approved LUN backup plan from plan_hyper_backup_lun_backup_create"`
+	ApprovalHash string                              `json:"approval_hash" jsonschema:"Exact SHA-256 approval hash from the plan"`
+}
+
+type applyHyperBackupLunBackupPlanOutput struct {
+	Result application.HyperBackupLunBackupApplyResult `json:"result" jsonschema:"Apply outcome including the created task"`
+}
+
 type getHyperBackupVaultOutput struct {
 	NAS   string                    `json:"nas" jsonschema:"NAS profile used for the request"`
 	Vault synology.HyperBackupVault `json:"vault" jsonschema:"Hyper Backup Vault view of this NAS as a backup destination"`
@@ -2658,6 +2686,58 @@ func New(service *application.Service, version string) *mcp.Server {
 			return nil, getHyperBackupApplicationsOutput{}, err
 		}
 		return nil, getHyperBackupApplicationsOutput{NAS: result.NAS, Applications: result.Applications}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_hyper_backup_luns",
+		Title:       "List LUNs Hyper Backup can back up",
+		Description: "List the LUNs the legacy Hyper Backup LUN-backup engine can protect (file/regular LUNs; each name is a lun_source for a create). Block-level LUNs are not covered.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getHyperBackupInput) (*mcp.CallToolResult, getHyperBackupLunsOutput, error) {
+		result, err := service.GetHyperBackupLuns(ctx, input.NAS)
+		if err != nil {
+			return nil, getHyperBackupLunsOutput{}, err
+		}
+		return nil, getHyperBackupLunsOutput{NAS: result.NAS, Luns: result.Luns}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_hyper_backup_lun_backups",
+		Title:       "List Hyper Backup LUN backup tasks",
+		Description: "List the legacy LUN backup tasks (loclunbkp local / netlunbkp remote) with their activity and last result. Separate from the image backup tasks.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input getHyperBackupInput) (*mcp.CallToolResult, getHyperBackupLunBackupsOutput, error) {
+		result, err := service.GetHyperBackupLunBackupTasks(ctx, input.NAS)
+		if err != nil {
+			return nil, getHyperBackupLunBackupsOutput{}, err
+		}
+		return nil, getHyperBackupLunBackupsOutput{NAS: result.NAS, Tasks: result.Tasks}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "plan_hyper_backup_lun_backup_create",
+		Title:       "Plan a Hyper Backup LUN backup create",
+		Description: "Validate a local LUN backup create (back up one file/regular LUN to a shared folder on this NAS) and return an approval plan bound to the source LUN and existing task names (an apply fails if the LUN disappeared or the name collides). This tool never mutates DSM.",
+		Annotations: readOnlyAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input planHyperBackupLunBackupCreateInput) (*mcp.CallToolResult, planHyperBackupLunBackupCreateOutput, error) {
+		plan, err := service.PlanHyperBackupLunBackupCreate(ctx, input.NAS, input.Request)
+		if err != nil {
+			return nil, planHyperBackupLunBackupCreateOutput{}, err
+		}
+		return nil, planHyperBackupLunBackupCreateOutput{Plan: plan}, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "apply_hyper_backup_lun_backup_plan",
+		Title:       "Apply an approved Hyper Backup LUN backup plan",
+		Description: "Apply an unmodified LUN backup create plan only while its approval hash and the observed source LUN + task names still match, then verify the task exists (and, if backup_now was set, that the first backup started). Creates a legacy loclunbkp task via apply_lun.",
+		Annotations: mutationAnnotations(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyHyperBackupLunBackupPlanInput) (*mcp.CallToolResult, applyHyperBackupLunBackupPlanOutput, error) {
+		result, err := service.ApplyHyperBackupLunBackupPlan(ctx, input.Plan, input.ApprovalHash)
+		if err != nil {
+			return nil, applyHyperBackupLunBackupPlanOutput{}, err
+		}
+		return nil, applyHyperBackupLunBackupPlanOutput{Result: result}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

@@ -28,6 +28,8 @@ func newBackupCommand(opts *options) *cobra.Command {
 		newBackupLogsCommand(opts),
 		newBackupVaultCommand(opts),
 		newBackupApplicationsCommand(opts),
+		newBackupLunsCommand(opts),
+		newBackupLunBackupsCommand(opts),
 	)
 	return command
 }
@@ -241,6 +243,117 @@ func newBackupApplicationsCommand(opts *options) *cobra.Command {
 	return command
 }
 
+func newBackupLunsCommand(opts *options) *cobra.Command {
+	var jsonOutput bool
+	command := &cobra.Command{
+		Use:   "luns",
+		Short: "List the LUNs legacy Hyper Backup LUN backup can protect (file/regular LUNs)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			service, err := loadService(opts)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.GetHyperBackupLuns(cmd.Context(), opts.nas)
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				return encodeIndentedJSON(cmd.OutOrStdout(), result)
+			}
+			return writeBackupLuns(cmd, result)
+		},
+	}
+	command.Flags().BoolVar(&jsonOutput, "json", false, "output structured JSON")
+	return command
+}
+
+func newBackupLunBackupsCommand(opts *options) *cobra.Command {
+	var jsonOutput bool
+	command := &cobra.Command{
+		Use:     "lun-backups",
+		Aliases: []string{"lun-backup"},
+		Short:   "List legacy LUN backup tasks; create one via plan/apply",
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			service, err := loadService(opts)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.GetHyperBackupLunBackupTasks(cmd.Context(), opts.nas)
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				return encodeIndentedJSON(cmd.OutOrStdout(), result)
+			}
+			return writeBackupLunBackupTasks(cmd, result)
+		},
+	}
+	command.Flags().BoolVar(&jsonOutput, "json", false, "output structured JSON")
+	command.AddCommand(newBackupLunBackupPlanCommand(opts), newBackupLunBackupApplyCommand(opts))
+	return command
+}
+
+func newBackupLunBackupPlanCommand(opts *options) *cobra.Command {
+	var inputPath, outputPath string
+	command := &cobra.Command{
+		Use:   "plan",
+		Short: "Validate a local LUN backup create and emit an approval plan as JSON",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var request hyperbackup.LunBackupChange
+			if err := decodeJSONInput(cmd, inputPath, &request); err != nil {
+				return fmt.Errorf("read LUN backup change: %w", err)
+			}
+			service, err := loadService(opts)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			plan, err := service.PlanHyperBackupLunBackupCreate(cmd.Context(), opts.nas, request)
+			if err != nil {
+				return err
+			}
+			return encodeJSONOutput(cmd, outputPath, plan)
+		},
+	}
+	command.Flags().StringVarP(&inputPath, "file", "f", "-", "LUN backup change JSON file, or - for stdin")
+	command.Flags().StringVarP(&outputPath, "output", "o", "-", "plan JSON file, or - for stdout")
+	return command
+}
+
+func newBackupLunBackupApplyCommand(opts *options) *cobra.Command {
+	var inputPath, approvalHash string
+	command := &cobra.Command{
+		Use:   "apply",
+		Short: "Apply a LUN backup create plan after hash and stale-state validation",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var plan application.HyperBackupLunBackupPlan
+			if err := decodeJSONInput(cmd, inputPath, &plan); err != nil {
+				return fmt.Errorf("read LUN backup plan: %w", err)
+			}
+			service, err := loadService(opts)
+			if err != nil {
+				return err
+			}
+			defer closeService(service)
+			result, err := service.ApplyHyperBackupLunBackupPlan(cmd.Context(), plan, approvalHash)
+			if err != nil {
+				return err
+			}
+			return encodeIndentedJSON(cmd.OutOrStdout(), result)
+		},
+	}
+	command.Flags().StringVarP(&inputPath, "file", "f", "-", "LUN backup plan JSON file, or - for stdin")
+	command.Flags().StringVar(&approvalHash, "approve", "", "exact SHA-256 hash printed by lun-backups plan")
+	_ = command.MarkFlagRequired("approve")
+	return command
+}
+
 func newBackupTaskPlanCommand(opts *options) *cobra.Command {
 	var inputPath, outputPath string
 	command := &cobra.Command{
@@ -318,6 +431,8 @@ func writeBackupCapabilities(cmd *cobra.Command, result application.HyperBackupC
 	fmt.Fprintf(writer, "Task run/cancel (guarded):\t%s\n", yesNo(c.TaskRun))
 	fmt.Fprintf(writer, "Task create (guarded):\t%s\n", yesNo(c.TaskCreate))
 	fmt.Fprintf(writer, "Application read:\t%s\n", yesNo(c.AppRead))
+	fmt.Fprintf(writer, "LUN read:\t%s\n", yesNo(c.LunRead))
+	fmt.Fprintf(writer, "LUN backup create (guarded):\t%s\n", yesNo(c.LunBackupCreate))
 	fmt.Fprintln(writer, "\nOPERATIONS")
 	fmt.Fprintln(writer, "OPERATION\tSUPPORTED\tBACKEND\tAPI\tVERSION")
 	for _, operation := range result.Report.Operations {
@@ -436,6 +551,37 @@ func writeBackupApplications(cmd *cobra.Command, result application.HyperBackupA
 		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%s\n",
 			valueOrDash(application.ID), valueOrDash(application.Name), valueOrDash(application.Version),
 			yesNo(application.Backupable), yesNo(application.OnlineBackup), valueOrDash(note))
+	}
+	return writer.Flush()
+}
+
+func writeBackupLuns(cmd *cobra.Command, result application.HyperBackupLunsResult) error {
+	writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+	fmt.Fprintf(writer, "NAS:\t%s\n", result.NAS)
+	fmt.Fprintln(writer, "\nBACKUPABLE LUNS")
+	if len(result.Luns.Entries) == 0 {
+		fmt.Fprintln(writer, "(no LUNs)")
+		return writer.Flush()
+	}
+	fmt.Fprintln(writer, "NAME\tTYPE\tSIZE BYTES\tUUID")
+	for _, lun := range result.Luns.Entries {
+		fmt.Fprintf(writer, "%s\t%s\t%d\t%s\n", valueOrDash(lun.Name), valueOrDash(lun.Type), lun.SizeBytes, valueOrDash(lun.UUID))
+	}
+	return writer.Flush()
+}
+
+func writeBackupLunBackupTasks(cmd *cobra.Command, result application.HyperBackupLunBackupTasksResult) error {
+	writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+	fmt.Fprintf(writer, "NAS:\t%s\n", result.NAS)
+	fmt.Fprintln(writer, "\nLUN BACKUP TASKS")
+	if len(result.Tasks.Entries) == 0 {
+		fmt.Fprintln(writer, "(no LUN backup tasks)")
+		return writer.Flush()
+	}
+	fmt.Fprintln(writer, "NAME\tTYPE\tACTIVITY\tLAST RESULT")
+	for _, task := range result.Tasks.Entries {
+		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\n",
+			valueOrDash(task.TaskName), valueOrDash(task.Type), valueOrDash(task.Status), valueOrDash(task.LastBackupResult))
 	}
 	return writer.Flush()
 }

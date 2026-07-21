@@ -156,6 +156,8 @@ dsmctl backup task 1 --nas office
 dsmctl backup versions 1 --nas office
 dsmctl backup logs --nas office
 dsmctl backup vault --nas office
+dsmctl backup luns --nas office
+dsmctl backup lun-backups --nas office
 ```
 
 Download tasks are created and controlled through the same guarded plan/apply
@@ -345,6 +347,10 @@ Available tools:
 - `get_hyper_backup_versions`: list the backup versions one task has produced; read-only.
 - `get_hyper_backup_logs`: read the Hyper Backup log feed with per-level totals; read-only.
 - `get_hyper_backup_applications`: list the packages Hyper Backup can include in a backup task, with per-application eligibility; read-only.
+- `get_hyper_backup_luns`: list the file/regular LUNs the legacy LUN-backup engine can protect; read-only.
+- `get_hyper_backup_lun_backups`: list the legacy LUN backup tasks with activity and last result; read-only.
+- `plan_hyper_backup_lun_backup_create`: validate a local LUN backup create and return a plan bound to the source LUN and existing task names without mutating DSM.
+- `apply_hyper_backup_lun_backup_plan`: apply an approved, unchanged LUN backup plan (apply_lun loclunbkp) and verify the task exists (and the first backup started when backup_now is set).
 - `get_hyper_backup_vault`: read the Hyper Backup Vault view (inbound targets, parallel-session limit); requires HyperBackupVault; read-only.
 - `plan_hyper_backup_task_change`: validate a run-backup-now or cancel request and return a plan bound to the observed task state without mutating DSM.
 - `apply_hyper_backup_task_plan`: apply an approved, unchanged task plan and verify the postcondition (run started, or the running backup stopped).

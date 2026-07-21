@@ -39,7 +39,7 @@ func (e routeExecutor) Execute(_ context.Context, request compatibility.Request)
 
 func hbTarget(packageVersion, vaultVersion string) compatibility.Target {
 	target := compatibility.NewTarget()
-	for _, api := range []string{TaskAPIName, TargetAPIName} {
+	for _, api := range []string{TaskAPIName, TargetAPIName, RepositoryAPIName, AppBackupAPIName, LunAPIName} {
 		target.SetAPI(api, compatibility.APIInfo{Path: "entry.cgi", MinVersion: 1, MaxVersion: 2})
 	}
 	target.SetAPI(VersionAPIName, compatibility.APIInfo{Path: "entry.cgi", MinVersion: 1, MaxVersion: 2})
@@ -375,6 +375,92 @@ func TestTaskCreateLocalOmitsRemoteAuth(t *testing.T) {
 	}
 	if repo.JSONParameters["target_id"] != "custom_dir" {
 		t.Fatalf("requested directory must override the candidate: %#v", repo.JSONParameters["target_id"])
+	}
+}
+
+func TestLunsDecodeLiveShape(t *testing.T) {
+	target := hbTarget("4.2.2-4262", "")
+	luns, selection, err := ExecuteLuns(context.Background(), target, routeExecutor{t: t, routes: map[string]string{
+		"SYNO.Backup.Lunbackup enum_lun": `{"items":[{"name":"dsmctl-filelun","size":"1073741824","type":"regular-file","uuid":"d404465e-fb09-4650-a575-206ec81156a4"}],"total":1}`,
+	}})
+	if err != nil {
+		t.Fatalf("ExecuteLuns() error = %v", err)
+	}
+	if !selection.Supported || len(luns.Entries) != 1 {
+		t.Fatalf("luns = %#v", luns)
+	}
+	lun := luns.Entries[0]
+	if lun.Name != "dsmctl-filelun" || lun.Type != "regular-file" || lun.SizeBytes != 1073741824 ||
+		lun.UUID != "d404465e-fb09-4650-a575-206ec81156a4" {
+		t.Fatalf("lun = %#v", lun)
+	}
+}
+
+func TestLunsEmptyWhenItemsOmitted(t *testing.T) {
+	// DSM omits the items key entirely when no LUN is backupable (all in use).
+	target := hbTarget("4.2.2-4262", "")
+	luns, _, err := ExecuteLuns(context.Background(), target, routeExecutor{t: t, routes: map[string]string{
+		"SYNO.Backup.Lunbackup enum_lun": `{"total":0}`,
+	}})
+	if err != nil {
+		t.Fatalf("ExecuteLuns() error = %v", err)
+	}
+	if len(luns.Entries) != 0 {
+		t.Fatalf("expected empty LUN list, got %#v", luns.Entries)
+	}
+}
+
+func TestLunBackupTasksFilterLunTypes(t *testing.T) {
+	// The Task list mixes image tasks and LUN tasks; only loclunbkp/netlunbkp
+	// are kept, and their task_id is the name string.
+	target := hbTarget("4.2.2-4262", "")
+	body := `{"task_list":[
+		{"name":"an-image-task","type":"image:image_local","task_id":1,"status":"none","last_bkp_result":"done"},
+		{"name":"dsmctl-lun-bkp2","type":"loclunbkp","task_id":"dsmctl-lun-bkp2","status":"none","last_bkp_result":"success","progress":{"progress":0,"step":"none"}}
+	],"total":2}`
+	tasks, _, err := ExecuteLunBackupTasks(context.Background(), target, routeExecutor{t: t, routes: map[string]string{
+		"SYNO.Backup.Task list": body,
+	}})
+	if err != nil {
+		t.Fatalf("ExecuteLunBackupTasks() error = %v", err)
+	}
+	if len(tasks.Entries) != 1 {
+		t.Fatalf("expected only the LUN task, got %#v", tasks.Entries)
+	}
+	task := tasks.Entries[0]
+	if task.TaskName != "dsmctl-lun-bkp2" || task.Type != "loclunbkp" || task.LastBackupResult != "success" {
+		t.Fatalf("task = %#v", task)
+	}
+}
+
+func TestLunBackupCreateFlow(t *testing.T) {
+	target := hbTarget("4.2.2-4262", "")
+	executor := &captureExecutor{responses: map[string]string{
+		"SYNO.Backup.Lunbackup get_local_dest_dir": `{"defaultDirectory":"nas51_4"}`,
+		"SYNO.Backup.Lunbackup apply_lun":          `{}`,
+	}}
+	spec := hyperbackup.LunBackupCreate{
+		TaskName:         "dsmctl-lun-cli3",
+		LunSource:        "dsmctl-filelun3",
+		SizeBytes:        1073741824,
+		DestinationShare: "hb_vault",
+		BackupNow:        true,
+	}
+	result, _, err := ExecuteLunBackupCreate(context.Background(), target, executor, spec)
+	if err != nil {
+		t.Fatalf("ExecuteLunBackupCreate() error = %v", err)
+	}
+	if result.Method != "apply_lun" || result.TaskName != "dsmctl-lun-cli3" || result.DestinationDir != "nas51_4" || !result.BackedUp {
+		t.Fatalf("result = %#v", result)
+	}
+	if len(executor.requests) != 2 {
+		t.Fatalf("expected get_local_dest_dir then apply_lun, got %d", len(executor.requests))
+	}
+	apply := executor.requests[1]
+	p := apply.JSONParameters
+	if p["bkptype"] != "loclunbkp" || p["desttype"] != "locallun" || p["lunsource"] != "dsmctl-filelun3" ||
+		p["dest"] != "hb_vault/nas51_4" || p["lunsize"] != "1073741824" || p["bkpnow"] != true {
+		t.Fatalf("apply_lun params = %#v", p)
 	}
 }
 

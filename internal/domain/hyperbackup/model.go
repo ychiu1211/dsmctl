@@ -202,6 +202,73 @@ type Applications struct {
 	Package PackageEvidence `json:"package" jsonschema:"Installed HyperBackup package evidence"`
 }
 
+// Lun is one LUN that legacy Hyper Backup LUN backup can protect. File/regular
+// LUNs (volume-based) are what this legacy engine backs up; block-level LUNs use
+// the separate multi-version LUN engine, which dsmctl does not implement.
+type Lun struct {
+	Name      string `json:"name" jsonschema:"LUN name, used as lun_source when creating a LUN backup"`
+	Type      string `json:"type,omitempty" jsonschema:"LUN type as reported, such as regular-file"`
+	UUID      string `json:"uuid,omitempty" jsonschema:"LUN identifier"`
+	SizeBytes int64  `json:"size_bytes" jsonschema:"Configured LUN capacity in bytes"`
+}
+
+// Luns is the list of LUNs legacy Hyper Backup LUN backup can protect.
+type Luns struct {
+	Entries []Lun           `json:"luns" jsonschema:"Backupable LUNs; empty when none"`
+	Package PackageEvidence `json:"package" jsonschema:"Installed HyperBackup package evidence"`
+}
+
+// LunBackupTask is one legacy LUN backup task (loclunbkp = local destination on
+// this NAS). It is a separate task space from the image tasks: identified by
+// name, its status is read via the legacy load_task call, not the Task API.
+type LunBackupTask struct {
+	TaskName         string `json:"task_name" jsonschema:"Task name (also its identifier)"`
+	Type             string `json:"type,omitempty" jsonschema:"Task type: loclunbkp (local) or netlunbkp (remote)"`
+	LunSource        string `json:"lun_source,omitempty" jsonschema:"Name of the LUN being backed up"`
+	DestinationShare string `json:"destination_share,omitempty" jsonschema:"Shared folder holding the backup"`
+	DestinationDir   string `json:"destination_directory,omitempty" jsonschema:"Backup directory within the share"`
+	Status           string `json:"status,omitempty" jsonschema:"Live activity: none when idle, backup while running"`
+	LastBackupResult string `json:"last_backup_result,omitempty" jsonschema:"Result of the last run: success, fail, or none"`
+	LastBackupTime   string `json:"last_backup_time,omitempty" jsonschema:"Start time of the last run"`
+	Step             string `json:"step,omitempty" jsonschema:"Current backup step while running"`
+	Percent          int    `json:"percent" jsonschema:"Progress percentage while running"`
+	UUID             string `json:"uuid,omitempty" jsonschema:"Task identifier"`
+}
+
+// LunBackupTasks is the list of legacy LUN backup tasks.
+type LunBackupTasks struct {
+	Entries []LunBackupTask `json:"tasks" jsonschema:"LUN backup tasks; empty when none"`
+	Package PackageEvidence `json:"package" jsonschema:"Installed HyperBackup package evidence"`
+}
+
+// LunBackupCreate describes a new local LUN backup (loclunbkp): back up one
+// file/regular LUN to a shared folder on this NAS.
+type LunBackupCreate struct {
+	TaskName         string `json:"task_name" jsonschema:"Name of the new LUN backup task; must not collide with an existing one"`
+	LunSource        string `json:"lun_source" jsonschema:"Name of the LUN to back up (from the luns read)"`
+	SizeBytes        int64  `json:"lun_size_bytes,omitempty" jsonschema:"LUN capacity in bytes (from the luns read); resolved from the LUN if omitted"`
+	DestinationShare string `json:"destination_share" jsonschema:"Shared folder on this NAS that will store the backup"`
+	Directory        string `json:"directory,omitempty" jsonschema:"Backup directory name; empty uses the destination's proposed name"`
+	BackupNow        bool   `json:"backup_now,omitempty" jsonschema:"Run the first backup immediately after creating the task"`
+}
+
+// LunBackupChange is the intent for a guarded LUN backup action.
+type LunBackupChange struct {
+	Action string           `json:"action" jsonschema:"LUN backup action: create"`
+	Create *LunBackupCreate `json:"create,omitempty" jsonschema:"New LUN backup description when action is create"`
+}
+
+// LunBackupMutationResult records the DSM backend used for a LUN backup action.
+type LunBackupMutationResult struct {
+	Backend        string `json:"backend" jsonschema:"Selected DSM compatibility backend"`
+	API            string `json:"api" jsonschema:"DSM WebAPI used for the action"`
+	Version        int    `json:"version" jsonschema:"DSM WebAPI version used for the action"`
+	Method         string `json:"method" jsonschema:"DSM WebAPI method used for the action"`
+	TaskName       string `json:"task_name" jsonschema:"Task the action created"`
+	DestinationDir string `json:"destination_directory,omitempty" jsonschema:"Backup directory of the created task"`
+	BackedUp       bool   `json:"backed_up" jsonschema:"Whether an immediate backup was requested and observed"`
+}
+
 // TaskAction is a guarded backup-task action.
 type TaskAction string
 
@@ -269,7 +336,9 @@ type Capabilities struct {
 	VersionRead  bool            `json:"version_read" jsonschema:"Whether task versions can be listed"`
 	LogRead      bool            `json:"log_read" jsonschema:"Whether the Hyper Backup log feed can be read"`
 	VaultRead    bool            `json:"vault_read" jsonschema:"Whether the Hyper Backup Vault view can be read"`
-	TaskRun      bool            `json:"task_run" jsonschema:"Whether guarded run/cancel task actions are available"`
-	TaskCreate   bool            `json:"task_create" jsonschema:"Whether the guarded folder/application backup task create is available"`
-	AppRead      bool            `json:"application_read" jsonschema:"Whether the backupable-application list can be read"`
+	TaskRun         bool         `json:"task_run" jsonschema:"Whether guarded run/cancel task actions are available"`
+	TaskCreate      bool         `json:"task_create" jsonschema:"Whether the guarded folder/application backup task create is available"`
+	AppRead         bool         `json:"application_read" jsonschema:"Whether the backupable-application list can be read"`
+	LunRead         bool         `json:"lun_read" jsonschema:"Whether the backupable LUN list and LUN backup tasks can be read"`
+	LunBackupCreate bool         `json:"lun_backup_create" jsonschema:"Whether the guarded local LUN backup create is available"`
 }

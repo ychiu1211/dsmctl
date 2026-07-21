@@ -71,14 +71,22 @@ changes):
 
 - **Folders** (Slice B) and **applications** (Slice C) are both shipped and
   live-verified NAS-to-NAS.
-- **LUN backup** (Slice D) is explored but **not shipped**: it uses
-  `SYNO.Backup.MultiVerLun` `enum_lun` + `is_multi_ver_lun` task create, but on
-  the lab DS918+ `enum_lun` fails closed with error 33 (`ERR_LUNCONF`) because
-  the MultiVerLun framework only enumerates block-level LUNs (`LUN`/`LUN_THICK`)
-  and a single all-consumed-btrfs-volume box can only create file-based regular
-  LUNs. With no way to live-verify the create on available hardware, it stays
-  out per the never-ship-unverified-writes rule; the wire flow is recorded in
-  the memory map for a future block-LUN-capable environment.
+- **File/regular LUN backup** (Slice E, shipped 2026-07-21) — the legacy
+  `SYNO.Backup.Lunbackup` engine backs up volume-based (file/regular) LUNs,
+  which the multi-version LUN engine (block LUNs only) cannot. dsmctl exposes
+  it as a third source: reads `backup luns` (`enum_lun`) and `backup
+  lun-backups` (LUN entries of the Task list), and a guarded plan/apply create
+  of a local (`loclunbkp`) task via `apply_lun` (destination proposed by
+  `get_local_dest_dir`, `desttype:"locallun"`), with `backup_now` = apply_lun's
+  own `bkpnow` flag (the standalone `bkpnow` method is a no-op on 4.2.2). The
+  plan binds to the source LUN + existing task names; the apply verifies the
+  task exists and, with backup_now, that the first backup started.
+  Live-verified end to end on nas51 (create + backup_now → success). LUN task
+  `task_id` is the name string (not an int); `enum_lun` omits already-used LUNs
+  and drops the `items` key when empty. Remote (`netlunbkp`) LUN backup and the
+  block-level multi-version LUN engine (`SYNO.Backup.MultiVerLun`, err 33
+  `ERR_LUNCONF` on the lab because it enumerates only `LUN`/`LUN_THICK`) remain
+  deferred.
 
 ## Non-goals (deferred)
 
