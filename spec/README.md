@@ -38,6 +38,10 @@ contracts unless a work item explicitly changes them:
 - [mcp-power-user-connection-design.md](mcp-power-user-connection-design.md):
   accepted private power-user defaults, client identity semantics, target
   connection flow, and the prioritized implementation gap register.
+- [gateway-connect-security-review.md](gateway-connect-security-review.md):
+  2026-07-22 adversarial review of the remote-MCP connect surface — verdict,
+  the connect-surface properties that must be preserved, and the gaps that
+  became WI-096..099.
 - [agent-workflow.md](agent-workflow.md): how agents claim, update, and hand off
   work without colliding.
 - [work-items](work-items): executable specs with scope and acceptance criteria.
