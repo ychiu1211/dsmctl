@@ -36,13 +36,15 @@ setup before any administration is possible.
 
 - Add an optional, platform-neutral signed-administrator assertion interface
   to the Gateway and enable it only when an explicit assertion key is supplied.
-- Add a Synology host-side loopback bridge which validates the request's DSM
-  cookie with DSM's `authenticate.cgi`, verifies membership in the DSM
-  `administrators` group, strips caller-supplied identity headers, and signs a
-  short-lived audience-bound assertion for the loopback-only Gateway backend.
-- Require a fresh valid DSM assertion matching the DSM-backed Gateway session
-  on every authenticated admin request, so DSM logout, session expiry, or
-  administrator-group removal fails closed immediately.
+- Add a Synology host-side loopback bridge which reuses the existing NAS Web
+  Login authorization-code + PKCE + Noise exchange, verifies the returned
+  account's membership in the DSM `administrators` group, strips
+  caller-supplied identity headers, and signs a short-lived audience-bound
+  login assertion for the loopback-only Gateway backend.
+- Verify the DSM assertion once while creating an independent Gateway browser
+  session. DSM and dsmctl are separate sites with separate logout/session
+  lifecycles; a new dsmctl login always repeats DSM Web Login and the group
+  check.
 - On a fresh SPK, disable the unauthenticated one-hour local setup endpoint and
   present DSM Web Login as the only entry method. After DSM login, allow an
   administrator to configure the single local fallback account.
@@ -51,7 +53,8 @@ setup before any administration is possible.
 - On generic Linux, preserve the existing setup window, local login, cookie,
   rate-limit, origin, and readiness behavior with no DSM-specific dependency.
 - Identify audit actors and session metadata as `dsm:<subject>` or
-  `local:<username>` without storing DSM cookies, SIDs, or assertion values.
+  `local:<username>` without storing DSM cookies, SIDs, SynoTokens, Noise keys,
+  or assertion values.
 - Permit DSM Web Login on the MCP OAuth authorization page; local
   username/password authorization is shown only after a local account exists.
 - Generate and preserve a distinct 32-byte DSM assertion key in package-private
@@ -84,9 +87,8 @@ setup before any administration is possible.
   administrator claim, HMAC-SHA-256, a maximum one-minute lifetime, and
   bounded replay detection. Unknown claims/providers fail closed.
 - DSM-backed Gateway browser sessions remain digest-only HttpOnly/SameSite
-  cookies, but each use additionally requires a current matching DSM
-  assertion. Local sessions never become valid merely because DSM SSO is
-  unavailable.
+  cookies and are independent after the login assertion is consumed. Local
+  sessions never become valid merely because DSM Web Login is unavailable.
 - The SPK's local fallback account is optional. Generic Linux readiness still
   requires it; SPK readiness may instead be satisfied by a configured DSM
   assertion verifier.
@@ -101,13 +103,13 @@ setup before any administration is possible.
 - [ ] Fresh SPK exposes only DSM Web Login; unauthenticated local setup and
       local password login are unavailable until a signed-in DSM administrator
       explicitly configures the fallback account.
-- [x] DSM administrators can enter the Admin UI and authorize an MCP OAuth
+- [ ] DSM administrators can enter the Admin UI and authorize an MCP OAuth
       client without sending DSM credentials to the container.
-- [x] Non-administrators, missing/expired DSM sessions, forged/replayed/wrong-
+- [ ] Non-administrators, missing/expired Web Login codes, forged/replayed/wrong-
       audience assertions, non-loopback bridge callers, and identity mismatch
       all fail closed.
-- [x] A DSM-backed Gateway session stops working when its current DSM assertion
-      is absent or names a different subject.
+- [x] After a valid login assertion is consumed, the DSM-backed Gateway session
+      works independently and requires its own logout or revocation.
 - [ ] After local fallback setup, DSM and local login both work and produce
       distinguishable audit actors; logout and session revocation work for both.
 - [ ] Existing SPK local administrators survive upgrade and gain DSM login;
@@ -126,8 +128,8 @@ setup before any administration is possible.
 
 - Unit tests inject time, assertion keys, DSM validators, and session records;
   request-capture tests prove cookie/assertion/header redaction and replay denial.
-- Follow Synology's documented package-CGI authentication contract:
-  <https://help.synology.com/developer-guide/integrate_dsm/web_authentication.html>.
+- Reuse `internal/weblogin`'s live-tested `SYNO.API.Auth` `webui` code grant,
+  PKCE state binding, opener origin check, and Noise IK exchange.
 - `go test ./... -count=1`, `go vet ./...`, deterministic image/SPK build and
   `deploy/synology/validate-spk.sh`.
 - DSM live tests are authentication/read-only lifecycle tests. They do not
@@ -144,23 +146,48 @@ Do not change WI-084's NAS credential-store/reveal semantics; the local
 fallback availability is only surfaced so those independent human gates can
 continue to fail closed.
 
+## Decision (2026-07-22)
+
+The initial cookie-CGI design was rejected during live verification: the
+Web Station portal and DSM management UI are different origins, so DSM cookies
+are correctly absent from `/dsmctl` requests. The product owner clarified that
+DSM and dsmctl are independent sites and that Gateway login should reuse the
+already implemented NAS Web Login code-grant flow. The SPK therefore performs
+that server-side code exchange and creates an independent Gateway session;
+there is no cross-origin cookie polling and DSM logout does not implicitly
+revoke an already-created dsmctl session.
+
 ## Handoff
 
-- Last known good state: the dual-mode Gateway, DSM host bridge, optional local
-  fallback, DSM OAuth path, and WI-092 saved-password connection fix are
-  implemented as release `7.3.2-5`. Full Go tests, `go vet`, `git diff --check`,
-  offline SPK validation, and two fixed-input SPK builds pass. Both current
-  SPKs have SHA-256
-  `080de8be8dffe6073d5b24c49e429a7f37137615a2b54c696c6dec50ace81a9a`;
+- Last known good state: release `7.3.2-14` reuses the existing DSM `webui`
+  authorization-code + PKCE + Noise IK exchange, validates the returned
+  subject against the host `administrators` group, consumes a short-lived
+  platform assertion once, and then uses an independent Gateway session. The
+  Admin UI registers its `postMessage` listener before navigating the DSM
+  popup, preventing an already-authenticated DSM from returning the code before
+  the listener exists. The explanatory text now states that DSM and Gateway
+  sessions are independent.
+- Verification: `go test ./... -count=1`, `go vet ./...`, embedded Admin UI
+  JavaScript parsing, and `git diff --check` pass. Two fixed-input SPKs under
+  `dist/wi091-14-a` and `dist/wi091-14-b` are byte-identical and pass offline
+  validation. Their SHA-256 is
+  `4c47181e1b9e7ca50610276798bc8a9fc0c75fd41f75c2e58c65ba40f6785aa7`;
   the image ID is
-  `sha256:ade35a29ead22498fa03605b97593b6b9c403b271c97263eebac352b00c9f98c`.
-- Blocker: `ssh nas` authenticates as DSM administrator `lab-admin`, but `sudo`
-  still requires a password and root public-key SSH is unavailable. The
-  in-app DSM `:5001` session has expired, so Package Center upload is paused at
-  the visible DSM login page. No password was requested, captured, or passed
-  through a command. Resume after the user signs in to that page.
-- Temporary resources: the current reproducible artifacts remain under
-  `dist/wi092-a` and `dist/wi092-b`, and the verified SPK is staged at
-  `/tmp/dsmctl-gateway-7.3.2-5-x86_64.spk` on the NAS. The NAS is still on
-  `7.3.2-4`; no package or persistent data was changed during this paused
-  attempt.
+  `sha256:3d483fd1a268b0e1a9063d9903ad93db071d2f90dcfd8900cb608e84108f4124`.
+  The lab NAS is running `7.3.2-14`; both health endpoints return OK.
+  Live DSM Web Login completed with an administrator account, and the Gateway
+  session remained
+  authenticated after the host bridge/package was restarted and the page was
+  reloaded. The two existing NAS profiles remained intact.
+- Remaining work: the MCP OAuth authorization page still needs the same
+  code-grant flow instead of the obsolete request-cookie validator. Fresh/reset
+  SPK behavior, non-administrator denial, optional local fallback enablement,
+  session expiry/revocation, and generic-container upgrade compatibility still
+  require the remaining acceptance tests before this item can be completed.
+- NAS compatibility note: this DSM build's Container Manager status script
+  invokes `synosystemctl` without an absolute path, but Package Center runs the
+  status hook with a sanitized PATH. The one affected line now uses
+  `/usr/syno/bin/synosystemctl`; the untouched vendor original remains at
+  `/var/packages/ContainerManager/scripts/start-stop-status.dsmctl-backup-20260722`.
+  Without this compatibility fix Package Center falsely reports Container
+  Manager as stopped and refuses dependent SPK upgrades.

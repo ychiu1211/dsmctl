@@ -7,9 +7,9 @@ const (
 	CompatibilityTrain = "7.3.2"
 	// ReleaseBuild increases monotonically for dsmctl releases made from the
 	// same DSM compatibility train.
-	ReleaseBuild = 11
+	ReleaseBuild = 14
 	// CurrentVersion follows DSM_MAJOR.DSM_MINOR.DSM_PATCH-DSMCTL_BUILD.
-	CurrentVersion = "7.3.2-11"
+	CurrentVersion = "7.3.2-14"
 )
 
 // Version is replaced at build time with -ldflags.

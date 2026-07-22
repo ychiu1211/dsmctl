@@ -639,7 +639,7 @@ func TestAdminUIHasNoEmbeddedCredential(t *testing.T) {
 		`value="365" selected`, `value="nas.read" checked`, `value="nas.plan" checked`, `value="nas.apply" checked`, `value="lan.discover" checked`,
 		`error.payload=value`, `location.pathname.replace(/\/admin\/?$/,'/mcp')`, `transport:'streamable-http'`, `show(message)`,
 		`id="credentialDialog"`, `id="approvalRequests"`, `id="auditRows"`, `confirm_new_password`,
-		`id="dsmLoginOption"`, `onclick="loginWithDSM()"`, `/dsm-login`, `id="localAdministratorDialog"`, `/local-administrator`,
+		`id="dsmLoginOption"`, `onclick="loginWithDSM()"`, `/dsm-login`, `/dsm-login/start`, `dsmctl_dsm_signin`, `dsmAdminLoginWaiting`, `window.addEventListener('message',listener);popup.location.href=start.login_url`, `id="localAdministratorDialog"`, `/local-administrator`,
 		`/credentials/password/reveal`,
 		`/credentials/password/connect`, `connectSavedPassword:'Connect with saved password'`, `savedPasswordReady:'Saved password ready'`,
 		`id="credentialStoreRow"`, `async function openNASPasswordLogin(profile`, `async function connectStoredPassword(profile)`,

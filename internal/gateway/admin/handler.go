@@ -315,13 +315,9 @@ func (h *Handler) authenticate(req *http.Request) (string, string, error) {
 	case state.AdminProviderLocal:
 		return "local:" + session.Username, cookie.Value, nil
 	case state.AdminProviderDSM:
-		if h.platformVerifier == nil {
-			return "", "", state.ErrUnauthorized
-		}
-		identity, err := h.platformVerifier.Verify(req.Context(), req.Header.Get(platformauth.HeaderName))
-		if err != nil || identity.Subject != session.Username {
-			return "", "", state.ErrUnauthorized
-		}
+		// DSM proves the identity once through the host adapter's Web Login
+		// authorization-code exchange. After that, the Gateway session is an
+		// independent HttpOnly session just like the local fallback session.
 		return "dsm:" + session.Username, cookie.Value, nil
 	default:
 		return "", "", state.ErrUnauthorized

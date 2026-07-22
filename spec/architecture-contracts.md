@@ -86,8 +86,10 @@ Synology SPK adapter ---+
   Linux requires the local administrator. A deployment may additionally
   supply a short-lived signed administrator assertion through the abstract
   WI-091 interface; only the Synology SPK adapter may derive that assertion
-  from a current DSM `administrators`-group Web Login. The adapter never sends
-  DSM cookies or passwords into the container, and it never constructs DSM
+  from a completed DSM Web Login authorization-code + PKCE exchange whose
+  subject is an effective member of `administrators`. The adapter never sends
+  DSM cookies, passwords, SIDs, SynoTokens, or Noise keys into the container,
+  and it never constructs DSM
   management requests, resolves DSM operation variants, or bypasses the
   application layer.
 - The core gateway container is platform-neutral. It must not depend on DSM

@@ -38,6 +38,9 @@ func TestDSMLoginOnlyThenOptionalLocalFallback(t *testing.T) {
 	if local := performJSON(handler, http.MethodPost, "/admin/api/login", `{"username":"owner","password":"correct horse battery staple"}`, ""); local.Code != http.StatusUnauthorized {
 		t.Fatalf("local login before setup = %d", local.Code)
 	}
+	if localSetup := performPlatformJSON(handler, http.MethodPost, "/admin/api/local-administrator", `{"username":"fallback","password":"correct horse battery staple","confirm_password":"correct horse battery staple"}`, "", ""); localSetup.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated local fallback setup = %d %s", localSetup.Code, localSetup.Body.String())
+	}
 
 	assertion, _ := signer.Sign("dsm-admin")
 	login := performPlatformJSON(handler, http.MethodPost, "/admin/api/dsm-login", `{}`, "", assertion)
@@ -46,20 +49,11 @@ func TestDSMLoginOnlyThenOptionalLocalFallback(t *testing.T) {
 	}
 	session := responseCookieValue(t, login, administratorCookie)
 
-	if missing := performPlatformJSON(handler, http.MethodGet, "/admin/api/session", "", session, ""); missing.Code != http.StatusUnauthorized {
-		t.Fatalf("DSM session without fresh assertion = %d", missing.Code)
-	}
-	wrongAssertion, _ := signer.Sign("another-admin")
-	if mismatch := performPlatformJSON(handler, http.MethodGet, "/admin/api/session", "", session, wrongAssertion); mismatch.Code != http.StatusUnauthorized {
-		t.Fatalf("DSM session subject mismatch = %d", mismatch.Code)
-	}
-	freshAssertion, _ := signer.Sign("dsm-admin")
-	if current := performPlatformJSON(handler, http.MethodGet, "/admin/api/session", "", session, freshAssertion); current.Code != http.StatusOK {
-		t.Fatalf("DSM session with fresh assertion = %d %s", current.Code, current.Body.String())
+	if current := performPlatformJSON(handler, http.MethodGet, "/admin/api/session", "", session, ""); current.Code != http.StatusOK {
+		t.Fatalf("independent DSM-backed Gateway session = %d %s", current.Code, current.Body.String())
 	}
 
-	configureAssertion, _ := signer.Sign("dsm-admin")
-	configured := performPlatformJSON(handler, http.MethodPost, "/admin/api/local-administrator", `{"username":"fallback","password":"correct horse battery staple","confirm_password":"correct horse battery staple"}`, session, configureAssertion)
+	configured := performPlatformJSON(handler, http.MethodPost, "/admin/api/local-administrator", `{"username":"fallback","password":"correct horse battery staple","confirm_password":"correct horse battery staple"}`, session, "")
 	if configured.Code != http.StatusCreated {
 		t.Fatalf("configure fallback = %d %s", configured.Code, configured.Body.String())
 	}

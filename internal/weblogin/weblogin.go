@@ -77,6 +77,11 @@ type Options struct {
 	ClientID    string
 	SessionName string
 	HTTPClient  *http.Client
+	// ExchangeBaseURL optionally sends the server-side code exchange to a
+	// trusted alternate address for the same DSM. Synology packages use the
+	// host's loopback HTTP listener here while the browser still signs in on
+	// the public HTTPS management origin.
+	ExchangeBaseURL string
 	// OpenBrowser launches the user's browser at the given loopback URL. When
 	// nil the OS default handler is used. It may return an error (for example
 	// on a headless host); the URL is always printed so the user can open it

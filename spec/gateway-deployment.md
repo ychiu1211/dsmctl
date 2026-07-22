@@ -221,11 +221,11 @@ Administration is separate from MCP authorization.
   non-simple request header. Login/setup attempts are bounded in memory.
 - DSM browser sessions, DSM groups, forwarded identity headers, and the NAS
   hosting the container do not directly authorize Gateway administration. The
-  sole DSM exception is WI-091: a loopback-only SPK bridge validates the
-  current DSM cookie with `authenticate.cgi`, verifies effective membership in
-  `administrators`, strips caller assertions and DSM cookies, and signs a
-  one-use assertion that the core verifies and binds to its own browser
-  session on every request.
+  sole DSM exception is WI-091: a loopback-only SPK bridge completes dsmctl's
+  existing DSM Web Login authorization-code + PKCE + Noise exchange, verifies
+  the returned subject's effective `administrators` membership, discards all
+  DSM session material, and signs a one-use login assertion. The core verifies
+  that assertion once and creates its own independent browser session.
 - The admin API supports profile CRUD, connection testing, web-login session
   enrollment (the administrator signs in at the NAS's own page, the browser
   relays the one-time code, and the gateway performs the code exchange and
@@ -401,10 +401,11 @@ requirement justifies one.
   server to a LAN address.
 - Route the Admin UI through the DSM portal. The public portal targets a
   package-user, loopback-only DSM authentication bridge; the container backend
-  remains on a separate loopback port. DSM-backed Gateway sessions require a
-  fresh matching signed assertion on every use and remain separate from MCP
-  bearer credentials and every downstream NAS session. The independent local
-  administrator is optional fallback state on Synology.
+  remains on a separate loopback port. DSM proves identity only while creating
+  a DSM-backed Gateway session. That Gateway session is then independent from
+  the DSM browser session, MCP bearer credentials, and every downstream NAS
+  session. The independent local administrator is optional fallback state on
+  Synology.
 
 ## Release and verification matrix
 

@@ -17,11 +17,13 @@ surface through per-token NAS allowlists and independent `nas.read`,
 mode remains read-only.
 
 Generic managed deployments require the local first-run administrator flow
-described below. The Synology SPK adds a loopback host bridge that authenticates
-current DSM `administrators` users and gives the core gateway a short-lived
-signed assertion instead of a DSM cookie or password. A fresh SPK therefore
-starts in DSM-Web-Login-only mode; a DSM-authenticated administrator can later
-enable the same local login as an optional fallback. Supplying a platform
+described below. The Synology SPK adds a loopback host bridge that reuses
+dsmctl's DSM Web Login authorization-code, PKCE, and Noise exchange, checks the
+returned account's effective `administrators` membership, and gives the core
+gateway a short-lived signed login assertion instead of a DSM cookie, SID, or
+password. The core then creates its own independent Gateway browser session. A
+fresh SPK therefore starts in DSM-Web-Login-only mode; a DSM-authenticated
+administrator can later enable the same local login as an optional fallback. Supplying a platform
 assertion key directly is reserved for managed deployment adapters and is not a
 way to bypass generic-container setup.
 

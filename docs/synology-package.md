@@ -11,7 +11,7 @@ See
 `deploy/synology/SUPPORTED.md` for the tested-release matrix.
 
 The SPK package version follows the shared dsmctl compatibility train. The
-current `7.3.2-11` means DSM compatibility train 7.3.2, dsmctl build 11; it does
+current `7.3.2-14` means DSM compatibility train 7.3.2, dsmctl build 14; it does
 not change the separate DSM 7.2.1 host-installation minimum above.
 
 ## Runtime boundary
@@ -24,9 +24,10 @@ uses LAN-scoped UDP broadcast, so the Synology Compose adapter uses host
 networking to see the NAS LAN interfaces. The Gateway HTTP server still binds
 only host `127.0.0.1:18765`. A package-owned authentication bridge binds only
 `127.0.0.1:18766`, and Web Station routes the HTTPS `/dsmctl` portal to that
-bridge. The bridge validates the current DSM browser session on the host,
-requires exact membership in DSM's `administrators` group, strips DSM cookies,
-and sends the container only a short-lived signed assertion. The non-root
+bridge. The bridge starts DSM's existing Web Login authorization-code + PKCE
+flow, exchanges the one-time code with the host over loopback, requires exact
+membership in DSM's `administrators` group, and sends the container only a
+short-lived signed login assertion. The non-root
 container has all capabilities dropped and cannot configure host networking.
 The package does not modify firewall, router, QuickConnect, VPN, DNS, or
 certificate settings.
@@ -64,24 +65,30 @@ settings prevents Container Manager from creating the container. The memory
 and tmpfs bounds remain enforced; generic Linux Compose keeps CPU and process
 limits on hosts that support them.
 
-The bridge invokes Synology's host authentication CGI with the current request
-environment and independently resolves group membership on every protected
-request. It never forwards DSM cookies, DSM passwords, or a durable DSM token
-to the container. Assertions expire after 30 seconds, are audience-bound and
-one-time, and contain only the validated DSM username and administrator claim.
-This integration authorizes Gateway administration only; it does not create an
-implicit Host NAS profile or expose DSM credentials to MCP operations.
+The bridge reuses the same `SYNO.API.Auth` `webui` code-grant implementation as
+NAS profile Web Login: PKCE state stays server-side, DSM sends the one-time code
+to the verified opener origin, and the bridge completes the Noise IK exchange
+through the host's loopback HTTP listener. It checks effective
+`administrators` membership, discards the resulting DSM session material, and
+sends the container only a 30-second audience-bound, one-time assertion for
+creating a Gateway session. DSM cookies, passwords, SIDs, SynoTokens, and Noise
+keys never enter the container. This integration authorizes Gateway
+administration only; it does not create an implicit Host NAS profile or expose
+DSM credentials to MCP operations.
 
 ## Gateway administration
 
-On a fresh SPK installation, open `/dsmctl/admin` from the same browser that is
-signed in to DSM and choose **DSM Web Login**. Only current members of DSM's
-`administrators` group are accepted. No unauthenticated setup endpoint exists
+On a fresh SPK installation, open `/dsmctl/admin` and choose **DSM Web Login**.
+The Gateway opens DSM's HTTPS sign-in page in a separate window; DSM handles
+password, 2FA, passkey, and approve-sign-in, then returns a one-time code to the
+opener. The bridge detects the configured DSM HTTP/HTTPS management ports
+(defaults `5000`/`5001`) from the host web-server configuration. Only current
+members of DSM's `administrators` group are accepted. No unauthenticated setup endpoint exists
 in this mode, so installation does not create or display a bootstrap password.
-The resulting Gateway session is HttpOnly/SameSite and remains usable only
-while each request can also prove a current, matching DSM administrator
-session. DSM logout or administrator-group removal therefore removes delegated
-access immediately.
+The resulting Gateway session is HttpOnly/SameSite and is independent from the
+DSM browser and code-exchange sessions. Logging out of DSM does not silently
+log out dsmctl; use dsmctl's own logout or session-revocation controls. A new
+dsmctl login always performs a fresh DSM Web Login and administrator check.
 
 An authenticated DSM administrator may optionally enable an independent local
 Gateway username/password from the administrator panel. Its password is stored
@@ -205,13 +212,13 @@ in-toto provenance metadata), then on Linux run:
 
 ```sh
 SOURCE_DATE_EPOCH="$(git show -s --format=%ct)" \
-  deploy/synology/build-spk.sh 7.3.2-11 dsmctl-gateway:release dist
-deploy/synology/validate-spk.sh dist/dsmctl-gateway-7.3.2-11-x86_64.spk
+  deploy/synology/build-spk.sh 7.3.2-14 dsmctl-gateway:release dist
+deploy/synology/validate-spk.sh dist/dsmctl-gateway-7.3.2-14-x86_64.spk
 sha256sum -c dist/SHA256SUMS
 ```
 
-The release workflow is triggered by the matching `dsmctl-v7.3.2-11` tag (or an
-explicit `7.3.2-11` dispatch input) and refuses a version that differs from the
+The release workflow is triggered by the matching `dsmctl-v7.3.2-14` tag (or an
+explicit `7.3.2-14` dispatch input) and refuses a version that differs from the
 source version or the container image label.
 
 Package installation and model certification must be done on real Synology
@@ -222,12 +229,12 @@ the same Package Center backend every time (replace `nas` with the SSH config
 alias):
 
 ```sh
-scp -O dist/dsmctl-gateway-7.3.2-11-x86_64.spk \
-  nas:/tmp/dsmctl-gateway-7.3.2-11-x86_64.spk
-ssh nas 'sha256sum /tmp/dsmctl-gateway-7.3.2-11-x86_64.spk'
+scp -O dist/dsmctl-gateway-7.3.2-14-x86_64.spk \
+  nas:/tmp/dsmctl-gateway-7.3.2-14-x86_64.spk
+ssh nas 'sha256sum /tmp/dsmctl-gateway-7.3.2-14-x86_64.spk'
 ssh nas 'sudo env PATH=/usr/syno/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin \
   /usr/syno/bin/synopkg install \
-  /tmp/dsmctl-gateway-7.3.2-11-x86_64.spk'
+  /tmp/dsmctl-gateway-7.3.2-14-x86_64.spk'
 ssh nas 'sudo env PATH=/usr/syno/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin \
   /usr/syno/bin/synopkg status dsmctl-gateway'
 ```

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -52,6 +53,13 @@ func BeginEnrollment(baseURL, openerURL string, opts Options) (*Enrollment, Enro
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
+	exchangeBase := base
+	if strings.TrimSpace(opts.ExchangeBaseURL) != "" {
+		exchangeBase, _, err = normalizeBase(opts.ExchangeBaseURL)
+		if err != nil {
+			return nil, EnrollmentStart{}, fmt.Errorf("exchange base URL: %w", err)
+		}
+	}
 	loginURL := base + "/?" + url.Values{
 		"forceDesktop":          {"1"},
 		"client_id":             {clientID},
@@ -63,7 +71,7 @@ func BeginEnrollment(baseURL, openerURL string, opts Options) (*Enrollment, Enro
 		"session":               {sessionName},
 		"force_login":           {"yes"},
 	}.Encode() + "#/signin"
-	return &Enrollment{base: base, clientID: clientID, sessionName: sessionName, verifier: verifier, state: state, httpClient: httpClient}, EnrollmentStart{LoginURL: loginURL, State: state}, nil
+	return &Enrollment{base: exchangeBase, clientID: clientID, sessionName: sessionName, verifier: verifier, state: state, httpClient: httpClient}, EnrollmentStart{LoginURL: loginURL, State: state}, nil
 }
 
 // Complete exchanges the one-time code at most once at the caller's layer.

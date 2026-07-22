@@ -6,6 +6,32 @@ log_file="${SYNOPKG_PKGVAR}/synology-auth.log"
 binary="${SYNOPKG_PKGDEST:?}/bin/dsmctl-synology-auth"
 key="${SYNOPKG_PKGHOME:?}/dsm-sso.key"
 
+dsm_https_port() {
+    port="$(awk '/^[[:space:]]*listen[[:space:]].*default_server[[:space:]]+ssl/ {
+        value=$2
+        gsub(/[\[\];]/, "", value)
+        sub(/^.*:/, "", value)
+        if (value ~ /^[0-9]+$/ && value != "443") { print value; exit }
+    }' /etc/nginx/nginx.conf 2>/dev/null || true)"
+    case "$port" in
+        ''|*[!0-9]*) echo 5001 ;;
+        *) echo "$port" ;;
+    esac
+}
+
+dsm_http_port() {
+    port="$(awk '/^[[:space:]]*listen[[:space:]].*default_server/ && $0 !~ /[[:space:]]ssl([[:space:];]|$)/ {
+        value=$2
+        gsub(/[\[\];]/, "", value)
+        sub(/^.*:/, "", value)
+        if (value ~ /^[0-9]+$/ && value != "80") { print value; exit }
+    }' /etc/nginx/nginx.conf 2>/dev/null || true)"
+    case "$port" in
+        ''|*[!0-9]*) echo 5000 ;;
+        *) echo "$port" ;;
+    esac
+}
+
 running() {
     [ -f "$pid_file" ] || return 1
     pid="$(cat "$pid_file" 2>/dev/null || true)"
@@ -19,6 +45,8 @@ start_bridge() {
     rm -f "$pid_file"
     "$binary" --listen=127.0.0.1:18766 --backend=http://127.0.0.1:18765 \
         --assertion-key-file="$key" --audience=dsmctl-synology-admin \
+        --dsm-https-port="$(dsm_https_port)" \
+        --dsm-http-port="$(dsm_http_port)" \
         >> "$log_file" 2>&1 &
     echo "$!" > "$pid_file"
 }

@@ -35,6 +35,8 @@ func run(arguments []string, logger *slog.Logger) error {
 	audience := flags.String("audience", platformauth.DefaultAudience, "platform assertion audience")
 	authenticatePath := flags.String("authenticate-cgi", "/usr/syno/synoman/webman/modules/authenticate.cgi", "DSM session authenticator path")
 	idPath := flags.String("id-command", "/usr/bin/id", "DSM identity group command path")
+	dsmHTTPSPort := flags.String("dsm-https-port", "5001", "DSM management HTTPS port used for interactive login and CGI validation")
+	dsmHTTPPort := flags.String("dsm-http-port", "5000", "DSM loopback HTTP port used for the server-side Web Login code exchange")
 	if err := flags.Parse(arguments); err != nil {
 		return err
 	}
@@ -60,9 +62,10 @@ func run(arguments []string, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	validator := synologyauth.CommandValidator{AuthenticatePath: *authenticatePath, IDPath: *idPath, DSMHTTPSPort: *dsmHTTPSPort}
 	handler, err := synologyauth.New(synologyauth.Options{
 		Backend: backend, Signer: signer, Logger: logger, RequireLoopback: true,
-		Validator: synologyauth.CommandValidator{AuthenticatePath: *authenticatePath, IDPath: *idPath},
+		DSMHTTPSPort: *dsmHTTPSPort, DSMHTTPPort: *dsmHTTPPort, Validator: validator, SubjectValidator: validator,
 	})
 	if err != nil {
 		return err
