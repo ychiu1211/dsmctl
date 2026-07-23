@@ -223,6 +223,7 @@ func TestProxyCompletesDSMWebLoginCodeGrant(t *testing.T) {
 	startRequest.Header.Set("X-Forwarded-Host", "nas.example:443")
 	startRequest.Header.Set("X-Forwarded-Proto", "https")
 	startRequest.Header.Set("X-Forwarded-Prefix", "/dsmctl")
+	startRequest.Header.Set("Origin", "https://nas.example:443")
 	startResponse := httptest.NewRecorder()
 	handler.ServeHTTP(startResponse, startRequest)
 	if startResponse.Code != http.StatusOK {
@@ -242,6 +243,8 @@ func TestProxyCompletesDSMWebLoginCodeGrant(t *testing.T) {
 		"enrollment_id": start["enrollment_id"], "code": "one-time-code", "rs": serverKey, "state": start["state"],
 	})
 	completeRequest := httptest.NewRequest(http.MethodPost, "/admin/api/dsm-login/complete", bytes.NewReader(completeBody))
+	completeRequest.Header.Set("X-Forwarded-Host", "nas.example:443")
+	completeRequest.Header.Set("X-Forwarded-Proto", "https")
 	completeRequest.Header.Set("Origin", "https://nas.example:443")
 	completeResponse := httptest.NewRecorder()
 	handler.ServeHTTP(completeResponse, completeRequest)
@@ -250,6 +253,9 @@ func TestProxyCompletesDSMWebLoginCodeGrant(t *testing.T) {
 	}
 
 	replayRequest := httptest.NewRequest(http.MethodPost, "/admin/api/dsm-login/complete", bytes.NewReader(completeBody))
+	replayRequest.Header.Set("X-Forwarded-Host", "nas.example:443")
+	replayRequest.Header.Set("X-Forwarded-Proto", "https")
+	replayRequest.Header.Set("Origin", "https://nas.example:443")
 	replayResponse := httptest.NewRecorder()
 	handler.ServeHTTP(replayResponse, replayRequest)
 	if replayResponse.Code != http.StatusUnauthorized {
@@ -268,6 +274,47 @@ func TestProxyRejectsUnsafeDSMLoginHost(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("unsafe host response = %d %q", response.Code, response.Body.String())
+	}
+}
+
+func TestProxyEnforcesDSMLoginOrigin(t *testing.T) {
+	backendURL, _ := url.Parse("http://127.0.0.1:1")
+	options := testOptions(t, backendURL, 10)
+	handler, err := New(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The forwarded Gateway origin here is https://nas.example:443. A browser on
+	// the Admin UI or OAuth consent page attaches exactly that Origin; a missing
+	// or foreign Origin must be rejected before the bridge does any DSM work.
+	forbidden := func(path, origin string) {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodPost, path, strings.NewReader("{}"))
+		request.Header.Set("X-Forwarded-Host", "nas.example:443")
+		request.Header.Set("X-Forwarded-Proto", "https")
+		if origin != "" {
+			request.Header.Set("Origin", origin)
+		}
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusForbidden {
+			t.Fatalf("%s origin %q status = %d %q", path, origin, response.Code, response.Body.String())
+		}
+		var body map[string]string
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+			t.Fatalf("%s origin %q body decode: %v", path, origin, err)
+		}
+		if body["code"] != "invalid_origin" {
+			t.Fatalf("%s origin %q error code = %q", path, origin, body["code"])
+		}
+	}
+
+	for _, path := range []string{dsmLoginStartPath, dsmLoginCompletePath} {
+		forbidden(path, "")                       // fail closed when the browser sends no Origin
+		forbidden(path, "https://evil.example")   // cross-origin caller
+		forbidden(path, "http://nas.example:443") // scheme mismatch
+		forbidden(path, "https://nas.example")    // port/authority mismatch
 	}
 }
 

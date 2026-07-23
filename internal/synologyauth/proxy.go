@@ -180,6 +180,12 @@ func New(options Options) (http.Handler, error) {
 			return
 		}
 		if req.URL.Path == dsmLoginCompletePath {
+			gatewayOrigin, _, originErr := forwardedGatewayOrigin(forwardedProto, forwardedHost)
+			if originErr != nil || !dsmLoginOriginAllowed(req, gatewayOrigin) {
+				options.Logger.Warn("DSM administrator Web Login denied", "reason", "invalid_origin")
+				writeJSONError(w, http.StatusForbidden, "invalid_origin", "DSM administrator login origin does not match")
+				return
+			}
 			subject, reason := completeDSMLogin(req, enrollments, options.SubjectValidator)
 			if reason != "" {
 				options.Logger.Warn("DSM administrator Web Login denied", "reason", reason)
@@ -235,6 +241,10 @@ func serveDSMLoginStart(w http.ResponseWriter, req *http.Request, forwardedProto
 	gatewayOrigin, host, err := forwardedGatewayOrigin(forwardedProto, forwardedHost)
 	if err != nil || !safeForwardedPrefix(prefix) {
 		writeJSONError(w, http.StatusBadRequest, "invalid_gateway_host", "cannot determine DSM login address")
+		return
+	}
+	if !dsmLoginOriginAllowed(req, gatewayOrigin) {
+		writeJSONError(w, http.StatusForbidden, "invalid_origin", "DSM administrator login origin does not match")
 		return
 	}
 	dsmOrigin := "https://" + net.JoinHostPort(host, options.DSMHTTPSPort)
@@ -303,6 +313,20 @@ func forwardedGatewayOrigin(proto, authority string) (string, string, error) {
 		}
 	}
 	return proto + "://" + authority, host, nil
+}
+
+// dsmLoginOriginAllowed enforces a same-origin allowlist on the DSM login
+// bridge endpoints. Unlike other /admin/api/* mutations, /admin/api/dsm-login
+// /{start,complete} are handled by the reverse proxy before reaching the admin
+// backend, so they never pass through validateBrowserMutation. Both legitimate
+// callers - the Admin UI page and the OAuth consent page - are served from the
+// forwarded Gateway origin and issue same-origin fetches, so a browser attaches
+// an Origin header equal to that origin. Requiring an exact match (mirroring the
+// admin backend's Origin comparison) is defense-in-depth against cross-origin or
+// non-browser callers; the empty-Origin case fails closed.
+func dsmLoginOriginAllowed(req *http.Request, gatewayOrigin string) bool {
+	origin := strings.TrimRight(strings.TrimSpace(req.Header.Get("Origin")), "/")
+	return origin != "" && origin == gatewayOrigin
 }
 
 func forwardedHTTPSLocation(authority string, target *url.URL) (string, error) {
