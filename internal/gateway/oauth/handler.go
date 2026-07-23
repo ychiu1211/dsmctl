@@ -510,12 +510,17 @@ func (h *Handler) renderAuthorization(w http.ResponseWriter, req *http.Request, 
 		h.renderAuthorizationError(w, req, http.StatusServiceUnavailable, "Could not read administrator login methods.")
 		return
 	}
+	nonce, err := randomSecret(16)
+	if err != nil {
+		h.renderAuthorizationError(w, req, http.StatusServiceUnavailable, "Could not render the authorization page.")
+		return
+	}
 	data := authorizationPageData{
 		TraditionalChinese: prefersTraditionalChinese(req), Message: message,
 		DSMWebLogin: h.platformVerifier != nil, LocalLogin: administrator.Initialized,
 		ClientName: authorization.Client.Name, RedirectHost: redirectDisplayHost(authorization.RedirectURI),
 		Resource: authorization.Resource, Scopes: authorization.Scopes, NAS: authorization.NASAllowlist,
-		AdminLoginURL: h.adminConsentLoginURL(req, authorization),
+		Nonce: nonce,
 		Hidden: map[string]string{
 			"response_type": authorization.ResponseType, "client_id": authorization.ClientID,
 			"redirect_uri": authorization.RedirectURI, "state": authorization.State,
@@ -535,7 +540,14 @@ func (h *Handler) renderAuthorization(w http.ResponseWriter, req *http.Request, 
 	if origin := clientRedirectOrigin(authorization.RedirectURI); origin != "" {
 		formAction += " " + origin
 	}
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; form-action "+formAction+"; frame-ancestors 'none'; base-uri 'none'")
+	// Only the DSM Web Login render carries an inline script; relax the policy
+	// for that one nonce-pinned script (and the same-origin dsm-login fetches it
+	// makes) exactly then, and keep the page locked to 'none' otherwise.
+	scriptPolicy := ""
+	if data.DSMWebLogin && data.SessionUser == "" {
+		scriptPolicy = "script-src 'nonce-" + nonce + "'; connect-src 'self'; "
+	}
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; "+scriptPolicy+"style-src 'unsafe-inline'; img-src 'self'; form-action "+formAction+"; frame-ancestors 'none'; base-uri 'none'")
 	if err := authorizationTemplate.Execute(w, data); err != nil {
 		h.logger.Error("render OAuth authorization page", "error", err)
 	}
@@ -547,23 +559,6 @@ func (h *Handler) gatewaySession(req *http.Request) (state.AdministratorSession,
 		return state.AdministratorSession{}, errors.New("no gateway administrator session")
 	}
 	return h.repository.AuthenticateAdministratorSession(req.Context(), cookie.Value)
-}
-
-// adminConsentLoginURL sends the administrator through the Admin UI login
-// (which owns the DSM Web Login code-grant flow) and back to this consent
-// request once a Gateway session exists.
-func (h *Handler) adminConsentLoginURL(req *http.Request, authorization authorizationRequest) string {
-	values := url.Values{
-		"response_type": {authorization.ResponseType}, "client_id": {authorization.ClientID},
-		"redirect_uri": {authorization.RedirectURI}, "scope": {strings.Join(authorization.Scopes, " ")},
-		"resource": {authorization.Resource}, "code_challenge": {authorization.CodeChallenge},
-		"code_challenge_method": {authorization.CodeChallengeMethod},
-	}
-	if authorization.State != "" {
-		values.Set("state", authorization.State)
-	}
-	base := h.externalBase(req)
-	return base + "/admin/?next=" + url.QueryEscape(base+"/oauth/authorize?"+values.Encode())
 }
 
 func clientRedirectOrigin(raw string) string {

@@ -51,7 +51,7 @@ func TestDSMOnlyOAuthAuthorization(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/oauth/authorize?"+values.Encode(), nil)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "Authorize with DSM Web Login") || strings.Contains(response.Body.String(), `name="username"`) {
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "Sign in with DSM Web Login") || strings.Contains(response.Body.String(), `name="username"`) {
 		t.Fatalf("DSM-only authorization page = %d %s", response.Code, response.Body.String())
 	}
 

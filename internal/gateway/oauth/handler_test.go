@@ -246,7 +246,7 @@ func TestAuthorizationWithGatewaySessionCookie(t *testing.T) {
 	}
 }
 
-func TestAuthorizationPageLinksDSMLoginThroughAdmin(t *testing.T) {
+func TestAuthorizationPageOpensDSMLoginDirectly(t *testing.T) {
 	repository, err := state.OpenWithOptions(filepath.Join(t.TempDir(), "gateway.db"), make([]byte, 32), state.OpenOptions{
 		PasswordHashParameters: &state.PasswordHashParameters{MemoryKiB: 64, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32},
 	})
@@ -285,15 +285,44 @@ func TestAuthorizationPageLinksDSMLoginThroughAdmin(t *testing.T) {
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	body := response.Body.String()
-	if response.Code != http.StatusOK || !strings.Contains(body, "Authorize with DSM Web Login") {
-		t.Fatalf("DSM handoff page = %d %s", response.Code, body)
+	if response.Code != http.StatusOK || !strings.Contains(body, "Sign in with DSM Web Login") {
+		t.Fatalf("DSM consent page = %d %s", response.Code, body)
 	}
-	if !strings.Contains(body, `href="https://nas.example/dsmctl/admin/?next=https%3A%2F%2Fnas.example%2Fdsmctl%2Foauth%2Fauthorize%3F`) {
-		t.Fatalf("DSM login does not hand off through the admin login: %s", body)
+	// The DSM button triggers an inline popup script on the consent page; it
+	// must not hand off to the admin page or POST a header-assertion form.
+	if !strings.Contains(body, `id="dsmBtn"`) {
+		t.Fatalf("DSM Web Login is not a direct popup button: %s", body)
+	}
+	if strings.Contains(body, "/admin/?next=") {
+		t.Fatalf("consent page still hands off to the admin login: %s", body)
 	}
 	if strings.Contains(body, `value="dsm"`) {
-		t.Fatalf("DSM handoff page still renders the header-assertion submit button: %s", body)
+		t.Fatalf("consent page still renders the header-assertion submit button: %s", body)
 	}
+	// The one nonce-pinned script is allowed by the CSP; scripting is otherwise
+	// denied, and connect-src permits the same-origin dsm-login fetches.
+	csp := response.Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "script-src 'nonce-") || !strings.Contains(csp, "connect-src 'self'") {
+		t.Fatalf("consent CSP does not scope the DSM login script: %q", csp)
+	}
+	nonce := cspNonce(csp)
+	if nonce == "" || !strings.Contains(body, `<script nonce="`+nonce+`">`) {
+		t.Fatalf("consent script is not bound to the CSP nonce: csp=%q body=%s", csp, body)
+	}
+}
+
+func cspNonce(csp string) string {
+	marker := "script-src 'nonce-"
+	start := strings.Index(csp, marker)
+	if start < 0 {
+		return ""
+	}
+	rest := csp[start+len(marker):]
+	end := strings.Index(rest, "'")
+	if end < 0 {
+		return ""
+	}
+	return rest[:end]
 }
 
 func newOAuthTestHandler(t *testing.T) (*Handler, *state.Repository) {
