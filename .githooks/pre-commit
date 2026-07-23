@@ -7,15 +7,19 @@ set -euo pipefail
 pattern='10\.17\.[0-9]|[Dd]erek|deryck'
 public_repo_pattern='github\.com/derekvery666/dsmctl'
 public_raw_pattern='raw\.githubusercontent\.com/derekvery666/dsmctl'
+public_image_pattern='ghcr\.io/derekvery666/dsmctl-gateway'
 
 staged=$(git diff --cached --name-only --diff-filter=ACM -- '*.go' '*.md' \
 	| grep -v '^scripts/check-no-lab-data.sh$' || true)
 [ -z "$staged" ] && exit 0
 
 if hits=$(
-	git grep --cached -nIE "$pattern" -- $staged 2>/dev/null |
-		sed -e "s#${public_repo_pattern}##g" -e "s#${public_raw_pattern}##g" |
-		grep -E "$pattern"
+    git grep --cached -nIE "$pattern" -- $staged 2>/dev/null |
+      sed \
+        -e "s#${public_repo_pattern}##g" \
+        -e "s#${public_raw_pattern}##g" \
+        -e "s#${public_image_pattern}##g" |
+      grep -E "$pattern"
 ); then
 	echo "pre-commit: real internal-lab data in staged files — use RFC 5737 doc IPs / generic names:" >&2
 	echo "$hits" >&2

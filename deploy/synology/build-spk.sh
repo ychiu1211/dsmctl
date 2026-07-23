@@ -41,7 +41,7 @@ cp -R "$template/conf" "$template/scripts" "$template/WIZARD_UIFILES" "$stage/"
 sed "s/__VERSION__/$package_version/g" "$template/INFO.template" > "$stage/INFO"
 cp "$template/package/ui/images/dsmctl_64.png" "$stage/PACKAGE_ICON.PNG"
 cp "$template/package/ui/images/dsmctl_256.png" "$stage/PACKAGE_ICON_256.PNG"
-printf '%s\n' "Apache License 2.0; see https://www.apache.org/licenses/LICENSE-2.0" > "$stage/LICENSE"
+cp "$repo_root/LICENSE" "$stage/LICENSE"
 
 cp -R "$template/package/." "$package_stage/"
 sed "s/__VERSION__/$package_version/g" "$template/package/project/compose.yaml.template" > "$package_stage/project/compose.yaml"

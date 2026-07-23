@@ -32,6 +32,7 @@ LABEL org.opencontainers.image.title="dsmctl gateway" \
 
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=build --chown=10001:10001 /out/dsmctl-gateway /dsmctl-gateway
+COPY LICENSE /LICENSE
 
 USER 10001:10001
 EXPOSE 8080

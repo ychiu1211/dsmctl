@@ -62,16 +62,52 @@ setup, OAuth/manual-token, approval, audit, and recovery workflows.
 
 ## Project and download status
 
-The CLI, stdio MCP server, Gateway, container assets, and x86_64 Synology SPK
-builder are in the repository today. Public GitHub Releases have **not** been
-published yet, so the honest installation path is currently a source build.
-The SPK remains a preview until the hardware/lifecycle matrix in
+The CLI, stdio MCP server, Gateway, and x86_64 Synology SPK builder are in the
+repository today. The public release publishes only the `dsmctl` CLI and
+offline DSM package; the local stdio MCP server remains a source-build option.
+The first public tag has **not** been published yet. Pushing
+`dsmctl-v7.3.2-18` will publish the checksum-verified assets below as a GitHub
+prerelease. The SPK remains a preview until the hardware/lifecycle matrix in
 [`deploy/synology/SUPPORTED.md`](deploy/synology/SUPPORTED.md) is complete.
 
 The [public release and distribution plan](docs/public-release-plan.md) defines
-the exact CLI archives, install scripts, OCI image, `.spk`, checksums, release
-gates, and GitHub Release layout needed to make this page a direct-download
-entry point without overstating current certification.
+the exact CLI archives, install scripts, `.spk`, checksums, release gates, and
+GitHub Release layout needed to make this page a direct-download entry point
+without overstating current certification.
+
+## Preview downloads
+
+These version-bound links become active when the matching prerelease tag is
+published. CLI archives contain `dsmctl`; the Synology package contains the
+Gateway Admin UI, remote HTTP MCP service, and its offline runtime image.
+
+| Platform | Direct asset | Status |
+| --- | --- | --- |
+| Windows amd64 | [`dsmctl` CLI `.zip`](https://github.com/derekvery666/dsmctl/releases/download/dsmctl-v7.3.2-18/dsmctl-windows-amd64.zip) | Preview after tag |
+| Linux amd64 | [`dsmctl` CLI `.tar.gz`](https://github.com/derekvery666/dsmctl/releases/download/dsmctl-v7.3.2-18/dsmctl-linux-amd64.tar.gz) | Preview after tag |
+| Synology x86_64 | [Offline DSM `.spk`](https://github.com/derekvery666/dsmctl/releases/download/dsmctl-v7.3.2-18/dsmctl-gateway-7.3.2-18-x86_64.spk) | Hardware-limited preview |
+| All assets | [GitHub Releases](https://github.com/derekvery666/dsmctl/releases) | Includes checksums, license, installers, and support matrix |
+
+Inspect the installer before running it. An explicit version is required for
+the preview because GitHub's `latest` endpoint excludes prereleases.
+
+```console
+curl -fsSLO https://github.com/derekvery666/dsmctl/releases/download/dsmctl-v7.3.2-18/install.sh
+less install.sh
+sh install.sh --version 7.3.2-18
+```
+
+```powershell
+Invoke-WebRequest https://github.com/derekvery666/dsmctl/releases/download/dsmctl-v7.3.2-18/install.ps1 -OutFile install.ps1
+Get-Content .\install.ps1
+.\install.ps1 -Version 7.3.2-18 -AddToPath
+```
+
+On an eligible Synology, download the `.spk`, review the support matrix, then
+use **Package Center → Manual Install**. The SPK requires x86_64, DSM 7.2.1 or
+newer, Container Manager, and Web Station; it does not require Go or a registry
+download. The Gateway runtime is bundled inside the `.spk`; no standalone
+container image is published by this release.
 
 ## Architecture
 

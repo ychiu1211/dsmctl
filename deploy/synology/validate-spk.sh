@@ -2,6 +2,8 @@
 set -euo pipefail
 
 spk="${1:?usage: validate-spk.sh PACKAGE.spk}"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/../.." && pwd)"
 for command in tar gzip grep cmp; do
   command -v "$command" >/dev/null || { echo "missing required command: $command" >&2; exit 1; }
 done
@@ -18,9 +20,10 @@ test "$(sed -n '1p' "$work/spk.entries")" = "INFO" || {
 }
 tar -xf "$spk" -C "$work"
 
-for required in INFO package.tgz conf/resource conf/privilege conf/PKG_DEPS scripts/start-stop-status PACKAGE_ICON.PNG PACKAGE_ICON_256.PNG; do
+for required in INFO LICENSE package.tgz conf/resource conf/privilege conf/PKG_DEPS scripts/start-stop-status PACKAGE_ICON.PNG PACKAGE_ICON_256.PNG; do
   test -e "$work/$required" || { echo "missing SPK entry: $required" >&2; exit 1; }
 done
+cmp "$repo_root/LICENSE" "$work/LICENSE"
 grep -qx 'arch="x86_64"' "$work/INFO"
 grep -qx 'os_min_ver="7.2.1-69057"' "$work/INFO"
 grep -qx 'adminprotocol="https"' "$work/INFO"

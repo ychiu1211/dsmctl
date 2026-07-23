@@ -7,12 +7,20 @@ owner: "codex"
 depends_on: [WI-014, WI-015, WI-016, WI-032, WI-033, WI-035, WI-037, WI-038, WI-081]
 parallel_group: G
 touches:
+  - .githooks/pre-commit
   - deploy/container
   - deploy/linux
   - deploy/synology
+  - deploy/release
   - .github/workflows
+  - scripts/build-cli-release.sh
+  - scripts/release_archive.go
+  - scripts/validate-release-assets.sh
+  - scripts/install.sh
+  - scripts/install.ps1
   - docs/gateway.md
   - docs/synology-package.md
+  - docs/public-release-plan.md
   - README.md
 ---
 
@@ -144,9 +152,11 @@ Continuation 2026-07-23: the user explicitly asked Codex to finish public
 distribution after confirming that the DSM deliverable must be a downloadable
 SPK rather than a `go install` target. No other active agent is attached to
 this workspace task, so Codex is continuing the existing WI-017 instead of
-creating a competing release workflow. The next slice unifies CLI/MCP archives,
-the existing Gateway image/SPK build, checksums, and GitHub prerelease
-publication; it does not claim the outstanding hardware/lifecycle matrix.
+creating a competing release workflow. The user subsequently narrowed public
+publication to CLI archives and the DSM SPK only. The workflow still builds the
+Gateway image internally because the offline SPK bundles it, but does not
+publish standalone MCP, image, Compose, or GHCR artifacts. This does not claim
+the outstanding hardware/lifecycle matrix.
 
 ## Handoff
 
@@ -218,3 +228,34 @@ truthfully move to `done`.
   removed. The installed/running package and its intended pre-upgrade recovery
   copies remain. Local Docker image tags and reproducible `dist/` artifacts
   remain for follow-up and contain no gateway secrets.
+
+Public-distribution continuation verified 2026-07-23:
+
+- The single tag workflow builds deterministic Windows/Linux amd64 `dsmctl`
+  archives, the offline DSM SPK, checksum-verifying installers, Apache-2.0,
+  checksums, and support metadata. A manual dispatch is build-only;
+  `dsmctl-vX.Y.Z-N` publishes a GitHub prerelease, downloads every published
+  asset, and re-runs the complete validator.
+- Standalone `dsmctl-mcp`, Gateway image, Compose, and GHCR publication are
+  intentionally outside this release. The image remains an internal build
+  input embedded in the offline SPK.
+- The release archiver unit tests and pinned `actionlint` passed. Two local
+  Windows/Linux CLI archive builds were byte-identical and contained only the
+  `dsmctl` executable, README, and Apache-2.0 text. The local `linux/amd64` scratch
+  image built successfully with the full license inside it. Two SPKs from that
+  image were byte-identical at SHA-256
+  `f91618a43e470eaf8f26fed793b5c27f648d47969c754582ec358df4e518426a`;
+  SPK structure/security validation and all generated checksums passed.
+- Temporary verification archives and the `wi017-verify` image tag were
+  removed. The versioned local `dsmctl-gateway:7.3.2-18` image remains as the
+  intended build result. No NAS connection, install, or mutation was made.
+- Draft PR #2 carries the public release implementation on
+  `codex/public-release`. Both push/PR CI matrices passed. After narrowing the
+  public scope, build-only Actions run `29984509190` at commit `033f248`
+  passed the complete CLI/SPK pipeline, including two deterministic SPK builds,
+  the Compose persistence smoke, exact eight-file asset validation, and
+  artifact upload; tag-only GitHub prerelease steps were correctly skipped.
+- Remaining publication gate: review and merge PR #2, push
+  `dsmctl-v7.3.2-18`, and verify the public CLI/SPK prerelease links. WI-017
+  still cannot become `done` until its hardware/lifecycle acceptance matrix
+  passes.

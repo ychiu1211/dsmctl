@@ -1,4 +1,4 @@
-name: Gateway release artifacts
+name: CLI and DSM package release
 
 on:
   workflow_dispatch:
@@ -11,7 +11,11 @@ on:
       - dsmctl-v*
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: dsmctl-release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -27,29 +31,40 @@ jobs:
       - uses: docker/setup-buildx-action@v3
       - name: Resolve deterministic build inputs
         shell: bash
+        env:
+          DISPATCH_PACKAGE_VERSION: ${{ inputs.package_version }}
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            package_version="${{ inputs.package_version }}"
+            package_version="$DISPATCH_PACKAGE_VERSION"
           else
             package_version="${GITHUB_REF_NAME#dsmctl-v}"
           fi
           [[ "$package_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[1-9][0-9]*$ ]]
           source_version="$(go run ./cmd/dsmctl --version | awk '{print $NF}')"
           test "$package_version" = "$source_version"
+          release_tag="dsmctl-v$package_version"
+          if [[ "${{ github.event_name }}" != "workflow_dispatch" ]]; then
+            test "$GITHUB_REF_NAME" = "$release_tag"
+          fi
           echo "PACKAGE_VERSION=$package_version" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=$release_tag" >> "$GITHUB_ENV"
           echo "REVISION=$GITHUB_SHA" >> "$GITHUB_ENV"
           echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$GITHUB_SHA")" >> "$GITHUB_ENV"
           echo "CREATED=$(git show -s --format=%cI "$GITHUB_SHA")" >> "$GITHUB_ENV"
       - name: Test source
         run: |
+          bash scripts/check-no-lab-data.sh
           go test ./... -count=1
           go vet ./...
-      - name: Build the release image and BuildKit metadata
+      - name: Build deterministic CLI archives
+        shell: bash
+        run: bash scripts/build-cli-release.sh "$PACKAGE_VERSION" dist
+      - name: Build the internal DSM package image
         shell: bash
         run: |
           mkdir -p dist
           docker buildx build --platform linux/amd64 --provenance=false --load \
-            --metadata-file dist/buildkit-metadata.json \
+            --metadata-file "$RUNNER_TEMP/buildkit-metadata.json" \
             --build-arg "VERSION=$PACKAGE_VERSION" \
             --build-arg "REVISION=$REVISION" \
             --build-arg "CREATED=$CREATED" \
@@ -57,23 +72,23 @@ jobs:
             -t dsmctl-gateway:release .
           test "$(docker image inspect dsmctl-gateway:release --format '{{.Os}}/{{.Architecture}}')" = "linux/amd64"
           test "$(docker image inspect dsmctl-gateway:release --format '{{.Config.User}}')" = "10001:10001"
-          image_id="$(docker image inspect dsmctl-gateway:release --format '{{.Id}}')"
-          cat > dist/provenance.json <<EOF
-          {"_type":"https://in-toto.io/Statement/v1","subject":[{"name":"dsmctl-gateway","digest":{"sha256":"${image_id#sha256:}"}}],"predicateType":"https://slsa.dev/provenance/v1","predicate":{"buildDefinition":{"buildType":"https://github.com/docker/buildx","externalParameters":{"platform":"linux/amd64","version":"$PACKAGE_VERSION"},"internalParameters":{"revision":"$REVISION","source_date_epoch":"$SOURCE_DATE_EPOCH"},"resolvedDependencies":[{"uri":"pkg:docker/golang@1.25.0-alpine","digest":{"sha256":"f18a072054848d87a8077455f0ac8a25886f2397f88bfdd222d6fafbb5bba440"}}]},"runDetails":{"builder":{"id":"https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"}}}}
-          EOF
-      - uses: anchore/sbom-action/download-syft@v0
-      - name: Generate SBOM and deterministic SPK twice
+          license_container="$(docker create dsmctl-gateway:release)"
+          trap 'docker rm -f "$license_container" >/dev/null 2>&1 || true' EXIT
+          docker cp "$license_container:/LICENSE" "$RUNNER_TEMP/image-LICENSE"
+          cmp LICENSE "$RUNNER_TEMP/image-LICENSE"
+          docker rm "$license_container" >/dev/null
+          trap - EXIT
+      - name: Build and validate the deterministic DSM package twice
         shell: bash
         run: |
-          syft dsmctl-gateway:release -o spdx-json=dist/dsmctl-gateway.spdx.json
           deploy/synology/build-spk.sh "$PACKAGE_VERSION" dsmctl-gateway:release dist/first
           deploy/synology/build-spk.sh "$PACKAGE_VERSION" dsmctl-gateway:release dist/second
           cmp "dist/first/dsmctl-gateway-$PACKAGE_VERSION-x86_64.spk" "dist/second/dsmctl-gateway-$PACKAGE_VERSION-x86_64.spk"
           deploy/synology/validate-spk.sh "dist/first/dsmctl-gateway-$PACKAGE_VERSION-x86_64.spk"
-          cp dist/first/* dist/
+          cp "dist/first/dsmctl-gateway-$PACKAGE_VERSION-x86_64.spk" dist/
           rm -rf dist/first dist/second
           cp deploy/synology/SUPPORTED.md dist/SUPPORTED.md
-          (cd dist && sha256sum dsmctl-gateway.spdx.json provenance.json buildkit-metadata.json SUPPORTED.md >> SHA256SUMS)
+          cp LICENSE scripts/install.sh scripts/install.ps1 dist/
       - name: Smoke-test generic Compose controls and persistence
         shell: bash
         run: |
@@ -114,8 +129,56 @@ jobs:
           docker compose --env-file "$smoke/.env" -f deploy/linux/compose.yaml restart
           test -f "$smoke/data/gateway.db"
           for attempt in $(seq 1 30); do curl -fsS -H "Cookie: $session_cookie" http://127.0.0.1:18765/admin/api/session && break; sleep 1; done
+      - name: Finalize checksums and validate the complete release set
+        shell: bash
+        run: |
+          rm -f dist/SHA256SUMS
+          (
+            cd dist
+            find . -mindepth 1 -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' |
+              LC_ALL=C sort |
+              xargs sha256sum > SHA256SUMS
+          )
+          bash scripts/validate-release-assets.sh "$PACKAGE_VERSION" dist
       - uses: actions/upload-artifact@v6
         with:
-          name: dsmctl-gateway-${{ env.PACKAGE_VERSION }}-amd64
+          name: dsmctl-${{ env.PACKAGE_VERSION }}-release
           path: dist/
           if-no-files-found: error
+      - name: Create or update the GitHub prerelease
+        if: startsWith(github.ref, 'refs/tags/dsmctl-v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          notes="$RUNNER_TEMP/dsmctl-release-notes.md"
+          {
+            echo "# dsmctl $PACKAGE_VERSION preview"
+            echo
+            echo "This preview publishes checksum-verified Windows/Linux amd64 CLI archives"
+            echo "and the offline x86_64 Synology DSM package from one revision."
+            echo
+            echo "The SPK requires DSM 7.2.1 or newer, x86_64, Container Manager, and Web Station."
+            echo "Read SUPPORTED.md before manual installation; hardware and lifecycle certification is incomplete."
+            echo
+            echo "Verify every downloaded asset with SHA256SUMS."
+          } > "$notes"
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" dist/* --clobber
+            gh release edit "$RELEASE_TAG" --prerelease \
+              --title "dsmctl $PACKAGE_VERSION (preview)" --notes-file "$notes"
+          else
+            gh release create "$RELEASE_TAG" dist/* --verify-tag --prerelease \
+              --title "dsmctl $PACKAGE_VERSION (preview)" --notes-file "$notes"
+          fi
+      - name: Download and re-verify the published prerelease
+        if: startsWith(github.ref, 'refs/tags/dsmctl-v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          published="$(mktemp -d)"
+          trap 'rm -rf "$published"' EXIT
+          gh release download "$RELEASE_TAG" --dir "$published"
+          bash scripts/validate-release-assets.sh "$PACKAGE_VERSION" "$published"
