@@ -215,7 +215,9 @@ Administration is separate from MCP authorization.
   only current DSM `administrators`-group Web Login. A DSM-authenticated
   administrator may later configure the same single local account as a
   fallback; upgraded installations preserve an existing local account and
-  offer both login methods.
+  offer both login methods. The SPK declares this deployment mode explicitly;
+  missing DSM assertion configuration fails startup and must never downgrade
+  to the generic unauthenticated setup window.
 - Administration uses random browser sessions stored only as digests and sent
   through HttpOnly/SameSite cookies. Mutations require same-origin JSON plus a
   non-simple request header. Login/setup attempts are bounded in memory.

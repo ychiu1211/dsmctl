@@ -37,10 +37,13 @@ unencrypted unless TLS terminates upstream.
   not: `deploy/linux/nginx.conf.example` mounts at a bare `location /` with no
   `X-Forwarded-Prefix`. Add a commented subpath variant (a `location /dsmctl/`
   block that forwards `X-Forwarded-Prefix /dsmctl` alongside the existing
-  `X-Forwarded-Proto`/`X-Forwarded-Host`), and a short "Mounting under a subpath"
+  `X-Forwarded-Proto`; the generic deployment pins the external host with
+  `--admin-public-url` and deliberately rewrites the upstream `Host` to
+  loopback), and a short "Mounting under a subpath"
   note in `docs/gateway.md` that names `X-Forwarded-Prefix` as the required
   header and states that `--admin-public-url` intentionally rejects a path (the
-  origin and the prefix are configured separately).
+  origin and the prefix are configured separately). Recommend pinning the HTTPS
+  public origin in reverse-proxy production.
 - Add a plaintext-transport warning in the admin UI. `mcpEndpoint()`
   (`internal/gateway/admin/ui.go`, JS helper ~line 620) builds the endpoint from
   `location.origin`, so it reflects whatever scheme the admin is browsing. When
@@ -70,7 +73,8 @@ unencrypted unless TLS terminates upstream.
 ## Acceptance criteria
 
 - [ ] `deploy/linux/nginx.conf.example` contains a subpath variant that forwards
-      `X-Forwarded-Prefix` (and the existing proto/host headers), and
+      `X-Forwarded-Prefix` and the existing proto header while preserving the
+      documented upstream Host rewrite, and
       `docs/gateway.md` documents the subpath requirement and the
       origin-vs-prefix split.
 - [ ] The admin access wizard / issued-token dialog shows a transport warning

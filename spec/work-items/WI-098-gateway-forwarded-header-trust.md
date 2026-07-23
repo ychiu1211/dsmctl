@@ -111,8 +111,9 @@ untrusted peer.
 - `server.go`, `oauth/handler.go`, and `admin/auth_http.go` are shared with the
   active gateway stream (WI-091/WI-092 add DSM-delegated login on these paths);
   coordinate and re-verify line references before editing.
-- Complements WI-096 (docs recommend `--admin-public-url`) and WI-099 (TLS
-  posture); all three can land independently.
+- Complements WI-096. WI-099 consumes the trusted-proxy/client-IP plumbing from
+  this item and therefore depends on WI-098 as a complete batch, although its
+  unrelated clock and state subchanges can be developed separately.
 
 ## Handoff
 

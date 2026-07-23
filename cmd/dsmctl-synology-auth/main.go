@@ -65,7 +65,8 @@ func run(arguments []string, logger *slog.Logger) error {
 	validator := synologyauth.CommandValidator{AuthenticatePath: *authenticatePath, IDPath: *idPath, DSMHTTPSPort: *dsmHTTPSPort}
 	handler, err := synologyauth.New(synologyauth.Options{
 		Backend: backend, Signer: signer, Logger: logger, RequireLoopback: true,
-		DSMHTTPSPort: *dsmHTTPSPort, DSMHTTPPort: *dsmHTTPPort, Validator: validator, SubjectValidator: validator,
+		RedirectForwardedHTTP: true,
+		DSMHTTPSPort:          *dsmHTTPSPort, DSMHTTPPort: *dsmHTTPPort, Validator: validator, SubjectValidator: validator,
 	})
 	if err != nil {
 		return err

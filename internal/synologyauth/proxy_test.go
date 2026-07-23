@@ -125,6 +125,57 @@ func TestProxyFailsClosedForDirectDSMLoginAndNonLoopback(t *testing.T) {
 	}
 }
 
+func TestProxyRedirectsForwardedHTTPToHTTPSWithoutBreakingLoopbackHealth(t *testing.T) {
+	backendCalls := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		backendCalls++
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer backend.Close()
+	backendURL, _ := url.Parse(backend.URL)
+	options := testOptions(t, backendURL, 9)
+	options.RequireLoopback = true
+	options.RedirectForwardedHTTP = true
+	handler, err := New(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/dsmctl/admin/?view=connections", nil)
+	request.RemoteAddr = "127.0.0.1:1234"
+	request.Header.Set("X-Forwarded-Host", "nas.example:80")
+	request.Header.Set("X-Forwarded-Proto", "http")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusPermanentRedirect {
+		t.Fatalf("HTTP portal response = %d %q", response.Code, response.Body.String())
+	}
+	if location := response.Header().Get("Location"); location != "https://nas.example/dsmctl/admin/?view=connections" {
+		t.Fatalf("HTTP portal redirect = %q", location)
+	}
+	if backendCalls != 0 {
+		t.Fatalf("HTTP portal reached backend %d times", backendCalls)
+	}
+
+	unsafe := httptest.NewRequest(http.MethodGet, "/dsmctl/", nil)
+	unsafe.RemoteAddr = "127.0.0.1:1234"
+	unsafe.Header.Set("X-Forwarded-Host", "nas.example@attacker.example")
+	unsafe.Header.Set("X-Forwarded-Proto", "http")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, unsafe)
+	if response.Code != http.StatusBadRequest || backendCalls != 0 {
+		t.Fatalf("unsafe redirect response = %d, backend calls = %d", response.Code, backendCalls)
+	}
+
+	health := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	health.RemoteAddr = "127.0.0.1:1234"
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, health)
+	if response.Code != http.StatusNoContent || backendCalls != 1 {
+		t.Fatalf("loopback health response = %d, backend calls = %d", response.Code, backendCalls)
+	}
+}
+
 func TestProxyCompletesDSMWebLoginCodeGrant(t *testing.T) {
 	dsm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if err := req.ParseForm(); err != nil {

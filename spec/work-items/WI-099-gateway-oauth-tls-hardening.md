@@ -4,7 +4,7 @@ title: Gateway OAuth and TLS-posture hardening
 status: proposed
 priority: P2
 owner: ""
-depends_on: []
+depends_on: [WI-098]
 parallel_group: G
 touches:
   - internal/gateway/state/oauth.go

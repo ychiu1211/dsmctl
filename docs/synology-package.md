@@ -85,6 +85,9 @@ opener. The bridge detects the configured DSM HTTP/HTTPS management ports
 (defaults `5000`/`5001`) from the host web-server configuration. Only current
 members of DSM's `administrators` group are accepted. No unauthenticated setup endpoint exists
 in this mode, so installation does not create or display a bootstrap password.
+The SPK explicitly starts the shared Gateway binary in `dsm` administrator
+mode. A missing or invalid DSM assertion key stops startup rather than falling
+back to the generic one-hour local-administrator setup screen.
 The resulting Gateway session is HttpOnly/SameSite and is independent from the
 DSM browser and code-exchange sessions. Logging out of DSM does not silently
 log out dsmctl; use dsmctl's own logout or session-revocation controls. A new
@@ -109,6 +112,13 @@ and makes Package Center's **Open** action launch `/dsmctl/admin`. Both surfaces
 use the same four-tile dsmctl brand mark as the browser favicon. DSM installs
 main-menu entries from package metadata, so pin or drag the entry to the DSM
 desktop after installation if a persistent desktop tile is desired.
+
+The package declares HTTPS port 443 for Package Center's **Open** action. Some
+DSM/Web Station releases still generate an HTTP URL for an alias-portal desktop
+shortcut; the package bridge permanently redirects that request to the same
+host on HTTPS before it reaches the Gateway. Direct package-private loopback
+health checks do not carry Web Station's forwarded scheme header and are not
+redirected.
 
 Web Station owns the package portal shortcut and opens the NAS-local
 `/dsmctl/` alias without hard-coding a NAS address. The Gateway root handler

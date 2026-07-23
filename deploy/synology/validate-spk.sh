@@ -23,6 +23,9 @@ for required in INFO package.tgz conf/resource conf/privilege conf/PKG_DEPS scri
 done
 grep -qx 'arch="x86_64"' "$work/INFO"
 grep -qx 'os_min_ver="7.2.1-69057"' "$work/INFO"
+grep -qx 'adminprotocol="https"' "$work/INFO"
+grep -qx 'adminport="443"' "$work/INFO"
+grep -qx 'adminurl="dsmctl/"' "$work/INFO"
 grep -q '^\[ContainerManager\]$' "$work/conf/PKG_DEPS"
 grep -q '^pkg_min_ver=1432$' "$work/conf/PKG_DEPS"
 grep -q '^\[WebStation\]$' "$work/conf/PKG_DEPS"
@@ -64,6 +67,7 @@ tar -tvzf "$work/package.tgz" | grep -Eq '^-rwxr-xr-x .* \./bin/dsmctl-synology-
 gzip -t "$work/package/image.tar.gz"
 grep -q 'network_mode: host' "$work/package/project/compose.yaml"
 grep -q -- '--listen=127.0.0.1:18765' "$work/package/project/compose.yaml"
+grep -q -- '--administrator-mode=dsm' "$work/package/project/compose.yaml"
 grep -q -- '--platform-assertion-key-file=/run/secrets/dsm-sso.key' "$work/package/project/compose.yaml"
 grep -q -- '--trusted-proxies=127.0.0.0/8' "$work/package/project/compose.yaml"
 grep -q 'healthcheck:' "$work/package/project/compose.yaml"

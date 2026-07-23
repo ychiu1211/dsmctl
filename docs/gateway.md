@@ -23,9 +23,11 @@ returned account's effective `administrators` membership, and gives the core
 gateway a short-lived signed login assertion instead of a DSM cookie, SID, or
 password. The core then creates its own independent Gateway browser session. A
 fresh SPK therefore starts in DSM-Web-Login-only mode; a DSM-authenticated
-administrator can later enable the same local login as an optional fallback. Supplying a platform
-assertion key directly is reserved for managed deployment adapters and is not a
-way to bypass generic-container setup.
+administrator can later enable the same local login as an optional fallback.
+The SPK pins `--administrator-mode=dsm`; if its assertion key is absent or
+invalid, the Gateway refuses to start instead of exposing generic first-run
+account creation. Supplying a platform assertion key directly is reserved for
+managed deployment adapters and is not a way to bypass generic-container setup.
 
 ## Session model
 

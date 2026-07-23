@@ -51,8 +51,12 @@ type Options struct {
 	SubjectValidator SubjectValidator
 	Logger           *slog.Logger
 	RequireLoopback  bool
-	DSMHTTPSPort     string
-	DSMHTTPPort      string
+	// RedirectForwardedHTTP upgrades Web Station requests that explicitly
+	// arrived over HTTP. Requests without X-Forwarded-Proto are private
+	// loopback traffic and remain available for package health checks.
+	RedirectForwardedHTTP bool
+	DSMHTTPSPort          string
+	DSMHTTPPort           string
 }
 
 type pendingEnrollment struct {
@@ -150,12 +154,22 @@ func New(options Options) (http.Handler, error) {
 		if forwardedHost == "" {
 			forwardedHost = req.Host
 		}
-		forwardedProto := strings.TrimSpace(req.Header.Get("X-Forwarded-Proto"))
+		forwardedProtoHeader := strings.TrimSpace(req.Header.Get("X-Forwarded-Proto"))
+		forwardedProto := forwardedProtoHeader
 		if forwardedProto != "http" && forwardedProto != "https" {
 			forwardedProto = "http"
 			if req.TLS != nil {
 				forwardedProto = "https"
 			}
+		}
+		if options.RedirectForwardedHTTP && forwardedProtoHeader == "http" {
+			location, err := forwardedHTTPSLocation(forwardedHost, req.URL)
+			if err != nil {
+				http.Error(w, "invalid forwarded host", http.StatusBadRequest)
+				return
+			}
+			http.Redirect(w, req, location, http.StatusPermanentRedirect)
+			return
 		}
 		prefix := strings.TrimRight(strings.TrimSpace(req.Header.Get("X-Forwarded-Prefix")), "/")
 		if prefix != "" && strings.HasPrefix(req.URL.Path, prefix+"/") {
@@ -289,6 +303,23 @@ func forwardedGatewayOrigin(proto, authority string) (string, string, error) {
 		}
 	}
 	return proto + "://" + authority, host, nil
+}
+
+func forwardedHTTPSLocation(authority string, target *url.URL) (string, error) {
+	host, err := forwardedHostname(authority)
+	if err != nil {
+		return "", err
+	}
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	requestURI := target.RequestURI()
+	if requestURI == "" || !strings.HasPrefix(requestURI, "/") {
+		return "", errors.New("invalid redirect target")
+	}
+	// Web Station alias portals are exposed on the default 80/443 web ports.
+	// Do not carry an HTTP authority's :80 into the HTTPS redirect.
+	return "https://" + host + requestURI, nil
 }
 
 func safeForwardedPrefix(prefix string) bool {
