@@ -60,12 +60,15 @@ func BeginEnrollment(baseURL, openerURL string, opts Options) (*Enrollment, Enro
 			return nil, EnrollmentStart{}, fmt.Errorf("exchange base URL: %w", err)
 		}
 	}
-	// No force_login: it forces DSM to re-authenticate even when the browser
-	// already holds a session, which evicts the user's existing DSM desktop
-	// ("webui") session in the shared browser cookie jar. dsmctl and DSM are
-	// independent sessions (WI-091), so signing in to the Gateway must not log
-	// the DSM desktop out. The code-grant exchange plus the server-side
-	// administrators-group check still verify a current administrator.
+	// force_login is required: without it, when the browser already holds a DSM
+	// session, DSM loads the desktop instead of running the authorization-code
+	// grant, so no code is ever returned and Gateway sign-in cannot complete
+	// (empirically confirmed on the lab NAS). Known trade-off: the forced
+	// re-authentication rotates the shared browser session cookie, so an
+	// existing DSM desktop session in the same browser is logged out. Obtaining
+	// a code from the existing session without re-auth needs a DSM-side
+	// silent-grant path that is not yet identified; this is the working
+	// behavior until then.
 	loginURL := base + "/?" + url.Values{
 		"forceDesktop":          {"1"},
 		"client_id":             {clientID},
@@ -75,6 +78,7 @@ func BeginEnrollment(baseURL, openerURL string, opts Options) (*Enrollment, Enro
 		"opener":                {opener.String()},
 		"state":                 {state},
 		"session":               {sessionName},
+		"force_login":           {"yes"},
 	}.Encode() + "#/signin"
 	return &Enrollment{base: exchangeBase, clientID: clientID, sessionName: sessionName, verifier: verifier, state: state, httpClient: httpClient}, EnrollmentStart{LoginURL: loginURL, State: state}, nil
 }

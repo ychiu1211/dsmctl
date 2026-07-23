@@ -144,11 +144,11 @@ func Login(ctx context.Context, baseURL string, opts Options) (Result, error) {
 	defer listener.Close()
 	loopback := fmt.Sprintf("http://127.0.0.1:%d", listener.Addr().(*net.TCPAddr).Port)
 
-	// No force_login: forcing re-authentication when the browser already holds
-	// a DSM session evicts that session (for example the user's DSM desktop)
-	// from the shared browser cookie jar. A dsmctl web login must not log the
-	// user out of DSM; the app-named session plus code-grant exchange already
-	// yield an independent, resumable session.
+	// force_login is required: without it, when the browser already holds a DSM
+	// session, DSM loads the desktop instead of running the code grant, so no
+	// code is returned and login cannot complete. Trade-off: the forced
+	// re-authentication rotates the shared browser session cookie, logging out
+	// an existing DSM desktop session in the same browser.
 	loginURL := base + "/?" + url.Values{
 		"forceDesktop":          {"1"},
 		"client_id":             {clientID},
@@ -158,6 +158,7 @@ func Login(ctx context.Context, baseURL string, opts Options) (Result, error) {
 		"opener":                {loopback},
 		"state":                 {state},
 		"session":               {sessionName},
+		"force_login":           {"yes"},
 	}.Encode() + "#/signin"
 
 	page := buildPage(loginURL, origin)
