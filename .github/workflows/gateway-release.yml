@@ -116,7 +116,11 @@ jobs:
             -H 'X-DSMCTL-Request: 1' -H 'Content-Type: application/json' \
             --data "{\"username\":\"release-admin\",\"password\":\"$setup_password\"}" \
             http://127.0.0.1:18765/admin/api/setup >/dev/null
-          session_cookie="$(sed -n 's/^set-cookie: \([^;]*\).*/\1/ip' "$smoke/setup.headers")"
+          # Match only the session assignment with a non-empty value. Setup also
+          # emits an expiring empty-value cookie that clears the pre-7.3.2-19
+          # /admin-scoped cookie, and a naive one-capture-per-line extraction
+          # would fold both into a newline-joined, malformed Cookie header.
+          session_cookie="$(sed -n 's/^[Ss]et-[Cc]ookie: \(dsmctl_admin_session=[^;[:space:]][^;]*\).*/\1/p' "$smoke/setup.headers" | head -n1)"
           test -n "$session_cookie"
           curl -fsS -H "Cookie: $session_cookie" http://127.0.0.1:18765/admin/api/session >/dev/null
           curl -fsS http://127.0.0.1:18765/readyz >/dev/null
