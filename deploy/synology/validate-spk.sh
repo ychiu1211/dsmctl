@@ -67,6 +67,7 @@ tar -tvzf "$work/package.tgz" | grep -Eq '^-rwxr-xr-x .* \./bin/dsmctl-synology-
 gzip -t "$work/package/image.tar.gz"
 grep -q 'network_mode: host' "$work/package/project/compose.yaml"
 grep -q -- '--listen=127.0.0.1:18765' "$work/package/project/compose.yaml"
+grep -q -- '--administrator-mode=dsm' "$work/package/project/compose.yaml"
 grep -q -- '--platform-assertion-key-file=/run/secrets/dsm-sso.key' "$work/package/project/compose.yaml"
 grep -q -- '--trusted-proxies=127.0.0.0/8' "$work/package/project/compose.yaml"
 grep -q 'healthcheck:' "$work/package/project/compose.yaml"

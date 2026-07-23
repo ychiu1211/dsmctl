@@ -47,6 +47,7 @@ func run(arguments []string, logger *slog.Logger) error {
 	statePath := flags.String("state", "", "managed gateway state database path; enables dynamic administration")
 	masterKeyPath := flags.String("master-key-file", "", "32-byte managed gateway vault key file")
 	platformAssertionKeyPath := flags.String("platform-assertion-key-file", "", "optional 32-byte deployment administrator assertion key file")
+	administratorModeValue := flags.String("administrator-mode", "auto", "managed administrator mode: auto, local, or dsm")
 	adminPublicURL := flags.String("admin-public-url", "", "public gateway origin used for browser request validation and DSM web-login opener")
 	listenAddress := flags.String("listen", "127.0.0.1:18765", "HTTP listen address")
 	tokenPath := flags.String("dev-read-only-token-file", "", "required local bearer-token file for explicit read-only developer mode")
@@ -75,12 +76,18 @@ func run(arguments []string, logger *slog.Logger) error {
 	}
 
 	managed := strings.TrimSpace(*statePath) != ""
+	administratorMode, err := resolveAdministratorMode(*administratorModeValue, *platformAssertionKeyPath)
+	if err != nil {
+		return err
+	}
 	if !managed && strings.TrimSpace(*platformAssertionKeyPath) != "" {
 		return errors.New("platform administrator assertions require managed gateway state")
 	}
+	if !managed && administratorMode != administratorModeLocal {
+		return errors.New("DSM administrator mode requires managed gateway state")
+	}
 	var token string
 	var tokenDigest [sha256.Size]byte
-	var err error
 	if !managed {
 		token, err = gateway.ReadDevelopmentToken(*tokenPath)
 		if err != nil {
@@ -163,7 +170,7 @@ func run(arguments []string, logger *slog.Logger) error {
 			return err
 		}
 		oauthHandler = oauthApplication
-		ready = managedReadiness(repository, *masterKeyPath, masterDigest, platformVerifier != nil)
+		ready = managedReadiness(repository, *masterKeyPath, masterDigest, administratorMode == administratorModeDSM)
 		mode = "managed"
 	} else {
 		cfg, err = loadRequiredConfig(*configPath)
@@ -226,11 +233,43 @@ func run(arguments []string, logger *slog.Logger) error {
 		"address", listener.Addr().String(),
 		"version", buildinfo.Version,
 		"mode", mode,
+		"administrator_mode", administratorMode,
 		"profiles", len(cfg.NAS),
 	)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return httpServer.Serve(ctx, listener)
+}
+
+type administratorMode string
+
+const (
+	administratorModeLocal administratorMode = "local"
+	administratorModeDSM   administratorMode = "dsm"
+)
+
+func resolveAdministratorMode(value, assertionKeyPath string) (administratorMode, error) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	hasAssertionKey := strings.TrimSpace(assertionKeyPath) != ""
+	switch value {
+	case "", "auto":
+		if hasAssertionKey {
+			return administratorModeDSM, nil
+		}
+		return administratorModeLocal, nil
+	case string(administratorModeLocal):
+		if hasAssertionKey {
+			return "", errors.New("local administrator mode must not configure a platform assertion key")
+		}
+		return administratorModeLocal, nil
+	case string(administratorModeDSM):
+		if !hasAssertionKey {
+			return "", errors.New("DSM administrator mode requires --platform-assertion-key-file")
+		}
+		return administratorModeDSM, nil
+	default:
+		return "", fmt.Errorf("administrator mode must be auto, local, or dsm, got %q", value)
+	}
 }
 
 func managedReadiness(repository *gatewaystate.Repository, masterKeyPath string, expectedMasterKey [sha256.Size]byte, externalAdministrator bool) func(context.Context) error {

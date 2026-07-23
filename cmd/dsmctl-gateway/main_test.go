@@ -58,6 +58,34 @@ func TestParsePrefixesRejectsAddressesWithoutMask(t *testing.T) {
 	}
 }
 
+func TestResolveAdministratorModeFailsClosedForDSM(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		keyPath string
+		want    administratorMode
+		wantErr bool
+	}{
+		{name: "generic default", value: "auto", want: administratorModeLocal},
+		{name: "legacy SPK auto detection", value: "auto", keyPath: "/run/secrets/dsm-sso.key", want: administratorModeDSM},
+		{name: "explicit SPK", value: "dsm", keyPath: "/run/secrets/dsm-sso.key", want: administratorModeDSM},
+		{name: "SPK missing assertion key", value: "dsm", wantErr: true},
+		{name: "local with assertion key", value: "local", keyPath: "/run/secrets/dsm-sso.key", wantErr: true},
+		{name: "unknown", value: "passwordless", wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := resolveAdministratorMode(test.value, test.keyPath)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("resolveAdministratorMode() error = %v, wantErr %v", err, test.wantErr)
+			}
+			if got != test.want {
+				t.Fatalf("resolveAdministratorMode() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestManagedReadinessRequiresLocalAdministratorAndMountedKey(t *testing.T) {
 	directory := t.TempDir()
 	masterPath := filepath.Join(directory, "master.key")

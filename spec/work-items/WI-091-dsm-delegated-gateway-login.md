@@ -159,6 +159,12 @@ revoke an already-created dsmctl session.
 
 ## Handoff
 
+- The Synology Compose adapter now pins `--administrator-mode=dsm`. Mode
+  validation requires the platform assertion key and fails startup instead of
+  silently falling back to generic one-hour local-administrator setup. `auto`
+  remains backward compatible for existing deployment commands by selecting
+  DSM mode when the assertion key flag is present; generic deployments without
+  that key remain local-setup mode.
 - Last known good state: release `7.3.2-14` reuses the existing DSM `webui`
   authorization-code + PKCE + Noise IK exchange, validates the returned
   subject against the host `administrators` group, consumes a short-lived
