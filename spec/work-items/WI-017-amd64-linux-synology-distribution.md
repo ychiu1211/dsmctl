@@ -250,7 +250,12 @@ Public-distribution continuation verified 2026-07-23:
 - Temporary verification archives and the `wi017-verify` image tag were
   removed. The versioned local `dsmctl-gateway:7.3.2-18` image remains as the
   intended build result. No NAS connection, install, or mutation was made.
-- Remaining publication gate: commit/push the reviewed repository state, push
+- Draft PR #2 carries the public release implementation on
+  `codex/public-release`. Both push/PR CI matrices passed. Build-only Actions
+  run `29976566084` at commit `97756ca` then passed the complete release
+  pipeline, including asset validation and artifact upload; tag-only
+  GHCR/GitHub prerelease steps were correctly skipped.
+- Remaining publication gate: review and merge PR #2, push
   `dsmctl-v7.3.2-18`, make the first GHCR package public when the intentional
   gate requests it, rerun, and verify the public prerelease links. WI-017 still
   cannot become `done` until its hardware/lifecycle acceptance matrix passes.
