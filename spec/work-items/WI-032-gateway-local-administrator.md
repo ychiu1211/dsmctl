@@ -24,20 +24,21 @@ touches:
 
 ## Outcome
 
-The same platform-neutral gateway presents a one-hour first-run setup window,
-creates its own local administrator username and password, and thereafter uses
-browser sessions for administration on generic amd64 Linux and Synology. DSM
-does not identify the gateway administrator and the NAS hosting an SPK receives
-no implicit profile, credential, or privilege.
+The platform-neutral gateway presents first-run local setup until the first
+administrator is created, creates its own username and password, and thereafter
+uses browser sessions for administration on generic amd64 Linux. WI-091
+supersedes only the fresh Synology SPK entry path with DSM-delegated login and
+an optional local fallback. The NAS hosting an SPK receives no implicit
+profile, credential, or privilege.
 
 ## Scope
 
-- Replace the generic bootstrap bearer token and Synology platform assertion
-  modes with one local administrator model shared by every deployment.
-- When no administrator exists, expose administrator creation for one hour
-  after each process start. Expiry closes setup until an uninitialized gateway
-  is restarted; the first successful transactional creation permanently closes
-  setup for that initialized state.
+- Replace the generic bootstrap bearer token with a local administrator model;
+  WI-091 later adds an explicit DSM-delegated SPK entry path without changing
+  the generic Linux setup contract.
+- When no administrator exists, keep administrator creation available across
+  elapsed time and process restarts; the first successful transactional
+  creation permanently closes setup for that initialized state.
 - Store a normalized administrator username and an Argon2id password verifier;
   never store or return the password.
 - Add login, logout, current-session, password-change, and revoke-other-session
@@ -48,16 +49,16 @@ no implicit profile, credential, or privilege.
 - Keep profile management, per-NAS DSM web login, MCP tokens, approvals, and
   audit behind the local administrator session. These identities remain
   independent and non-transitive.
-- Remove the Synology authentication proxy, signed platform assertion key, and
-  platform-admin runtime mode from the image and SPK. Synology retains only
-  package lifecycle, loopback publication, and DSM portal/reverse-proxy wiring.
+- Keep the shared image free of host-NAS assumptions. The optional signed
+  platform assertion interface added by WI-091 is enabled only by the explicit
+  Synology deployment adapter.
 - Remove bootstrap-secret creation and mounts from generic Linux and Synology
   deployment assets.
 - Update the state schema transactionally. Empty pre-release schema-3 states
   may return to uninitialized; a schema-3 state containing profiles, MCP
   tokens, or other managed data must fail closed with explicit reset/migration
-  guidance rather than silently expose a fresh setup window.
-- Make the uninitialized/expired/initialized UI states explicit. An
+  guidance rather than silently expose a fresh setup endpoint.
+- Make the uninitialized/initialized UI states explicit. An
   initialized unauthenticated gateway shows the ordinary login page; it cannot
   infer whether the viewer was the original installer.
 
@@ -72,13 +73,13 @@ no implicit profile, credential, or privilege.
 
 ## Design constraints
 
-- The setup window is an explicit LAN/VPN single-owner product tradeoff. A
+- The persistent first-run endpoint is an explicit LAN/VPN single-owner product tradeoff. A
   caller that wins the first setup race controls an otherwise empty gateway;
   it receives no DSM credential or NAS authority. The UI and documentation
   explain that an unexpected login page requires an operator-controlled data
   reset before enrolling a NAS.
-- Setup availability is process-local time over persistent uninitialized state;
-  it is not extended by requests. Restart reopens it only while no local
+- Setup availability follows persistent uninitialized state rather than a
+  process-local timer. Elapsed time and restart do not close it while no local
   administrator exists.
 - Administrator creation, password change, and session issuance are atomic.
   Password change revokes every other administrator session.
@@ -94,10 +95,10 @@ no implicit profile, credential, or privilege.
 
 ## Acceptance criteria
 
-- [x] A fresh gateway permits exactly one administrator creation during the
-      first process-hour without a setup code, DSM session, or platform header.
-- [x] Setup expiry denies creation until restart; restart reopens setup only
-      when the database remains uninitialized.
+- [x] A fresh gateway permits exactly one administrator creation without a
+      setup code, DSM session, platform header, or time deadline.
+- [x] Setup remains available across elapsed time and process restart only
+      while the database remains uninitialized.
 - [x] Concurrent setup requests produce one administrator, one session, and no
       partial or overwritten account state.
 - [x] Password plaintext and browser session tokens cannot be found in the
@@ -110,17 +111,17 @@ no implicit profile, credential, or privilege.
 - [x] Profile, credential, MCP-token, approval, and audit APIs accept the local
       admin session and no longer accept legacy admin bearer tokens or DSM
       platform assertions.
-- [x] Generic Linux and Synology use the identical image and first-run UI with
-      no bootstrap or platform key mount and no DSM authentication adapter.
+- [x] Generic Linux uses first-run local setup without a bootstrap or platform
+      key; the same image supports WI-091's explicit DSM adapter when selected.
 - [x] The host NAS is absent after initialization and can be used only after
       explicit profile creation plus that profile's own DSM Web Login.
 - [x] Schema migration and pre-migration backup are tested; non-empty legacy
       platform/token-admin state never silently opens unauthenticated setup.
 - [x] `go test ./... -count=1`, `go vet ./...`, amd64 image build, generic
       Docker lifecycle smoke, SPK validation, and offline-image validation pass.
-- [x] User documentation explains the one-hour setup window, restart behavior,
-      unexpected initialized state, reset consequences, login sessions, and
-      explicit host-NAS enrollment.
+- [x] User documentation explains persistent first-run setup, trusted-network
+      restriction, unexpected initialized state, reset consequences, login
+      sessions, and explicit host-NAS enrollment.
 
 ## Verification
 
@@ -150,14 +151,13 @@ Fill this only when pausing incomplete work.
 - State schema 4 stores one normalized local administrator and an Argon2id
   verifier. Random 12-hour browser-session secrets are stored only as SHA-256
   digests; session count and password hashing concurrency are bounded.
-- The admin HTTP surface now provides one-hour setup, login/logout, password
-  change, and session revocation with Secure/HttpOnly/SameSite cookies,
+- The admin HTTP surface now provides persistent first-run setup, login/logout,
+  password change, and session revocation with Secure/HttpOnly/SameSite cookies,
   same-origin JSON mutation checks, and in-memory setup/login rate limiting.
-- The gateway and UI no longer accept bootstrap bearer tokens, DSM identity
-  assertions, or platform headers. The Synology authentication adapter and key
-  were removed. Generic Linux and Synology now run the same image and local
-  setup/login flow; every NAS, including the host NAS, requires an explicit
-  profile and that NAS's own DSM Web Login.
+- The gateway and UI no longer accept bootstrap bearer tokens or caller-supplied
+  identity headers. WI-091's signed DSM assertion is an explicit SPK-only login
+  adapter; generic Linux remains local-setup only. Every NAS, including the host
+  NAS, requires an explicit profile and that NAS's own DSM Web Login.
 - `go test ./... -count=1`, `go vet ./...`, and `git diff --check` pass. Two
   `linux/amd64` builds were identical at image ID
   `sha256:23bc4034b70d97d347ca87dfe0fa193bddfa5d1dba190bcd73207318bf5fa1d6`.

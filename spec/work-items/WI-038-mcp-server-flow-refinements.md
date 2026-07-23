@@ -142,8 +142,8 @@ collected through masked forms.
 - The minimum administrator password length is enforced and described as 12
   characters (runes), not bytes; existing stored verifiers are unaffected.
 - Every form marks required fields; placeholders show example values rather
-  than role descriptions; the first-run setup deadline shows remaining time
-  alongside the absolute timestamp.
+  than role descriptions; first-run setup warns operators to keep the
+  uninitialized endpoint within the trusted deployment network.
 
 ### Audit review
 
@@ -255,8 +255,7 @@ collected through masked forms.
       entry; enrollment secrets stay out of state, logs, and audit.
 - [x] Administrator password change requires a matching confirmation entry;
       the minimum length is enforced and described as 12 characters; forms
-      mark required fields; the setup deadline and approval expiry show
-      remaining time.
+      mark required fields; approval expiry shows remaining time.
 - [x] The audit view is a filterable table backed by the existing query
       parameters, and export returns every retained event in documented
       order even when more than 1,000 events are stored.

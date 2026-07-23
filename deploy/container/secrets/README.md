@@ -6,7 +6,8 @@ Create these owner-readable files before first start:
   normal database backup.
 
 There is no administrator bootstrap or platform-identity secret. Open the
-first-run page within one hour to create the local administrator account.
+first-run page to create the local administrator account before exposing the
+Gateway beyond its trusted deployment network.
 
 Managed MCP tokens are created in the administration page and stored as
 digests in `gateway.db`; they are not mounted as container secrets. The

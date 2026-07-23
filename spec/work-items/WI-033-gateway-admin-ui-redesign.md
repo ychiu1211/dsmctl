@@ -62,8 +62,8 @@ contract.
 
 ## Acceptance criteria
 
-- [x] Setup and login render as polished, focused entry screens with the
-      one-hour/reset guidance and no DSM identity implication.
+- [x] Setup and login render as polished, focused entry screens with first-run
+      and reset guidance and no implicit DSM identity.
 - [x] Authenticated administration uses a top bar, navigation, overview, and
       separate NAS, MCP-token, approval, audit, and administrator views.
 - [x] All existing administrator actions remain reachable and preserve current

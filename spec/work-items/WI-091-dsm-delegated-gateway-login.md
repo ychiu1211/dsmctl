@@ -29,7 +29,7 @@ A Synology SPK installation lets a currently authenticated DSM administrator
 open the Gateway through DSM Web Login without first creating a separate
 Gateway account. The administrator may later configure one independent local
 Gateway username/password as an explicit fallback. A generic container has no
-DSM trust source and keeps the existing mandatory one-hour local-administrator
+DSM trust source and keeps mandatory first-run local-administrator
 setup before any administration is possible.
 
 ## Scope
@@ -45,12 +45,12 @@ setup before any administration is possible.
   session. DSM and dsmctl are separate sites with separate logout/session
   lifecycles; a new dsmctl login always repeats DSM Web Login and the group
   check.
-- On a fresh SPK, disable the unauthenticated one-hour local setup endpoint and
+- On a fresh SPK, disable the unauthenticated local setup endpoint and
   present DSM Web Login as the only entry method. After DSM login, allow an
   administrator to configure the single local fallback account.
 - On an upgraded SPK that already has a local administrator, preserve it and
   offer both DSM Web Login and local username/password login.
-- On generic Linux, preserve the existing setup window, local login, cookie,
+- On generic Linux, preserve persistent first-run setup, local login, cookie,
   rate-limit, origin, and readiness behavior with no DSM-specific dependency.
 - Identify audit actors and session metadata as `dsm:<subject>` or
   `local:<username>` without storing DSM cookies, SIDs, SynoTokens, Noise keys,
@@ -161,7 +161,7 @@ revoke an already-created dsmctl session.
 
 - The Synology Compose adapter now pins `--administrator-mode=dsm`. Mode
   validation requires the platform assertion key and fails startup instead of
-  silently falling back to generic one-hour local-administrator setup. `auto`
+  silently falling back to generic unauthenticated local-administrator setup. `auto`
   remains backward compatible for existing deployment commands by selecting
   DSM mode when the assertion key flag is present; generic deployments without
   that key remain local-setup mode.

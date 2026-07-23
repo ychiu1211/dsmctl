@@ -23,7 +23,7 @@ contracts unless a work item explicitly changes them:
 - Hash-bound plan/apply with current-state preconditions and postcondition
   verification for existing mutations.
 - A managed remote MCP Server gateway: persistent encrypted NAS profiles, a
-  local one-hour-setup administrator with browser sessions, scoped MCP bearer
+  local first-run administrator with browser sessions, scoped MCP bearer
   tokens with NAS allowlists, out-of-band single-use high-risk approvals, and
   bounded redacted audit (WI-014/015/016/032/033/035/037).
 
