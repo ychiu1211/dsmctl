@@ -108,17 +108,20 @@ authentication. Generic container deployments do not have the host bridge and
 continue to require local first-run administrator setup.
 
 The installed package contributes a `dsmctl Gateway` entry to DSM's main menu
-and makes Package Center's **Open** action launch `/dsmctl/admin`. Both surfaces
+and makes Package Center's **Open** action launch `/dsmctl/admin/`. Both surfaces
 use the same four-tile dsmctl brand mark as the browser favicon. DSM installs
 main-menu entries from package metadata, so pin or drag the entry to the DSM
 desktop after installation if a persistent desktop tile is desired.
 
-The package declares HTTPS port 443 for Package Center's **Open** action. Some
-DSM/Web Station releases still generate an HTTP URL for an alias-portal desktop
-shortcut; the package bridge permanently redirects that request to the same
-host on HTTPS before it reaches the Gateway. Direct package-private loopback
-health checks do not carry Web Station's forwarded scheme header and are not
-redirected.
+The package declares HTTPS port 443 and the explicit `dsmctl/admin/` path for
+Package Center's **Open** action. That action deliberately uses the package
+admin URL instead of launching the portal-owned DSM application shortcut, so
+Web Station cannot replace the Package Center destination with its site root.
+Some DSM/Web Station releases still generate an HTTP URL for an alias-portal
+desktop shortcut; the package bridge permanently redirects that request to the
+same host on HTTPS before it reaches the Gateway. Direct package-private
+loopback health checks do not carry Web Station's forwarded scheme header and
+are not redirected.
 
 Web Station owns the package portal shortcut and opens the NAS-local
 `/dsmctl/` alias without hard-coding a NAS address. The Gateway root handler

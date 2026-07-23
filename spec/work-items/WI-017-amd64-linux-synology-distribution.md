@@ -260,3 +260,21 @@ Public-distribution continuation verified 2026-07-23:
   public asset for a second successful validation. All eight asset URLs also
   accepted anonymous range requests. WI-017 still cannot become `done` until
   its hardware/lifecycle acceptance matrix passes.
+
+Package Center launch-path continuation on 2026-07-23:
+
+- A live user report showed Package Center's **Open** action landing at the
+  Web Station root `https://NAS/` instead of the Gateway administrator. The
+  public `/dsmctl/` alias itself remained healthy and returned the expected
+  prefix-safe redirect to `/dsmctl/admin/`.
+- The SPK no longer gives Package Center a `dsmappname` that can be rebound by
+  Web Station's portal-owned shortcut. Package Center now uses only the
+  explicit `adminprotocol=https`, `adminport=443`, and
+  `adminurl=dsmctl/admin/` metadata; the DSM main-menu shortcut independently
+  targets `/dsmctl/admin/`.
+- Version `7.3.2-21` passed `go test ./... -count=1`, `go vet ./...`, shell
+  syntax checks, `git diff --check`, two byte-identical local SPK builds, the
+  SPK structure/security validator, and complete eight-asset release
+  validation. The local deterministic SPK SHA-256 was
+  `bc996cdf89985ecc78b763a8e2d1845514d95be409eafbcc0da7436b731fcc05`.
+  No NAS install, upgrade, or other live mutation was performed.

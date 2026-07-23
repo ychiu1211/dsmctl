@@ -3,7 +3,7 @@ FROM --platform=$BUILDPLATFORM golang:1.25.0-alpine@sha256:f18a072054848d87a8077
 
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
-ARG VERSION=7.3.2-20
+ARG VERSION=7.3.2-21
 ARG REVISION=unknown
 
 WORKDIR /src
@@ -19,7 +19,7 @@ RUN test "${TARGETOS}/${TARGETARCH}" = "linux/amd64" && \
 
 FROM scratch
 
-ARG VERSION=7.3.2-20
+ARG VERSION=7.3.2-21
 ARG REVISION=unknown
 ARG CREATED=1970-01-01T00:00:00Z
 LABEL org.opencontainers.image.title="dsmctl gateway" \

@@ -84,8 +84,8 @@ non-prerelease succeeds. Preview documentation uses the explicit tag, for
 example:
 
 ```text
-https://github.com/derekvery666/dsmctl/releases/download/dsmctl-v7.3.2-18/dsmctl-windows-amd64.zip
-https://github.com/derekvery666/dsmctl/releases/download/dsmctl-v7.3.2-18/dsmctl-gateway-7.3.2-18-x86_64.spk
+https://github.com/derekvery666/dsmctl/releases/download/dsmctl-v7.3.2-21/dsmctl-windows-amd64.zip
+https://github.com/derekvery666/dsmctl/releases/download/dsmctl-v7.3.2-21/dsmctl-gateway-7.3.2-21-x86_64.spk
 ```
 
 Do not make the SPK a `latest` README link while it is a preview; link to the

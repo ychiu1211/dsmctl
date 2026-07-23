@@ -28,7 +28,11 @@ grep -qx 'arch="x86_64"' "$work/INFO"
 grep -qx 'os_min_ver="7.2.1-69057"' "$work/INFO"
 grep -qx 'adminprotocol="https"' "$work/INFO"
 grep -qx 'adminport="443"' "$work/INFO"
-grep -qx 'adminurl="dsmctl/"' "$work/INFO"
+grep -qx 'adminurl="dsmctl/admin/"' "$work/INFO"
+! grep -q '^dsmappname=' "$work/INFO" || {
+  echo "Package Center must use the explicit admin URL rather than a portal-owned DSM app shortcut" >&2
+  exit 1
+}
 grep -q '^\[ContainerManager\]$' "$work/conf/PKG_DEPS"
 grep -q '^pkg_min_ver=1432$' "$work/conf/PKG_DEPS"
 grep -q '^\[WebStation\]$' "$work/conf/PKG_DEPS"
@@ -102,7 +106,7 @@ grep -q 'target: /run/secrets' "$work/package/project/compose.yaml"
 ! grep -q 'bootstrap\|platform.key' "$work/package/project/compose.yaml"
 grep -q '"allUsers": false' "$work/package/ui/config"
 grep -q '"icon": "images/dsmctl_{0}.png"' "$work/package/ui/config"
-grep -q '"url": "/dsmctl/"' "$work/package/ui/config"
+grep -q '"url": "/dsmctl/admin/"' "$work/package/ui/config"
 grep -q 'attempts.*-lt 60' "$work/scripts/start-stop-status"
 grep -q 'dsmctl-synology-auth' "$work/scripts/start-stop-status"
 grep -q '127.0.0.1:18766' "$work/scripts/start-stop-status"
