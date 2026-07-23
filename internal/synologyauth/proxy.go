@@ -162,18 +162,26 @@ func New(options Options) (http.Handler, error) {
 				forwardedProto = "https"
 			}
 		}
+		// Resolve and strip the deployment path prefix BEFORE any redirect so the
+		// http->https redirect can restore it. Web Station forwards
+		// X-Forwarded-Prefix=/dsmctl and, depending on the DSM release, may
+		// already strip that prefix from the path; stripping here normalizes
+		// req.URL.Path to the un-prefixed form in both cases.
+		prefix := strings.TrimRight(strings.TrimSpace(req.Header.Get("X-Forwarded-Prefix")), "/")
+		if !safeForwardedPrefix(prefix) {
+			prefix = ""
+		}
+		if prefix != "" && strings.HasPrefix(req.URL.Path, prefix+"/") {
+			req.URL.Path = strings.TrimPrefix(req.URL.Path, prefix)
+		}
 		if options.RedirectForwardedHTTP && forwardedProtoHeader == "http" {
-			location, err := forwardedHTTPSLocation(forwardedHost, req.URL)
+			location, err := forwardedHTTPSLocation(forwardedHost, prefix, req.URL)
 			if err != nil {
 				http.Error(w, "invalid forwarded host", http.StatusBadRequest)
 				return
 			}
 			http.Redirect(w, req, location, http.StatusPermanentRedirect)
 			return
-		}
-		prefix := strings.TrimRight(strings.TrimSpace(req.Header.Get("X-Forwarded-Prefix")), "/")
-		if prefix != "" && strings.HasPrefix(req.URL.Path, prefix+"/") {
-			req.URL.Path = strings.TrimPrefix(req.URL.Path, prefix)
 		}
 		if req.URL.Path == dsmLoginStartPath {
 			serveDSMLoginStart(w, req, forwardedProto, forwardedHost, prefix, options, enrollments)
@@ -329,7 +337,7 @@ func dsmLoginOriginAllowed(req *http.Request, gatewayOrigin string) bool {
 	return origin != "" && origin == gatewayOrigin
 }
 
-func forwardedHTTPSLocation(authority string, target *url.URL) (string, error) {
+func forwardedHTTPSLocation(authority, prefix string, target *url.URL) (string, error) {
 	host, err := forwardedHostname(authority)
 	if err != nil {
 		return "", err
@@ -341,9 +349,11 @@ func forwardedHTTPSLocation(authority string, target *url.URL) (string, error) {
 	if requestURI == "" || !strings.HasPrefix(requestURI, "/") {
 		return "", errors.New("invalid redirect target")
 	}
-	// Web Station alias portals are exposed on the default 80/443 web ports.
-	// Do not carry an HTTP authority's :80 into the HTTPS redirect.
-	return "https://" + host + requestURI, nil
+	// Restore the deployment path prefix (stripped above) so the redirect keeps
+	// the portal alias, e.g. http://nas/dsmctl/x -> https://nas/dsmctl/x. Web
+	// Station alias portals use the default 80/443 web ports, so do not carry an
+	// HTTP authority's :80 into the HTTPS redirect.
+	return "https://" + host + prefix + requestURI, nil
 }
 
 func safeForwardedPrefix(prefix string) bool {

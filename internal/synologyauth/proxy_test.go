@@ -157,6 +157,35 @@ func TestProxyRedirectsForwardedHTTPToHTTPSWithoutBreakingLoopbackHealth(t *test
 		t.Fatalf("HTTP portal reached backend %d times", backendCalls)
 	}
 
+	// Production shape: Web Station strips the /dsmctl prefix from the path but
+	// forwards X-Forwarded-Prefix=/dsmctl. The redirect must restore the prefix
+	// (regression: it used to drop it, redirecting to /admin/ and 404ing).
+	stripped := httptest.NewRequest(http.MethodGet, "/admin/?view=connections", nil)
+	stripped.RemoteAddr = "127.0.0.1:1234"
+	stripped.Header.Set("X-Forwarded-Host", "nas.example:80")
+	stripped.Header.Set("X-Forwarded-Proto", "http")
+	stripped.Header.Set("X-Forwarded-Prefix", "/dsmctl")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, stripped)
+	if location := response.Header().Get("Location"); response.Code != http.StatusPermanentRedirect || location != "https://nas.example/dsmctl/admin/?view=connections" {
+		t.Fatalf("prefix-stripped redirect = %d %q", response.Code, location)
+	}
+
+	// The prefix must not be duplicated when the forwarded path still carries it.
+	kept := httptest.NewRequest(http.MethodGet, "/dsmctl/admin/", nil)
+	kept.RemoteAddr = "127.0.0.1:1234"
+	kept.Header.Set("X-Forwarded-Host", "nas.example:80")
+	kept.Header.Set("X-Forwarded-Proto", "http")
+	kept.Header.Set("X-Forwarded-Prefix", "/dsmctl")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, kept)
+	if location := response.Header().Get("Location"); response.Code != http.StatusPermanentRedirect || location != "https://nas.example/dsmctl/admin/" {
+		t.Fatalf("prefix-kept redirect = %d %q", response.Code, location)
+	}
+	if backendCalls != 0 {
+		t.Fatalf("prefix redirects reached backend %d times", backendCalls)
+	}
+
 	unsafe := httptest.NewRequest(http.MethodGet, "/dsmctl/", nil)
 	unsafe.RemoteAddr = "127.0.0.1:1234"
 	unsafe.Header.Set("X-Forwarded-Host", "nas.example@attacker.example")
