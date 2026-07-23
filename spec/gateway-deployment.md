@@ -207,8 +207,9 @@ state; apply rejects a removed or materially changed profile.
 Administration is separate from MCP authorization.
 
 - Generic Linux requires the local administrator. While no administrator
-  exists, each process start opens setup for one hour; expiry requires restart
-  of the still-uninitialized process. The first transactional setup creates a
+  exists, setup remains available across elapsed time and process restarts.
+  Operators keep that endpoint on loopback or a trusted deployment network
+  until the first transactional setup creates a
   normalized username, an Argon2id password verifier, and an expiring browser
   session, then permanently closes setup for that initialized state.
 - A fresh Synology SPK disables that unauthenticated setup endpoint and offers
@@ -217,7 +218,7 @@ Administration is separate from MCP authorization.
   fallback; upgraded installations preserve an existing local account and
   offer both login methods. The SPK declares this deployment mode explicitly;
   missing DSM assertion configuration fails startup and must never downgrade
-  to the generic unauthenticated setup window.
+  to the generic unauthenticated setup endpoint.
 - Administration uses random browser sessions stored only as digests and sent
   through HttpOnly/SameSite cookies. Mutations require same-origin JSON plus a
   non-simple request header. Login/setup attempts are bounded in memory.
@@ -375,8 +376,8 @@ requirement justifies one.
 - The operator creates persistent data and secret files with documented UID
   ownership, supplies TLS/reverse proxy separately, and explicitly configures
   each NAS.
-- No platform SSO is assumed; the one-hour first-run page creates the required
-  local administrator credential.
+- No platform SSO is assumed; the first-run page remains available until it
+  creates the required local administrator credential.
 
 ### Synology x86_64
 
@@ -443,8 +444,8 @@ approved under the repository safety policy.
 3. WI-016 adds scoped remote authorization, out-of-band approval, and audit.
 4. WI-017 packages the completed gateway for generic Linux and Synology
    x86_64, including offline image preload and portal wiring.
-5. WI-032 replaces the pre-release bootstrap/platform-auth split with the same
-   one-hour local-administrator setup and browser session model everywhere.
+5. WI-032 replaces the pre-release bootstrap/platform-auth split with a
+   first-run local-administrator setup and browser session model.
 6. WI-033, WI-035, and WI-037 delivered the redesigned multilingual
    administration shell and design tokens; WI-038 streamlines the approval,
    token-lifecycle, enrollment, and audit-review flows on top of the shipped

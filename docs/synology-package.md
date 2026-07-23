@@ -87,7 +87,7 @@ members of DSM's `administrators` group are accepted. No unauthenticated setup e
 in this mode, so installation does not create or display a bootstrap password.
 The SPK explicitly starts the shared Gateway binary in `dsm` administrator
 mode. A missing or invalid DSM assertion key stops startup rather than falling
-back to the generic one-hour local-administrator setup screen.
+back to the generic unauthenticated local-administrator setup screen.
 The resulting Gateway session is HttpOnly/SameSite and is independent from the
 DSM browser and code-exchange sessions. Logging out of DSM does not silently
 log out dsmctl; use dsmctl's own logout or session-revocation controls. A new

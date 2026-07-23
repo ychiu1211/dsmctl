@@ -15,9 +15,10 @@ The published port is loopback-only; an HTTPS reverse proxy is required.
    `http://127.0.0.1:${DSMCTL_PORT}/`. Rewrite the upstream `Host` to
    `127.0.0.1`, set `X-Forwarded-Proto https`, and do not publish the backend
    port to the LAN. `nginx.conf.example` shows the required boundary.
-5. Within one hour, open `${DSMCTL_PUBLIC_ORIGIN}/admin` and create the local
-   Gateway administrator username/password. If the uninitialized window
-   expires, restart the container and open the page again.
+5. Open `${DSMCTL_PUBLIC_ORIGIN}/admin` and create the local Gateway
+   administrator username/password. Setup remains available until the first
+   account is created; keep the backend loopback-only and the reverse proxy
+   restricted to a trusted deployment network until then.
 
 After initialization, the page shows the ordinary login form and issues an
 expiring HttpOnly/SameSite browser session. It never returns or asks the user

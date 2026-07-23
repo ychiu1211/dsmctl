@@ -57,18 +57,17 @@ sudo chown -R 10001:10001 data secrets
 docker compose up --build
 ```
 
-Open `http://127.0.0.1:18765/admin/` within one hour of process start and create
-the local Gateway administrator username/password. If the Gateway is still
-uninitialized when the window expires, restart it to open a new one-hour
-window. The first successful setup closes the endpoint transactionally and
+Open `http://127.0.0.1:18765/admin/` and create the local Gateway administrator
+username/password. Setup remains available until the first account is created,
+including across process restarts; keep it on loopback or a trusted deployment
+network until then. The first successful setup closes the endpoint transactionally and
 creates an expiring HttpOnly/SameSite browser session; the password is stored
 only as an Argon2id verifier. There is no setup code or long-lived
 administrator bearer token.
 
 Administrator passwords contain at least 8 Unicode characters; choosing a
-strong password is the operator's responsibility. First-run setup shows both
-the absolute deadline and remaining time, and later password changes require
-the new password twice because there is no recovery path. A forgotten
+strong password is the operator's responsibility. Later password changes
+require the new password twice because there is no recovery path. A forgotten
 administrator password cannot be recovered or reset: delete the gateway state
 data and reinstall the deployment, then run first-time setup again — every NAS
 profile, token, and audit record is removed. The login page states the same
@@ -293,7 +292,7 @@ copied into the database or its backup.
 The pre-release schema-3 bearer/platform administrator modes are not carried
 forward as authority. An empty schema-3 state returns to first-run setup. If it
 already contains profiles, encrypted secrets, MCP tokens, or approvals, schema
-4 writes a pre-migration backup and refuses to expose a fresh setup window;
+4 writes a pre-migration backup and refuses to expose a fresh setup endpoint;
 the operator must deliberately reset that pre-release state or restore and
 migrate it with a version that still understands the old credential.
 

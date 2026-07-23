@@ -171,23 +171,25 @@ func TestFirstRunSetupAndAuthenticatedProfileCRUD(t *testing.T) {
 	}
 }
 
-func TestSetupWindowExpiresAndRestartReopensOnlyUninitializedState(t *testing.T) {
+func TestSetupRemainsAvailableUntilAdministratorIsCreated(t *testing.T) {
 	now := time.Date(2026, 7, 18, 4, 0, 0, 0, time.UTC)
 	handler, repository, manager := newUninitializedTestHandler(t, func() time.Time { return now })
 	defer manager.Close(context.Background())
-	now = now.Add(time.Hour)
-	if response := performJSON(handler, http.MethodPost, "/admin/api/setup", `{"username":"owner","password":"correct horse battery staple"}`, ""); response.Code != http.StatusGone {
-		t.Fatalf("expired setup status = %d body=%s", response.Code, response.Body.String())
+	now = now.Add(30 * 24 * time.Hour)
+	status := performJSON(handler, http.MethodGet, "/admin/api/setup/status", "", "")
+	if status.Code != http.StatusOK || !strings.Contains(status.Body.String(), `"state":"setup_available"`) {
+		t.Fatalf("delayed setup status = %d body=%s", status.Code, status.Body.String())
 	}
-	restarted, err := New(Options{Repository: repository, Manager: manager, PublicURL: "https://gateway.example", Now: func() time.Time { return now }})
-	if err != nil {
-		t.Fatal(err)
+	for _, obsoleteField := range []string{"setup_expired", "setup_expires_at", "setup_remaining_seconds"} {
+		if strings.Contains(status.Body.String(), obsoleteField) {
+			t.Fatalf("setup status contains obsolete field %q: %s", obsoleteField, status.Body.String())
+		}
 	}
-	setup := performJSON(restarted, http.MethodPost, "/admin/api/setup", `{"username":"owner","password":"correct horse battery staple"}`, "")
+	setup := performJSON(handler, http.MethodPost, "/admin/api/setup", `{"username":"owner","password":"correct horse battery staple"}`, "")
 	if setup.Code != http.StatusCreated {
-		t.Fatalf("restart setup status = %d body=%s", setup.Code, setup.Body.String())
+		t.Fatalf("delayed setup status = %d body=%s", setup.Code, setup.Body.String())
 	}
-	newProcess, err := New(Options{Repository: repository, Manager: manager, PublicURL: "https://gateway.example", Now: func() time.Time { return now.Add(2 * time.Hour) }})
+	newProcess, err := New(Options{Repository: repository, Manager: manager, PublicURL: "https://gateway.example", Now: func() time.Time { return now.Add(365 * 24 * time.Hour) }})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -35,18 +35,16 @@ const (
 	maxAdminBody        = int64(1 << 20)
 	enrollmentTTL       = 5 * time.Minute
 	networkTimeout      = 10 * time.Second
-	defaultSetupWindow  = time.Hour
 	administratorCookie = "dsmctl_admin_session"
 	requestHeader       = "X-DSMCTL-Request"
 )
 
 type Options struct {
-	Repository  *state.Repository
-	Manager     *runtime.Manager
-	Discoverer  DeviceDiscoverer
-	PublicURL   string
-	Now         func() time.Time
-	SetupWindow time.Duration
+	Repository *state.Repository
+	Manager    *runtime.Manager
+	Discoverer DeviceDiscoverer
+	PublicURL  string
+	Now        func() time.Time
 	// PlatformVerifier enables an optional deployment-provided administrator
 	// assertion. Generic containers leave it nil; the Synology SPK supplies it.
 	PlatformVerifier *platformauth.Verifier
@@ -66,7 +64,6 @@ type Handler struct {
 	publicURL        string
 	logger           *slog.Logger
 	now              func() time.Time
-	setupDeadline    time.Time
 	setupAttempts    *attemptLimiter
 	loginAttempts    *attemptLimiter
 	exportAttempts   *attemptLimiter
@@ -116,25 +113,17 @@ func New(options Options) (*Handler, error) {
 	if now == nil {
 		now = time.Now
 	}
-	setupWindow := options.SetupWindow
-	if setupWindow == 0 {
-		setupWindow = defaultSetupWindow
-	}
-	if setupWindow < 0 {
-		return nil, errors.New("administrator setup window must not be negative")
-	}
 	logger := options.Logger
 	if logger == nil {
 		logger = slog.New(slog.NewJSONHandler(io.Discard, nil))
 	}
-	startedAt := now().UTC()
 	discoverer := options.Discoverer
 	if discoverer == nil {
 		discoverer = application.NewService(nil, options.Manager)
 	}
 	return &Handler{
 		repository: options.Repository, manager: options.Manager, discoverer: discoverer, publicURL: publicURL, logger: logger,
-		now: now, setupDeadline: startedAt.Add(setupWindow),
+		now:            now,
 		setupAttempts:  newAttemptLimiter(now, 10, time.Minute),
 		loginAttempts:  newAttemptLimiter(now, 5, time.Minute),
 		exportAttempts: newAttemptLimiter(now, 5, time.Minute), platformVerifier: options.PlatformVerifier,
@@ -342,15 +331,7 @@ func (h *Handler) setupStatus(w http.ResponseWriter, req *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"state": "dsm_login_only", "local_login_available": false, "dsm_weblogin_available": true})
 		return
 	}
-	if !h.now().UTC().Before(h.setupDeadline) {
-		writeJSON(w, http.StatusOK, map[string]any{"state": "setup_expired"})
-		return
-	}
-	remaining := h.setupDeadline.Sub(h.now().UTC())
-	if remaining < 0 {
-		remaining = 0
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"state": "setup_available", "setup_expires_at": h.setupDeadline, "setup_remaining_seconds": int64(remaining / time.Second)})
+	writeJSON(w, http.StatusOK, map[string]any{"state": "setup_available"})
 }
 
 func (h *Handler) setup(w http.ResponseWriter, req *http.Request) {
@@ -369,10 +350,6 @@ func (h *Handler) setup(w http.ResponseWriter, req *http.Request) {
 	}
 	if status.Initialized {
 		writeError(w, http.StatusConflict, "gateway is already initialized")
-		return
-	}
-	if !h.now().UTC().Before(h.setupDeadline) {
-		writeError(w, http.StatusGone, "administrator setup window expired; restart the uninitialized gateway")
 		return
 	}
 	if !h.setupAttempts.Allow(remoteAttemptKey(req, "setup")) {

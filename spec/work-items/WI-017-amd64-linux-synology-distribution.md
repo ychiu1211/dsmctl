@@ -99,9 +99,9 @@ secured reverse-proxy endpoint, and pass the same gateway behavior suite.
       Docker project while managed-NAS outages remain application health data.
 - [x] The DSM portal reaches admin and MCP endpoints through TLS/reverse proxy;
       the backend port is not reachable directly from another LAN host.
-- [ ] The DSM portal serves the same one-hour local-account setup, login Cookie,
-      profile/vault/token models, and security behavior as generic Linux with
-      no image-specific branch or host-DSM authentication adapter.
+- [ ] The DSM portal serves DSM Web Login by default, optionally supports an
+      explicitly configured local fallback, and preserves the shared
+      profile/vault/token models without exposing generic first-run setup.
 - [ ] Upgrade preserves profiles, encrypted secrets, tokens, audit data, and
       master key and successfully applies a tested schema migration.
 - [ ] Retain-data uninstall leaves documented recoverable state; delete-data
