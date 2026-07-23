@@ -613,7 +613,7 @@ func TestAdminUIHasNoEmbeddedCredential(t *testing.T) {
 		`.auth-panel{position:relative;display:flex;align-items:center;justify-content:center;min-height:100vh`, `border-left:1px solid var(--line)`,
 		`.auth-card{padding:0;border:0;background:transparent}`, `#loginDivider:before,#loginDivider:after`, `.auth-panel:before{display:none}`,
 		`.locale-row{position:absolute;z-index:1;top:32px`, `.locale-row{position:static;margin-bottom:26px}`,
-		`<meta name="theme-color" content="#0d263f">`, `<link rel="icon" href="/admin/favicon.svg" type="image/svg+xml" sizes="any">`,
+		`<meta name="theme-color" content="#0d263f">`, `<link rel="icon" href="favicon.svg" type="image/svg+xml" sizes="any">`,
 		`data-locale-select`, `localStorage.getItem('dsmctl.locale')`, `dataset.i18nDiagnostics`,
 		`.view>.panel+.panel{margin-top:18px}`, `.button-row+.notice{margin-top:16px}`,
 		`.credential-body{display:grid;gap:12px`, `.account-list{display:flex;flex-direction:column;margin:0}`,
@@ -670,6 +670,9 @@ func TestAdminUIHasNoEmbeddedCredential(t *testing.T) {
 		if strings.Contains(recorder.Body.String(), externalAsset) {
 			t.Fatalf("UI loads an external asset matching %q", externalAsset)
 		}
+	}
+	if strings.Contains(recorder.Body.String(), `href="/admin/favicon.svg"`) {
+		t.Fatal("Admin favicon URL drops a reverse-proxy path prefix")
 	}
 	if strings.Contains(recorder.Body.String(), `if(acc.primary){let connect=document.createElement('button')`) {
 		t.Fatal("password vault page still exposes a connection action")
