@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -25,6 +26,7 @@ import (
 	"github.com/derekvery666/dsmctl/internal/application"
 	"github.com/derekvery666/dsmctl/internal/config"
 	"github.com/derekvery666/dsmctl/internal/domain/discovery"
+	"github.com/derekvery666/dsmctl/internal/gateway/recovery"
 	"github.com/derekvery666/dsmctl/internal/gateway/state"
 	"github.com/derekvery666/dsmctl/internal/remotepolicy"
 	"github.com/derekvery666/dsmctl/internal/runtime"
@@ -660,6 +662,8 @@ func TestAdminUIHasNoEmbeddedCredential(t *testing.T) {
 		`if(profile.role!=='target'&&!hasAuthentication)items.push({label:t('provision')`, `provision:'Provision fresh NAS'`, `provision:'安裝全新 NAS'`,
 		`id="exportDialog"`, `onclick="openExportDialog()"`, `data-i18n="exportCredentials"`, `async function submitExport(event)`, `apiBase+'/credentials/export'`, `link.download='dsmctl-nas-credentials.csv'`,
 		`exportCredentials:'Export credentials'`, `exportCredentials:'匯出憑證'`, `downloadCSV:'CSV herunterladen'`,
+		`id="recoveryPanel"`, `id="recoveryRows"`, `id="recoveryDialog"`, `RESTORE `, `async function loadRecovery()`, `async function submitRecovery(event)`, `api('/recovery/restore'`,
+		`recoveryTitle:'Recovery'`, `recoveryTitle:'復原'`, `recoveryRetention:'只保留最新 10 份完整的升級前復原點。'`,
 	} {
 		if !strings.Contains(recorder.Body.String(), required) {
 			t.Fatalf("UI is missing redesigned application shell marker %q", required)
@@ -680,6 +684,77 @@ func TestAdminUIHasNoEmbeddedCredential(t *testing.T) {
 	}
 	if strings.Contains(recorder.Body.String(), `if(acc.primary){let connect=document.createElement('button')`) {
 		t.Fatal("password vault page still exposes a connection action")
+	}
+}
+
+func TestRecoveryAPIRequiresAuthenticationConfirmationAndAuditsRestore(t *testing.T) {
+	handler, repository, manager, adminSession := newTestHandler(t)
+	defer manager.Close(context.Background())
+
+	base := t.TempDir()
+	root := filepath.Join(base, "backups")
+	backupName := "pre-upgrade-7.3.2-28-20260724083000"
+	backupPath := filepath.Join(root, backupName)
+	masterPath := filepath.Join(base, "secrets", "master.key")
+	platformPath := filepath.Join(base, "secrets", "dsm-sso.key")
+	if err := os.MkdirAll(backupPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(masterPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	master := bytes.Repeat([]byte{3}, 32)
+	platform := bytes.Repeat([]byte{4}, 32)
+	for path, value := range map[string][]byte{
+		masterPath:                               master,
+		platformPath:                             platform,
+		filepath.Join(backupPath, "master.key"):  master,
+		filepath.Join(backupPath, "dsm-sso.key"): platform,
+		filepath.Join(backupPath, "gateway.db"):  []byte("non-empty test state"),
+	} {
+		if err := os.WriteFile(path, value, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	recoveryManager, err := recovery.New(recovery.Options{
+		Root:            root,
+		StatePath:       filepath.Join(base, "data", "gateway.db"),
+		MasterKeyPath:   masterPath,
+		PlatformKeyPath: platformPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted := make(chan struct{})
+	handler.recovery = recoveryManager
+	handler.requestRestart = func() { close(restarted) }
+
+	if response := performJSON(handler, http.MethodGet, "/admin/api/recovery", "", ""); response.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated inventory status = %d", response.Code)
+	}
+	inventory := performJSON(handler, http.MethodGet, "/admin/api/recovery", "", adminSession)
+	if inventory.Code != http.StatusOK || !strings.Contains(inventory.Body.String(), `"restorable":true`) || !strings.Contains(inventory.Body.String(), backupName) {
+		t.Fatalf("inventory = %d %s", inventory.Code, inventory.Body.String())
+	}
+	unconfirmed := performJSON(handler, http.MethodPost, "/admin/api/recovery/restore", fmt.Sprintf(`{"backup":%q,"confirmation":"wrong"}`, backupName), adminSession)
+	if unconfirmed.Code != http.StatusBadRequest {
+		t.Fatalf("unconfirmed restore = %d %s", unconfirmed.Code, unconfirmed.Body.String())
+	}
+	queued := performJSON(handler, http.MethodPost, "/admin/api/recovery/restore", fmt.Sprintf(`{"backup":%q,"confirmation":%q}`, backupName, "RESTORE "+backupName), adminSession)
+	if queued.Code != http.StatusAccepted || !strings.Contains(queued.Body.String(), `"restart":true`) {
+		t.Fatalf("queued restore = %d %s", queued.Code, queued.Body.String())
+	}
+	select {
+	case <-restarted:
+	case <-time.After(time.Second):
+		t.Fatal("successful recovery request did not request a restart")
+	}
+	events, err := repository.AuditEvents(context.Background(), state.AuditQuery{Action: "recovery.restore"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 4 || events[0].Outcome != "success" || events[1].Outcome != "started" || events[2].Outcome != "failure" || events[3].Outcome != "started" {
+		t.Fatalf("recovery audit events = %#v", events)
 	}
 }
 

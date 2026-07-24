@@ -24,6 +24,7 @@ import (
 	"github.com/derekvery666/dsmctl/internal/gateway/admin"
 	gatewayoauth "github.com/derekvery666/dsmctl/internal/gateway/oauth"
 	"github.com/derekvery666/dsmctl/internal/gateway/platformauth"
+	"github.com/derekvery666/dsmctl/internal/gateway/recovery"
 	gatewaystate "github.com/derekvery666/dsmctl/internal/gateway/state"
 	"github.com/derekvery666/dsmctl/internal/mcpserver"
 	"github.com/derekvery666/dsmctl/internal/runtime"
@@ -47,6 +48,7 @@ func run(arguments []string, logger *slog.Logger) error {
 	statePath := flags.String("state", "", "managed gateway state database path; enables dynamic administration")
 	masterKeyPath := flags.String("master-key-file", "", "32-byte managed gateway vault key file")
 	platformAssertionKeyPath := flags.String("platform-assertion-key-file", "", "optional 32-byte deployment administrator assertion key file")
+	recoveryDir := flags.String("recovery-dir", "", "optional deployment-managed pre-upgrade recovery directory")
 	administratorModeValue := flags.String("administrator-mode", "auto", "managed administrator mode: auto, local, or dsm")
 	adminPublicURL := flags.String("admin-public-url", "", "public gateway origin used for browser request validation and DSM web-login opener")
 	listenAddress := flags.String("listen", "127.0.0.1:18765", "HTTP listen address")
@@ -76,6 +78,9 @@ func run(arguments []string, logger *slog.Logger) error {
 	}
 
 	managed := strings.TrimSpace(*statePath) != ""
+	if strings.TrimSpace(*recoveryDir) != "" && !managed {
+		return errors.New("recovery directory requires managed gateway state")
+	}
 	administratorMode, err := resolveAdministratorMode(*administratorModeValue, *platformAssertionKeyPath)
 	if err != nil {
 		return err
@@ -99,6 +104,8 @@ func run(arguments []string, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	var (
 		cfg              *config.Config
@@ -111,8 +118,27 @@ func run(arguments []string, logger *slog.Logger) error {
 		mode             string
 		repository       *gatewaystate.Repository
 		platformVerifier *platformauth.Verifier
+		recoveryManager  *recovery.Manager
 	)
 	if managed {
+		if strings.TrimSpace(*recoveryDir) != "" {
+			recoveryManager, err = recovery.New(recovery.Options{
+				Root:            *recoveryDir,
+				StatePath:       *statePath,
+				MasterKeyPath:   *masterKeyPath,
+				PlatformKeyPath: *platformAssertionKeyPath,
+			})
+			if err != nil {
+				return err
+			}
+			result, applyErr := recoveryManager.ApplyPending(ctx)
+			if applyErr != nil {
+				logger.Error("gateway recovery restore result could not be fully recorded", "error", applyErr)
+			}
+			if result != nil {
+				logger.Info("gateway recovery restore processed", "status", result.Status, "backup", result.Backup, "message", result.Message)
+			}
+		}
 		masterKey, err := gatewaystate.ReadMasterKey(*masterKeyPath)
 		if err != nil {
 			return err
@@ -156,7 +182,16 @@ func run(arguments []string, logger *slog.Logger) error {
 			application.WithRemoteApplyAuthorizer(repository),
 			application.WithProvisionSink(admin.NewVaultProvisionSink(repository, manager)),
 		)
-		adminApplication, err := admin.New(admin.Options{Repository: repository, Manager: manager, Discoverer: service, PublicURL: *adminPublicURL, PlatformVerifier: platformVerifier, Logger: logger})
+		adminApplication, err := admin.New(admin.Options{
+			Repository:       repository,
+			Manager:          manager,
+			Discoverer:       service,
+			PublicURL:        *adminPublicURL,
+			PlatformVerifier: platformVerifier,
+			Recovery:         recoveryManager,
+			RequestRestart:   stop,
+			Logger:           logger,
+		})
 		if err != nil {
 			_ = service.Close(context.Background())
 			_ = repository.Close()
@@ -236,8 +271,6 @@ func run(arguments []string, logger *slog.Logger) error {
 		"administrator_mode", administratorMode,
 		"profiles", len(cfg.NAS),
 	)
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	return httpServer.Serve(ctx, listener)
 }
 

@@ -226,7 +226,12 @@ flowchart LR
 | [WI-101](work-items/WI-101-cli-request-schema-discovery.md) | P1 | `done` | E | WI-100 | Let binary-only agents list and inspect every typed CLI mutation request as descriptive JSON Schema, with direct links from command help. |
 | [WI-102](work-items/WI-102-cli-operation-catalog.md) | P1 | `done` | E | WI-101 | Expose the complete CLI command tree as an offline human/JSON operation catalog, including exact flags, workflow roles, and request-schema links. |
 | [WI-103](work-items/WI-103-public-module-license.md) | P1 | `done` | E | WI-101 | Adopt `github.com/derekvery666/dsmctl` as the permanent Go module/import identity, add Apache-2.0, and align public installation and release documentation. |
+| [WI-104](work-items/WI-104-live-mcp-read-regressions.md) | P1 | `done` | E | WI-041 | Fix live read/plan regressions and two-NAS remote-policy routing found by the three-NAS MCP audit. |
+| [WI-105](work-items/WI-105-gateway-recovery-ui-retention.md) | P1 | `done` | G | WI-015, WI-032, WI-033 | Add a hash-bound Gateway Admin recovery workflow and retain the newest ten upgrade or pre-restore recovery sets. |
+| [WI-106](work-items/WI-106-san-volume-precondition-stability.md) | P1 | `done` | B | WI-005 | Keep LUN plans bound to stable backing-volume safety state without false staleness from normal free-space drift. |
+| [WI-107](work-items/WI-107-interactive-approval-sdk-boundary.md) | P1 | `done` | G | WI-033 | Preserve exact high-risk interactive-approval detection after MCP SDK result adaptation. |
 | [WI-108](work-items/WI-108-conversational-high-risk-approval.md) | P1 | `done` | G | WI-016, WI-038, WI-048 | Confirm one high-risk remote apply inside a compatible MCP conversation; preserve explicit administrator-page approval mode for hardened or unattended clients. |
+| [WI-109](work-items/WI-109-mcp-session-restart-recovery.md) | P1 | `done` | G | WI-033 | Return protocol session expiry after a Gateway restart while preserving live cross-token isolation. |
 
 Parallel groups indicate likely file overlap. Items in different groups may run
 at the same time after checking their `touches` lists. Only one agent should

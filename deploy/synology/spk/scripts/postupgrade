@@ -3,6 +3,7 @@ set -eu
 
 umask 077
 home_dir="${SYNOPKG_PKGHOME:?}"
+backup_root="${SYNOPKG_PKGVAR:?}/backups"
 if [ ! -f "$home_dir/dsm-sso.key" ]; then
     if [ -f "$home_dir/secrets/platform.key" ]; then
         mv "$home_dir/secrets/platform.key" "$home_dir/dsm-sso.key"
@@ -11,6 +12,13 @@ if [ ! -f "$home_dir/dsm-sso.key" ]; then
     fi
 fi
 chmod 0600 "$home_dir/dsm-sso.key"
+package_uid="$(id -u "${SYNOPKG_PKGNAME:?}")"
+package_gid="$(id -g "${SYNOPKG_PKGNAME}")"
+if [ -d "$backup_root" ]; then
+    chown -R "$package_uid:$package_gid" "$backup_root"
+    chmod 0700 "$backup_root"
+    "$(CDPATH= cd "$(dirname "$0")" && pwd)/recovery-retention" "$backup_root" 10
+fi
 
 for required in "$home_dir/master.key" "$home_dir/dsm-sso.key"; do
     if [ ! -f "$required" ] || [ "$(wc -c < "$required" | tr -d ' ')" != "32" ]; then

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -250,13 +251,13 @@ func decodeTaskStatus(data json.RawMessage) (hyperbackup.TaskStatus, error) {
 		LastBkpError    *string `json:"last_bkp_error"`
 		NextBkpTime     *string `json:"next_bkp_time"`
 		Progress        *struct {
-			Step             *string   `json:"step"`
-			Progress         flexInt   `json:"progress"`
-			ProcessedSize    flexInt64 `json:"processed_size"`
-			TotalSize        flexInt64 `json:"total_size"`
-			TransmittedSize  flexInt64 `json:"transmitted_size"`
-			AvgSpeed         flexInt64 `json:"avg_speed"`
-			CanCancel        bool      `json:"can_cancel"`
+			Step            *string   `json:"step"`
+			Progress        flexInt   `json:"progress"`
+			ProcessedSize   flexInt64 `json:"processed_size"`
+			TotalSize       flexInt64 `json:"total_size"`
+			TransmittedSize flexInt64 `json:"transmitted_size"`
+			AvgSpeed        flexInt64 `json:"avg_speed"`
+			CanCancel       bool      `json:"can_cancel"`
 		} `json:"progress"`
 	}
 	if err := unmarshalObject(data, "Hyper Backup task status", &resp); err != nil {
@@ -404,6 +405,70 @@ func decodeLogs(data json.RawMessage) (hyperbackup.Logs, error) {
 
 // decodeApplications reads the App2.Backup list. Unusually for DSM, the data
 // element itself is the ARRAY of applications (live-verified on 4.2.2).
+type applicationFolderList []string
+
+func (folders *applicationFolderList) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if bytes.Equal(trimmed, []byte("null")) {
+		*folders = nil
+		return nil
+	}
+
+	var entries []json.RawMessage
+	if err := json.Unmarshal(trimmed, &entries); err != nil {
+		return fmt.Errorf("expected an array: %w", err)
+	}
+
+	decoded := make(applicationFolderList, 0, len(entries))
+	for index, entry := range entries {
+		entry = bytes.TrimSpace(entry)
+		if len(entry) == 0 {
+			return fmt.Errorf("entry %d is empty", index)
+		}
+		switch entry[0] {
+		case '"':
+			var folder string
+			if err := json.Unmarshal(entry, &folder); err != nil {
+				return fmt.Errorf("decode string entry %d: %w", index, err)
+			}
+			decoded = append(decoded, strings.TrimSpace(folder))
+		case '{':
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(entry, &fields); err != nil {
+				return fmt.Errorf("decode object entry %d: %w", index, err)
+			}
+			var descriptor struct {
+				FolderPath string `json:"folderPath"`
+				FullPath   string `json:"fullPath"`
+				Folder     string `json:"folder"`
+			}
+			if err := json.Unmarshal(entry, &descriptor); err != nil {
+				return fmt.Errorf("decode object entry %d: %w", index, err)
+			}
+			folder := strings.TrimSpace(descriptor.FolderPath)
+			if folder == "" {
+				folder = strings.TrimSpace(descriptor.FullPath)
+			}
+			if folder == "" {
+				folder = strings.TrimSpace(descriptor.Folder)
+			}
+			if folder == "" {
+				keys := make([]string, 0, len(fields))
+				for key := range fields {
+					keys = append(keys, key)
+				}
+				sort.Strings(keys)
+				return fmt.Errorf("object entry %d is missing folderPath, fullPath, and folder (fields: %s)", index, strings.Join(keys, ", "))
+			}
+			decoded = append(decoded, folder)
+		default:
+			return fmt.Errorf("entry %d must be a string or object", index)
+		}
+	}
+	*folders = decoded
+	return nil
+}
+
 func decodeApplications(data json.RawMessage) (hyperbackup.Applications, error) {
 	trimmed := bytes.TrimSpace(data)
 	if len(trimmed) == 0 || trimmed[0] != '[' {
@@ -418,7 +483,7 @@ func decodeApplications(data json.RawMessage) (hyperbackup.Applications, error) 
 		SummaryDisp  *string `json:"summary_disp"`
 		ErrorKey     *string `json:"error_key"`
 		Depend       *struct {
-			FolderList []string `json:"folder_list"`
+			FolderList applicationFolderList `json:"folder_list"`
 		} `json:"depend"`
 	}
 	if err := json.Unmarshal(trimmed, &wire); err != nil {
@@ -440,7 +505,7 @@ func decodeApplications(data json.RawMessage) (hyperbackup.Applications, error) 
 		}
 		application.Backupable = application.Reason == ""
 		if entry.Depend != nil {
-			application.RequiredFolders = entry.Depend.FolderList
+			application.RequiredFolders = []string(entry.Depend.FolderList)
 		}
 		applications.Entries = append(applications.Entries, application)
 	}

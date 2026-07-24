@@ -95,6 +95,14 @@ const (
 		{"event":"[Local][dsmctl-probe-task] Backup task finished successfully.","level":"info","time":"2026/07/21 01:21:37","user":"testuser"},
 		{"event":"[Local][dsmctl-probe-task] Backup task started.","level":"info","time":"2026/07/21 01:20:57","user":"testuser"},
 		{"event":"Setting of backup task [dsmctl-probe-task] was created","level":"info","time":"2026/07/21 01:19:57","user":"testuser"}]}`
+	applicationsBody = `[{
+		"id":"SynologyDrive","name":"Synology Drive Server","version":"3.5.1-26102","is_running":true,
+		"online_backup":true,"summary_disp":"Synology Drive data","error_key":"",
+		"depend":{"folder_list":[
+			"/homes",
+			{"folderPath":"/Share/team","fullPath":"/volume1/Share/team"},
+			{"folderPath":"","fullPath":"/volume1/Share/archive"},
+			{"folder":"/Share/legacy","whitelist":true}]}}]`
 	vaultConfigBody  = `{"parallel_backup_limit":2}`
 	vaultTargetsBody = `{"target_list":[]}`
 	// Live payload from a real inbound image_remote backup (nas255 -> nas51).
@@ -154,12 +162,38 @@ func TestTasksRequestSendsJSONLiterals(t *testing.T) {
 	}
 }
 
+func TestApplicationsDecodeStringAndObjectFolderDependencies(t *testing.T) {
+	target := hbTarget("4.2.2-4262", "")
+	applications, selection, err := ExecuteApplications(context.Background(), target, routeExecutor{t: t, routes: map[string]string{
+		"SYNO.Backup.App2.Backup list": applicationsBody,
+	}})
+	if err != nil {
+		t.Fatalf("ExecuteApplications() error = %v", err)
+	}
+	if !selection.Supported || len(applications.Entries) != 1 {
+		t.Fatalf("applications = %#v selection = %#v", applications, selection)
+	}
+	application := applications.Entries[0]
+	if application.ID != "SynologyDrive" || !application.Running || !application.Backupable || !application.OnlineBackup {
+		t.Fatalf("application = %#v", application)
+	}
+	want := []string{"/homes", "/Share/team", "/volume1/Share/archive", "/Share/legacy"}
+	if len(application.RequiredFolders) != len(want) {
+		t.Fatalf("required folders = %#v, want %#v", application.RequiredFolders, want)
+	}
+	for index := range want {
+		if application.RequiredFolders[index] != want[index] {
+			t.Fatalf("required folders = %#v, want %#v", application.RequiredFolders, want)
+		}
+	}
+}
+
 func TestDetailComposesGetStatusTarget(t *testing.T) {
 	target := hbTarget("4.2.2-4262", "")
 	detail, _, err := ExecuteDetail(context.Background(), target, routeExecutor{t: t, routes: map[string]string{
-		"SYNO.Backup.Task get":      taskGetBody,
-		"SYNO.Backup.Task status":   statusRunningBody,
-		"SYNO.Backup.Target get":    targetBody,
+		"SYNO.Backup.Task get":    taskGetBody,
+		"SYNO.Backup.Task status": statusRunningBody,
+		"SYNO.Backup.Target get":  targetBody,
 	}}, DetailInput{TaskID: 1})
 	if err != nil {
 		t.Fatalf("ExecuteDetail() error = %v", err)
@@ -516,5 +550,10 @@ func TestDecodersRejectMalformedShapes(t *testing.T) {
 	}
 	if _, err := decodeVaultTargets(json.RawMessage(`{}`)); err == nil {
 		t.Fatalf("decodeVaultTargets must require target_list")
+	}
+	if _, err := decodeApplications(json.RawMessage(`[{"id":"x","depend":{"folder_list":[{"secret":"do-not-log","fileSystem":"BTRFS"}]}}]`)); err == nil {
+		t.Fatalf("decodeApplications must reject an object dependency without folderPath or fullPath")
+	} else if got := err.Error(); !strings.Contains(got, "fields: fileSystem, secret") || strings.Contains(got, "do-not-log") {
+		t.Fatalf("decodeApplications error must report sorted field names without values: %q", got)
 	}
 }

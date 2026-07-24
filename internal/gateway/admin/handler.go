@@ -22,6 +22,7 @@ import (
 	"github.com/derekvery666/dsmctl/internal/credentials"
 	"github.com/derekvery666/dsmctl/internal/domain/discovery"
 	"github.com/derekvery666/dsmctl/internal/gateway/platformauth"
+	"github.com/derekvery666/dsmctl/internal/gateway/recovery"
 	"github.com/derekvery666/dsmctl/internal/gateway/state"
 	"github.com/derekvery666/dsmctl/internal/remotepolicy"
 	"github.com/derekvery666/dsmctl/internal/runtime"
@@ -48,6 +49,10 @@ type Options struct {
 	// PlatformVerifier enables an optional deployment-provided administrator
 	// assertion. Generic containers leave it nil; the Synology SPK supplies it.
 	PlatformVerifier *platformauth.Verifier
+	// Recovery is supplied only by deployments that manage complete recovery
+	// sets outside the generic Gateway container contract.
+	Recovery       *recovery.Manager
+	RequestRestart func()
 	// Logger receives server-side diagnostics for failures whose HTTP
 	// responses are deliberately redacted (DSM enrollment exchanges).
 	Logger *slog.Logger
@@ -68,6 +73,8 @@ type Handler struct {
 	loginAttempts    *attemptLimiter
 	exportAttempts   *attemptLimiter
 	platformVerifier *platformauth.Verifier
+	recovery         *recovery.Manager
+	requestRestart   func()
 
 	pendingMu sync.Mutex
 	pending   map[string]pendingEnrollment
@@ -127,6 +134,7 @@ func New(options Options) (*Handler, error) {
 		setupAttempts:  newAttemptLimiter(now, 10, time.Minute),
 		loginAttempts:  newAttemptLimiter(now, 5, time.Minute),
 		exportAttempts: newAttemptLimiter(now, 5, time.Minute), platformVerifier: options.PlatformVerifier,
+		recovery: options.Recovery, requestRestart: options.RequestRestart,
 		pending: make(map[string]pendingEnrollment),
 	}, nil
 }
@@ -200,6 +208,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		outcome = "failure"
 	}
 	_ = h.repository.AppendAudit(req.Context(), state.AuditEvent{CorrelationID: correlationID(req), ActorType: "gateway_admin", ActorID: actorID, Action: action, Outcome: outcome})
+	if outcome == "success" && req.Method == http.MethodPost && req.URL.Path == "/admin/api/recovery/restore" && h.requestRestart != nil {
+		go h.requestRestart()
+	}
 }
 
 func (h *Handler) serveAuthenticated(w http.ResponseWriter, req *http.Request) {
@@ -251,6 +262,10 @@ func (h *Handler) serveAuthenticated(w http.ResponseWriter, req *http.Request) {
 		h.orphanSecrets(w, req)
 		return
 	}
+	if req.URL.Path == "/admin/api/recovery" || req.URL.Path == "/admin/api/recovery/restore" {
+		h.recoveryAPI(w, req)
+		return
+	}
 	if req.URL.Path == "/admin/api/discovery" {
 		h.discoverLAN(w, req)
 		return
@@ -264,6 +279,63 @@ func (h *Handler) serveAuthenticated(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	http.NotFound(w, req)
+}
+
+func (h *Handler) recoveryAPI(w http.ResponseWriter, req *http.Request) {
+	if h.recovery == nil {
+		http.NotFound(w, req)
+		return
+	}
+	switch req.URL.Path {
+	case "/admin/api/recovery":
+		if req.Method != http.MethodGet {
+			methodNotAllowed(w, http.MethodGet)
+			return
+		}
+		status, err := h.recovery.Status(req.Context())
+		if err != nil {
+			h.logger.Error("admin recovery inventory failed", "error", err)
+			writeError(w, http.StatusInternalServerError, "read recovery inventory")
+			return
+		}
+		writeJSON(w, http.StatusOK, status)
+	case "/admin/api/recovery/restore":
+		if req.Method != http.MethodPost {
+			methodNotAllowed(w, http.MethodPost)
+			return
+		}
+		if h.requestRestart == nil {
+			writeError(w, http.StatusServiceUnavailable, "recovery restart is unavailable")
+			return
+		}
+		var input struct {
+			Backup       string `json:"backup"`
+			Confirmation string `json:"confirmation"`
+		}
+		if err := decodeJSON(req, &input); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := h.recovery.Queue(req.Context(), input.Backup, input.Confirmation); err != nil {
+			switch {
+			case errors.Is(err, recovery.ErrConfirmation), errors.Is(err, recovery.ErrNotRestorable):
+				writeError(w, http.StatusBadRequest, err.Error())
+			case errors.Is(err, recovery.ErrPending):
+				writeError(w, http.StatusConflict, err.Error())
+			default:
+				h.logger.Error("admin recovery restore scheduling failed", "error", err)
+				writeError(w, http.StatusInternalServerError, "schedule recovery restore")
+			}
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]any{
+			"status":  "scheduled",
+			"backup":  input.Backup,
+			"restart": true,
+		})
+	default:
+		http.NotFound(w, req)
+	}
 }
 
 func (h *Handler) discoverLAN(w http.ResponseWriter, req *http.Request) {
@@ -1729,6 +1801,10 @@ func adminAuditAction(req *http.Request) string {
 		return "audit.query"
 	case path == "/admin/api/credentials/export":
 		return "credential.export"
+	case path == "/admin/api/recovery/restore":
+		return "recovery.restore"
+	case path == "/admin/api/recovery":
+		return "recovery.query"
 	case strings.HasSuffix(path, "/credentials/password/connect"):
 		return "credential.connect"
 	case strings.HasSuffix(path, "/credentials/password/reveal"):

@@ -33,6 +33,7 @@ services:
       - --master-key-file=/run/secrets/master.key
       - --administrator-mode=dsm
       - --platform-assertion-key-file=/run/secrets/dsm-sso.key
+      - --recovery-dir=/data/backups
       - --allowed-hosts=127.0.0.1,localhost
       - --trusted-proxies=127.0.0.0/8
     healthcheck:

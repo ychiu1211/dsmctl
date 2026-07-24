@@ -747,9 +747,8 @@ func setPlanVolume(plan *SANPlan, volume storage.Volume) {
 	plan.References.BackingFileSystem = volume.FileSystem
 	plan.VolumeFingerprint = fingerprint(struct {
 		ID, Path, FileSystem, Status string
-		AvailableBytes               uint64
 		ReadOnly                     bool
-	}{volume.ID, volume.Path, volume.FileSystem, volume.Status, volume.AvailableBytes, volume.ReadOnly})
+	}{volume.ID, volume.Path, volume.FileSystem, volume.Status, volume.ReadOnly})
 }
 
 func waitForSANPostcondition(ctx context.Context, client interface {

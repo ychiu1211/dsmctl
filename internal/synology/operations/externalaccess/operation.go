@@ -277,18 +277,20 @@ func ExecuteQuickConnectRelaySet(ctx context.Context, target compatibility.Targe
 
 // ReadAccount reads the Synology Account binding. The MyDSCenter query is
 // required; the package read enriches it with the customer id and serial and is
-// skipped when its API is absent.
+// skipped when its API is absent or no account is currently logged in.
 func ReadAccount(ctx context.Context, target compatibility.Target, executor compatibility.Executor) (externalaccess.AccountState, compatibility.Selection, error) {
 	core, selection, err := accountCoreOp.Run(ctx, target, executor, Input{})
 	if err != nil {
 		return externalaccess.AccountState{}, selection, err
 	}
 	state := externalaccess.AccountState{LoggedIn: core.LoggedIn, Activated: core.Activated, Account: core.Account}
-	if pkg, ok, err := runOptional(ctx, target, executor, accountPackageOp); err != nil {
-		return externalaccess.AccountState{}, selection, err
-	} else if ok {
-		state.MyDSID = pkg.MyDSID
-		state.Serial = pkg.Serial
+	if core.LoggedIn {
+		if pkg, ok, err := runOptional(ctx, target, executor, accountPackageOp); err != nil {
+			return externalaccess.AccountState{}, selection, err
+		} else if ok {
+			state.MyDSID = pkg.MyDSID
+			state.Serial = pkg.Serial
+		}
 	}
 	return state, selection, nil
 }

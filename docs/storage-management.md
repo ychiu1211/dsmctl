@@ -275,3 +275,13 @@ MCP schemas:
 plan_storage_change { nas?: string, request: StorageChangeRequest }
 apply_storage_plan { plan: StoragePlan, approval_hash: string }
 ```
+
+## SAN backing-volume preconditions
+
+LUN create and expansion plans bind the stable backing-volume ID, path,
+filesystem, status, and read-only state. The exact available-byte counter is
+deliberately excluded from the approval fingerprint because normal package and
+filesystem activity changes it continuously. Apply still re-reads storage
+state and recomputes the request: if current free space is below the requested
+LUN capacity, or the volume is no longer normal and writable, the operation
+fails before DSM receives a SAN mutation.

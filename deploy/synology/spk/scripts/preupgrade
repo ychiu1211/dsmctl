@@ -2,7 +2,8 @@
 set -eu
 
 umask 077
-backup_dir="${SYNOPKG_PKGVAR:?}/backups/pre-upgrade-${SYNOPKG_OLD_PKGVER:-unknown}-$(date +%Y%m%d%H%M%S)"
+backup_root="${SYNOPKG_PKGVAR:?}/backups"
+backup_dir="${backup_root}/pre-upgrade-${SYNOPKG_OLD_PKGVER:-unknown}-$(date +%Y%m%d%H%M%S)"
 mkdir -p "$backup_dir"
 if [ -f "${SYNOPKG_PKGVAR}/gateway.db" ]; then
     cp -p "${SYNOPKG_PKGVAR}/gateway.db" "$backup_dir/gateway.db"
@@ -18,5 +19,11 @@ elif [ -f "${SYNOPKG_PKGHOME}/secrets/platform.key" ]; then
     cp -p "${SYNOPKG_PKGHOME}/secrets/platform.key" "$backup_dir/dsm-sso.key"
 fi
 chmod -R go-rwx "$backup_dir"
+package_uid="$(id -u "${SYNOPKG_PKGNAME:?}")"
+package_gid="$(id -g "${SYNOPKG_PKGNAME}")"
+chown -R "$package_uid:$package_gid" "$backup_root"
+chmod 0700 "$backup_root"
+"$(CDPATH= cd "$(dirname "$0")" && pwd)/recovery-retention" "$backup_root" 10
+
 echo "Pre-upgrade recovery copy: $backup_dir" > "${SYNOPKG_TEMP_LOGFILE:-/dev/null}"
 exit 0

@@ -4,13 +4,24 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/derekvery666/dsmctl/internal/gateway"
 	gatewaystate "github.com/derekvery666/dsmctl/internal/gateway/state"
 )
+
+func TestRecoveryDirectoryRequiresManagedState(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	err := run([]string{"--recovery-dir", filepath.Join(t.TempDir(), "backups")}, logger)
+	if err == nil || !strings.Contains(err.Error(), "recovery directory requires managed gateway state") {
+		t.Fatalf("run() error = %v", err)
+	}
+}
 
 func TestLocalReadinessDetectsInvalidConfigAndSecret(t *testing.T) {
 	directory := t.TempDir()

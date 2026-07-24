@@ -169,9 +169,37 @@ fingerprint itself; it does not ask for manual entry or an up-front TLS mode.
 Package status follows the gateway container's local health. A managed NAS
 being offline is application health data and does not mark the package stopped.
 Before upgrade, the scripts copy `gateway.db`, `master.key`, and `dsm-sso.key` to
-`SYNOPKG_PKGVAR/backups/pre-upgrade-*`; a database migration also creates an
-adjacent pre-schema backup and fails closed without replacing recoverable
-state.
+`SYNOPKG_PKGVAR/backups/pre-upgrade-*`. Before each restore, the Gateway also
+creates a complete `pre-restore-*` safety copy of the state being replaced.
+Both kinds appear in the Recovery UI and count toward one shared retention
+limit: the newest ten complete recovery sets are retained. Once ten complete
+sets exist, older incomplete sets are removed because they cannot be restored;
+malformed entries and symlinks are never selected for automatic deletion. A
+database migration also creates an adjacent pre-schema backup and fails closed
+without replacing recoverable state.
+
+The Admin page includes a **Recovery** panel for these in-place sets. It shows
+the package version, creation time, size, completeness, and whether the backed
+up keys match the current installation. Restore is available only for a
+complete, direct-child set with both keys matching the active installation.
+Select a set and type the exact `RESTORE <recovery-name>` confirmation shown by
+the UI. The
+Gateway then:
+
+1. records a hash-bound request and exits gracefully;
+2. revalidates every recovery file before opening the live database;
+3. opens and migrates a staged database copy with the active master key;
+4. creates a complete, UI-restorable `pre-restore-*` safety copy of the current
+   database and keys, then applies the shared ten-set retention limit; and
+5. replaces the database and starts normally.
+
+If a set is corrupt, changed after confirmation, or has mismatched keys, the
+current database is left in place and the failure appears in the Recovery
+panel. A successful restore returns profiles, credentials, MCP tokens,
+approvals, audit history, and administrator sessions to that point in time, so
+the browser may require DSM Web Login again. This workflow is for rollback of
+the same package installation, not whole-NAS or cross-installation disaster
+recovery.
 
 The credential vault is not stored in the Docker image or writable container
 layer. Recovery uses the three host-mounted files below:
@@ -210,7 +238,7 @@ access-controlled. The in-place `pre-upgrade-*` copies are useful for rollback
 but are not disaster-recovery backups because they remain on the same NAS
 volume.
 
-Restore only while the package is stopped. Decrypt the archive, put all files
+For an external archive, restore only while the package is stopped. Decrypt the archive, put all files
 back at the exact paths above, preserve their package ownership and mode 0600,
 and then start the package. Never combine a database from one backup with a
 master key from another. Test a backup by listing the encrypted archive and,

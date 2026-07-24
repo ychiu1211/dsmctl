@@ -19,6 +19,7 @@ import (
 	"github.com/derekvery666/dsmctl/internal/application"
 	"github.com/derekvery666/dsmctl/internal/config"
 	"github.com/derekvery666/dsmctl/internal/mcpserver"
+	"github.com/derekvery666/dsmctl/internal/remotepolicy"
 	"github.com/derekvery666/dsmctl/internal/runtime"
 )
 
@@ -111,18 +112,68 @@ func TestMCPSessionTokenBinderRejectsCrossTokenReuse(t *testing.T) {
 	binder := newMCPSessionTokenBinder()
 	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
 	binder.Bind("session-1", "token-a", now)
-	if !binder.Authorize("session-1", "token-a", now.Add(time.Second)) {
-		t.Fatal("session owner was rejected")
+	if got := binder.Authorize("session-1", "token-a", now.Add(time.Second)); got != mcpSessionAuthorized {
+		t.Fatalf("session owner authorization = %v", got)
 	}
-	if binder.Authorize("session-1", "token-b", now.Add(2*time.Second)) {
-		t.Fatal("different token reused an existing MCP session")
+	if got := binder.Authorize("session-1", "token-b", now.Add(2*time.Second)); got != mcpSessionTokenMismatch {
+		t.Fatalf("cross-token authorization = %v", got)
 	}
-	if binder.Authorize("unknown", "token-a", now.Add(3*time.Second)) {
-		t.Fatal("unbound session was accepted")
+	if got := binder.Authorize("unknown", "token-a", now.Add(3*time.Second)); got != mcpSessionMissing {
+		t.Fatalf("unknown session authorization = %v", got)
 	}
 	binder.Delete("session-1")
-	if binder.Authorize("session-1", "token-a", now.Add(4*time.Second)) {
-		t.Fatal("deleted session binding was accepted")
+	if got := binder.Authorize("session-1", "token-a", now.Add(4*time.Second)); got != mcpSessionMissing {
+		t.Fatalf("deleted session authorization = %v", got)
+	}
+}
+
+func TestHTTPBoundaryReportsMissingMCPSessionAsNotFound(t *testing.T) {
+	authenticator := &memoryAuthenticator{principals: map[string]remotepolicy.Principal{
+		testToken: {TokenID: "test-token-id"},
+	}}
+	server := newBoundaryTestServer(t, Options{MCPAuthenticator: authenticator})
+	request := httptest.NewRequest(http.MethodPost, "http://gateway.example.test/mcp", strings.NewReader(`{}`))
+	request.Host = "gateway.example.test"
+	request.Header.Set("Authorization", "Bearer "+testToken)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json, text/event-stream")
+	request.Header.Set("Mcp-Session-Id", "session-from-before-restart")
+	response := httptest.NewRecorder()
+
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusNotFound || !strings.Contains(response.Body.String(), `"session_not_found"`) {
+		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestHTTPBoundaryRejectsLiveMCPSessionCrossTokenReuse(t *testing.T) {
+	authenticator := &memoryAuthenticator{principals: map[string]remotepolicy.Principal{
+		"token-a": {TokenID: "token-a-id"},
+		"token-b": {TokenID: "token-b-id"},
+	}}
+	sessions := newMCPSessionTokenBinder()
+	sessions.Bind("live-session", "token-a-id", time.Now())
+	handler := authenticateMCP(
+		authenticator,
+		nil,
+		nil,
+		newIdentityLimiter(),
+		sessions,
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			t.Fatal("cross-token request reached the MCP handler")
+		}),
+	)
+	request := httptest.NewRequest(http.MethodPost, "http://gateway.example.test/mcp", strings.NewReader(`{}`))
+	request.Header.Set("Authorization", "Bearer token-b")
+	request.Header.Set("Accept", "application/json, text/event-stream")
+	request.Header.Set("Mcp-Session-Id", "live-session")
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), `"session_token_mismatch"`) {
+		t.Fatalf("response = %d %s", response.Code, response.Body.String())
 	}
 }
 

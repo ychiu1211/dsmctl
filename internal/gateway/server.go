@@ -394,10 +394,17 @@ func authenticateMCP(
 			return
 		}
 		sessionID := strings.TrimSpace(req.Header.Get("Mcp-Session-Id"))
-		if sessionID != "" && !sessions.Authorize(sessionID, principal.TokenID, time.Now()) {
-			auditMCPHTTP(req.Context(), auditor, principal.TokenID, "denied", "session_token_mismatch")
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "session_token_mismatch"})
-			return
+		if sessionID != "" {
+			switch sessions.Authorize(sessionID, principal.TokenID, time.Now()) {
+			case mcpSessionMissing:
+				auditMCPHTTP(req.Context(), auditor, principal.TokenID, "denied", "session_not_found")
+				writeJSON(w, http.StatusNotFound, map[string]string{"error": "session_not_found"})
+				return
+			case mcpSessionTokenMismatch:
+				auditMCPHTTP(req.Context(), auditor, principal.TokenID, "denied", "session_token_mismatch")
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": "session_token_mismatch"})
+				return
+			}
 		}
 		if sessionID == "" && !sessions.CanCreate(time.Now()) {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "too_many_mcp_sessions"})
@@ -481,6 +488,14 @@ type mcpSessionTokenBinding struct {
 	LastSeen time.Time
 }
 
+type mcpSessionAuthorization uint8
+
+const (
+	mcpSessionAuthorized mcpSessionAuthorization = iota
+	mcpSessionMissing
+	mcpSessionTokenMismatch
+)
+
 // mcpSessionTokenBinder prevents a valid bearer token from attaching to an MCP
 // session initialized by a different token. The SDK can do this automatically
 // when it owns OAuth authentication; dsmctl authenticates before the SDK, so
@@ -494,17 +509,20 @@ func newMCPSessionTokenBinder() *mcpSessionTokenBinder {
 	return &mcpSessionTokenBinder{bindings: make(map[string]mcpSessionTokenBinding)}
 }
 
-func (b *mcpSessionTokenBinder) Authorize(sessionID, tokenID string, now time.Time) bool {
+func (b *mcpSessionTokenBinder) Authorize(sessionID, tokenID string, now time.Time) mcpSessionAuthorization {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.prune(now)
 	binding, ok := b.bindings[sessionID]
-	if !ok || binding.TokenID != tokenID {
-		return false
+	if !ok {
+		return mcpSessionMissing
+	}
+	if binding.TokenID != tokenID {
+		return mcpSessionTokenMismatch
 	}
 	binding.LastSeen = now
 	b.bindings[sessionID] = binding
-	return true
+	return mcpSessionAuthorized
 }
 
 func (b *mcpSessionTokenBinder) CanCreate(now time.Time) bool {

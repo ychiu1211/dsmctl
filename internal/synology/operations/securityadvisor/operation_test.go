@@ -192,6 +192,22 @@ func TestDecodeStatusDetectsRunningScan(t *testing.T) {
 	}
 }
 
+func TestDecodeStatusAcceptsFirstScanState(t *testing.T) {
+	// A fresh DSM reports firstScan instead of a completed severity. Category
+	// progress is also zero, but no scan is running until Operation.start.
+	const firstScan = `{
+      "items": {"network":{"category":"network","fail":{},"failSeverity":"safe","progress":0,"runningItem":"","total":9,"waitNum":0}},
+      "lastScanTime":"0","startTime":"","sysProgress":0,"sysStatus":"firstScan"
+    }`
+	status, _, err := ExecuteStatus(context.Background(), saTarget(), &capturingExecutor{response: json.RawMessage(firstScan)})
+	if err != nil {
+		t.Fatalf("ExecuteStatus() error = %v", err)
+	}
+	if status.Running || status.OverallSeverity != "" || status.Progress != 0 || status.LastScanTime != 0 {
+		t.Fatalf("first-scan state = %#v", status)
+	}
+}
+
 // TestDecodeStatusDropsInjectedSessionIdentity enforces the standing invariant
 // that no session identity (SID/SynoToken) can ride the read into the display
 // model, even if a malicious or buggy DSM smuggles such fields into the payload.

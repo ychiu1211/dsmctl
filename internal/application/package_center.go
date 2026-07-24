@@ -265,9 +265,8 @@ func planPackageUpdateWithClient(ctx context.Context, nas string, client package
 	if target.Version == current.Version {
 		return PackageInstallPlan{}, fmt.Errorf("package %q is already at the offered version %s", packageID, current.Version)
 	}
-	// The catalog's update flag only means "differs": a NAS can ship a newer
-	// build than the public repository offers (seen live with File Station).
-	// Never plan a downgrade.
+	// Re-compare versions even though the catalog carries an update flag. Plans
+	// must independently refuse a downgrade if the inventory or catalog changed.
 	installedVersion := compatibility.ParsePackageVersion(current.Version)
 	offeredVersion := compatibility.ParsePackageVersion(target.Version)
 	if offeredVersion.Compare(installedVersion) <= 0 {

@@ -42,6 +42,7 @@ func targetWith(apis map[string][2]int) compatibility.Target {
 
 const (
 	accountQueryV2Body     = `{"account":"a@b.com","activated":true,"auth_key":"SECRET","is_logged_in":true}`
+	accountLoggedOutV2Body = `{"account":"","activated":false,"auth_key":"","is_logged_in":false}`
 	accountPackageV1Body   = `{"auth_key":"SECRET","myds_id":"123456","serial":"TEST1234567890","ds_major":"7"}`
 	quickConnectGetBody    = `{"ddns_domain":"direct.quickconnect.to","domain":"quickconnect.to","enabled":true,"myds_account":"a@b.com","region":"tw","server_alias":"myalias","server_id":"000000000"}`
 	quickConnectRelayBody  = `{"relay_enabled":true}`
@@ -79,6 +80,22 @@ func TestReadAccountSkipsPackageWhenAbsent(t *testing.T) {
 		t.Fatalf("ReadAccount() error = %v", err)
 	}
 	if state.MyDSID != "" || state.Serial != "" || !state.LoggedIn {
+		t.Fatalf("state = %#v", state)
+	}
+}
+
+func TestReadAccountSkipsPackageWhenLoggedOut(t *testing.T) {
+	target := targetWith(map[string][2]int{MyDSCenterAPI: {1, 2}, PackageMyDSAPI: {1, 1}})
+	state, selection, err := ReadAccount(context.Background(), target, routeExecutor(t, map[string]string{
+		"SYNO.Core.MyDSCenter v2 query": accountLoggedOutV2Body,
+	}))
+	if err != nil {
+		t.Fatalf("ReadAccount() error = %v", err)
+	}
+	if !selection.Supported || selection.Version != 2 {
+		t.Fatalf("selection = %#v", selection)
+	}
+	if state.LoggedIn || state.Activated || state.Account != "" || state.MyDSID != "" || state.Serial != "" {
 		t.Fatalf("state = %#v", state)
 	}
 }

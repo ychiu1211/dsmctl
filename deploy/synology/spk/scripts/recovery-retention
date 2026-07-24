@@ -1,0 +1,70 @@
+#!/bin/sh
+set -eu
+
+backup_root="${1:?recovery backup root is required}"
+keep="${2:-10}"
+case "$keep" in
+    ''|*[!0-9]*|0) echo "Recovery retention count must be a positive integer." >&2; exit 2 ;;
+esac
+[ -d "$backup_root" ] || exit 0
+
+valid_candidate() {
+    candidate="$1"
+    [ -d "$candidate" ] || return 1
+    [ ! -L "$candidate" ] || return 1
+    case "$candidate" in
+        "$backup_root"/pre-upgrade-*)
+            timestamp="${candidate##*-}"
+            printf '%s' "$timestamp" | grep -Eq '^[0-9]{14}$'
+            ;;
+        "$backup_root"/pre-restore-*)
+            timestamp="${candidate##*/pre-restore-}"
+            printf '%s' "$timestamp" | grep -Eq '^[0-9]{8}T[0-9]{6}\.[0-9]{9}Z$'
+            ;;
+        *) return 1 ;;
+    esac
+}
+
+complete_candidate() {
+    candidate="$1"
+    valid_candidate "$candidate" || return 1
+    [ -s "$candidate/gateway.db" ] && [ ! -L "$candidate/gateway.db" ] || return 1
+    [ -f "$candidate/master.key" ] && [ ! -L "$candidate/master.key" ] || return 1
+    [ "$(wc -c < "$candidate/master.key" | tr -d ' ')" = "32" ] || return 1
+    [ -f "$candidate/dsm-sso.key" ] && [ ! -L "$candidate/dsm-sso.key" ] || return 1
+    [ "$(wc -c < "$candidate/dsm-sso.key" | tr -d ' ')" = "32" ]
+}
+
+# Retain the newest complete, UI-restorable recovery sets across both package
+# upgrades and pre-restore safety copies. Symlinks and malformed names are
+# never selected for deletion.
+retained=0
+for candidate in "$backup_root"/pre-upgrade-* "$backup_root"/pre-restore-*; do
+    complete_candidate "$candidate" || continue
+    modified="$(stat -c '%Y' "$candidate")" || continue
+    case "$modified" in
+        ''|*[!0-9]*) continue ;;
+    esac
+    printf '%020d|%s\n' "$modified" "$candidate"
+done | sort -r | while IFS='|' read -r _ candidate; do
+    retained=$((retained + 1))
+    if [ "$retained" -gt "$keep" ]; then
+        rm -rf -- "$candidate"
+    fi
+done
+
+# Once the requested number of complete sets exists, incomplete directories
+# have no recovery value and must not make the apparent retention exceed the
+# administrator's requested count.
+complete_count="$(
+    for candidate in "$backup_root"/pre-upgrade-* "$backup_root"/pre-restore-*; do
+        complete_candidate "$candidate" && printf 'x\n'
+    done | wc -l | tr -d ' '
+)"
+if [ "$complete_count" -ge "$keep" ]; then
+    for candidate in "$backup_root"/pre-upgrade-* "$backup_root"/pre-restore-*; do
+        valid_candidate "$candidate" || continue
+        complete_candidate "$candidate" && continue
+        rm -rf -- "$candidate"
+    done
+fi

@@ -55,8 +55,9 @@ func decodeStatus(data json.RawMessage) (securityadvisor.Status, error) {
 	// overall severity is simply not yet known until the scan completes.
 	rawSysStatus := stringValue(root, "sysStatus")
 	scanning := isScanInProgressStatus(rawSysStatus)
+	firstScan := strings.TrimSpace(rawSysStatus) == "firstScan"
 	var overall securityadvisor.Severity
-	if !scanning {
+	if !scanning && !firstScan {
 		decoded, err := severityFromDSM(rawSysStatus)
 		if err != nil {
 			return securityadvisor.Status{}, fmt.Errorf("decode security advisor status: %w", err)
@@ -90,13 +91,15 @@ func decodeStatus(data json.RawMessage) (securityadvisor.Status, error) {
 		status.Counts.Warning += category.Counts.Warning
 		status.Counts.OutOfDate += category.Counts.OutOfDate
 		status.Counts.Info += category.Counts.Info
-		if category.Progress < 100 || category.WaitNum > 0 || category.RunningItem != "" {
+		if !firstScan && (category.Progress < 100 || category.WaitNum > 0 || category.RunningItem != "") {
 			status.Running = true
 		}
 	}
 	// A scan in progress is authoritatively signalled by the overall progress; a
 	// non-empty start time is a secondary indicator DSM sets while scanning.
-	if status.Progress < 100 || status.StartTime != "" {
+	// Before the first scan DSM reports progress 0 with sysStatus "firstScan";
+	// that is a not-started state, not a scan in progress.
+	if !firstScan && (status.Progress < 100 || status.StartTime != "") {
 		status.Running = true
 	}
 

@@ -435,7 +435,7 @@ type DownloadStationSettingsPlan struct {
 	ProfileRevision     uint64                         `json:"profile_revision,omitempty" jsonschema:"Persistent gateway profile revision selected during planning"`
 	Request             downloadstation.SettingsChange `json:"request" jsonschema:"Validated patch-only settings intent"`
 	Group               string                         `json:"group" jsonschema:"Settings group being changed, such as bt or ftp_http"`
-	Observed            json.RawMessage                `json:"observed" jsonschema:"Complete observed state of the changed settings group"`
+	Observed            map[string]any                 `json:"observed" jsonschema:"Complete observed state of the changed settings group"`
 	ObservedFingerprint string                         `json:"observed_fingerprint" jsonschema:"SHA-256 hash of the complete observed settings group"`
 	Risk                string                         `json:"risk" jsonschema:"Plan risk level"`
 	Warnings            []string                       `json:"warnings" jsonschema:"Operational warnings"`
@@ -642,7 +642,14 @@ func planDownloadStationSettingsWithClient(ctx context.Context, nas string, clie
 	if noop {
 		return DownloadStationSettingsPlan{}, fmt.Errorf("settings patch would not change the current %s settings", group)
 	}
-	plan := DownloadStationSettingsPlan{APIVersion: downloadStationAPIVersion, NAS: nas, Request: request, Group: group, Observed: observed}
+	var observedObject map[string]any
+	if err := json.Unmarshal(observed, &observedObject); err != nil {
+		return DownloadStationSettingsPlan{}, fmt.Errorf("decode observed %s settings object: %w", group, err)
+	}
+	if observedObject == nil {
+		return DownloadStationSettingsPlan{}, fmt.Errorf("decode observed %s settings object: response is not an object", group)
+	}
+	plan := DownloadStationSettingsPlan{APIVersion: downloadStationAPIVersion, NAS: nas, Request: request, Group: group, Observed: observedObject}
 	plan.ObservedFingerprint, err = hashJSON(plan.Observed)
 	if err != nil {
 		return DownloadStationSettingsPlan{}, err

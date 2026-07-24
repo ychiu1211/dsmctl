@@ -58,6 +58,56 @@ func TestBuildSANPlanLUNCreateRejectsUnsafeVolumes(t *testing.T) {
 	}
 }
 
+func TestBuildSANPlanLUNCreateIgnoresAvailableByteDrift(t *testing.T) {
+	request := san.ChangeRequest{Action: san.ActionCreate, Resource: san.ResourceLUN, LUN: &san.LUNChange{
+		Name: "dsmctl-e2e-lun-unit", BackingVolumeID: "volume_1", SizeBytes: 1 << 30, Provisioning: san.ProvisioningThin,
+	}}
+	firstState := writableSANVolumeState()
+	first, err := BuildSANPlan("lab", san.State{}, firstState, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondState := writableSANVolumeState()
+	secondState.Volumes[0].AvailableBytes -= 1 << 20
+	second, err := BuildSANPlan("lab", san.State{}, secondState, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.VolumeFingerprint != second.VolumeFingerprint || first.Hash != second.Hash {
+		t.Fatalf("available-byte drift changed plan: first=%s/%s second=%s/%s",
+			first.VolumeFingerprint, first.Hash, second.VolumeFingerprint, second.Hash)
+	}
+}
+
+func TestBuildSANPlanLUNCreateBindsStableVolumeSafetyFields(t *testing.T) {
+	request := san.ChangeRequest{Action: san.ActionCreate, Resource: san.ResourceLUN, LUN: &san.LUNChange{
+		Name: "dsmctl-e2e-lun-unit", BackingVolumeID: "volume_1", SizeBytes: 1 << 30, Provisioning: san.ProvisioningThin,
+	}}
+	baseState := writableSANVolumeState()
+	base, err := BuildSANPlan("lab", san.State{}, baseState, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedPath := writableSANVolumeState()
+	changedPath.Volumes[0].Path = "/volume2"
+	pathPlan, err := BuildSANPlan("lab", san.State{}, changedPath, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base.VolumeFingerprint == pathPlan.VolumeFingerprint || base.Hash == pathPlan.Hash {
+		t.Fatal("backing-volume path change did not invalidate the plan")
+	}
+	changedFilesystem := writableSANVolumeState()
+	changedFilesystem.Volumes[0].FileSystem = "ext4"
+	filesystemPlan, err := BuildSANPlan("lab", san.State{}, changedFilesystem, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base.VolumeFingerprint == filesystemPlan.VolumeFingerprint || base.Hash == filesystemPlan.Hash {
+		t.Fatal("backing-volume filesystem change did not invalidate the plan")
+	}
+}
+
 func TestBuildSANPlanStableIDDeleteGuardsMappingsAndSessions(t *testing.T) {
 	state := sampleSANState()
 	state.Targets[0].ConnectedSessions = 1

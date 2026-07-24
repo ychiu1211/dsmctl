@@ -24,8 +24,8 @@ type PackageCatalog = packagecenter.Catalog
 
 // PackageCatalog reads the online package server's Synology-published catalog
 // and cross-references the installed inventory so each offered package is marked
-// installed and, when the offered version differs from the installed one, as
-// having an available update.
+// installed and, only when the offered version is newer than the installed one,
+// as having an available update.
 func (c *Client) PackageCatalog(ctx context.Context) (PackageCatalog, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -46,18 +46,47 @@ func (c *Client) PackageCatalog(ctx context.Context) (PackageCatalog, error) {
 		for _, pkg := range state.Packages {
 			installed[pkg.ID] = pkg.Version
 		}
+		preferred := preferredPackageOffers(catalog.Packages)
 		for i := range catalog.Packages {
 			version, ok := installed[catalog.Packages[i].ID]
 			if !ok {
 				continue
 			}
 			catalog.Packages[i].Installed = true
-			// The online catalog offers the latest version, so a different
-			// installed version means an update is available.
-			catalog.Packages[i].UpdateAvailable = version != "" && catalog.Packages[i].Version != "" && version != catalog.Packages[i].Version
+			catalog.Packages[i].UpdateAvailable = preferred[catalog.Packages[i].ID] == i &&
+				packageUpdateAvailable(version, catalog.Packages[i].Version)
 		}
 	}
 	return catalog, nil
+}
+
+func preferredPackageOffers(packages []packagecenter.AvailablePackage) map[string]int {
+	preferred := make(map[string]int, len(packages))
+	for index := range packages {
+		candidate := packages[index]
+		existingIndex, ok := preferred[candidate.ID]
+		if !ok {
+			preferred[candidate.ID] = index
+			continue
+		}
+		existing := packages[existingIndex]
+		if existing.Beta != candidate.Beta {
+			if existing.Beta {
+				preferred[candidate.ID] = index
+			}
+			continue
+		}
+		if compatibility.ParsePackageVersion(candidate.Version).Compare(compatibility.ParsePackageVersion(existing.Version)) > 0 {
+			preferred[candidate.ID] = index
+		}
+	}
+	return preferred
+}
+
+func packageUpdateAvailable(installed, offered string) bool {
+	installedVersion := compatibility.ParsePackageVersion(installed)
+	offeredVersion := compatibility.ParsePackageVersion(offered)
+	return installedVersion.Known() && offeredVersion.Known() && offeredVersion.Compare(installedVersion) > 0
 }
 
 // PackageState reads the installed-package inventory without requiring any other

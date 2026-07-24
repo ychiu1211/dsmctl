@@ -28,6 +28,8 @@ rmdir "$legacy_secret_dir" 2>/dev/null || true
 
 uid="$(id -u "$pkg")"
 gid="$(id -g "$pkg")"
+chown "$uid:$gid" "$data_dir/backups"
+chmod 0700 "$data_dir/backups"
 cat > "$target/project/.env" <<EOF
 DSMCTL_UID=$uid
 DSMCTL_GID=$gid
