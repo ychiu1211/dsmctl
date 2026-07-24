@@ -1,7 +1,6 @@
 [{
   "step_title": "dsmctl Gateway security boundary",
   "items": [{
-    "type": "textfield",
     "desc": "The package binds its container and DSM authentication bridge only to loopback. Web Station registers /dsmctl as the HTTPS portal. Sign in with a DSM administrators-group account; an independent local fallback password can be enabled later. No firewall, router, certificate, QuickConnect, or VPN setting is changed."
   }]
 }]
