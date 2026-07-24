@@ -184,10 +184,12 @@ button{cursor:pointer}
 
 .stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:20px}
 .stat{display:flex;align-items:center;gap:14px;padding:18px 20px;border:1px solid var(--line);border-radius:11px;background:var(--surface);box-shadow:0 4px 16px rgba(34,58,82,.035)}
-.stat-icon{display:grid;flex:0 0 42px;width:42px;height:42px;place-items:center;border-radius:10px;background:var(--color-action-soft);color:var(--brand-700)}
-.stat-icon svg{width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.stat-icon{display:grid;flex:0 0 44px;width:44px;height:44px;place-items:center;border:1px solid var(--brand-100);border-radius:12px;background:linear-gradient(145deg,var(--white),var(--brand-50));color:var(--brand-700);box-shadow:inset 0 1px rgba(255,255,255,.9),0 5px 12px rgba(34,96,148,.08)}
+.stat-icon.credentials{border-color:#e2e0f8;background:linear-gradient(145deg,#faf9ff,#eeedff);color:#625ab8}
+.stat-icon.approval{border-color:#d4ecdf;background:linear-gradient(145deg,#f8fdfb,var(--success-soft));color:var(--success-text)}
+.stat-icon svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 .stat strong{display:block;font-size:23px;line-height:1.1}
-.stat span{display:block;margin-top:4px;color:var(--muted);font-size:11px}
+.stat>div>span{display:block;margin-top:4px;color:var(--muted);font-size:11px}
 
 .content-grid{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(280px,.7fr);gap:18px}
 .panel-stack{display:grid;gap:18px}
@@ -381,9 +383,9 @@ dialog.modal-wide{width:min(720px,calc(100vw - 32px))}
         <div class="page-head"><div><h1 data-i18n="overviewTitle">MCP Server overview</h1><p data-i18n="overviewSubtitle">Service, NAS connection, and access status.</p></div><div class="page-actions"><button class="button" type="button" onclick="openNASWizard()" data-i18n="addNAS">Add NAS</button></div></div>
         <div class="hero"><div class="hero-copy"><div class="eyebrow">MCP SERVER</div><h2 data-i18n="heroTitle">Synology NAS MCP Server</h2><p data-i18n="heroDetail">Manage multiple NAS profiles through one MCP endpoint. DSM sessions, token scopes, and approvals remain independent.</p><div class="endpoint"><span data-i18n="mcpEndpoint">MCP endpoint</span><code id="overviewEndpoint">/mcp</code></div></div><div class="hero-icon"><span class="brand-mark"><i></i><i></i><i></i><i></i></span></div></div>
         <div class="stats">
-          <div class="stat"><span class="stat-icon"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="6" rx="2"/><rect x="3" y="13" width="18" height="6" rx="2"/></svg></span><div><strong id="metricNAS">0</strong><span data-i18n="nasProfilesMetric">NAS profiles</span></div></div>
-          <div class="stat"><span class="stat-icon"><svg viewBox="0 0 24 24"><circle cx="8" cy="12" r="4"/><path d="M12 12h9M17 12v3"/></svg></span><div><strong id="metricTokens">0</strong><span data-i18n="activeTokens">Active MCP tokens</span></div></div>
-          <div class="stat"><span class="stat-icon"><svg viewBox="0 0 24 24"><path d="M12 3l8 4v5c0 5-3.4 8-8 9-4.6-1-8-4-8-9V7z"/></svg></span><div><strong id="metricApprovals">0</strong><span data-i18n="readyApprovals">Ready approvals</span></div></div>
+          <div class="stat"><span class="stat-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01M11 7.5h6M11 16.5h6"/></svg></span><div><strong id="metricNAS">0</strong><span data-i18n="nasProfilesMetric">NAS profiles</span></div></div>
+          <div class="stat"><span class="stat-icon credentials" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><circle cx="9" cy="10.5" r="2"/><path d="M5.8 16c.7-1.5 1.8-2.3 3.2-2.3s2.5.8 3.2 2.3M14.5 10h3.7M14.5 14h3.7"/></svg></span><div><strong id="metricTokens">0</strong><span data-i18n="activeTokens">Active MCP tokens</span></div></div>
+          <div class="stat"><span class="stat-icon approval" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3l8 3.5v5.8c0 4.6-3.1 7.5-8 8.7-4.9-1.2-8-4.1-8-8.7V6.5z"/><path d="m8.7 12 2.1 2.1 4.6-4.6"/></svg></span><div><strong id="metricApprovals">0</strong><span data-i18n="readyApprovals">Ready approvals</span></div></div>
         </div>
         <div class="content-grid">
           <div class="panel"><div class="panel-head"><div><h2 data-i18n="nasConnections">NAS connections</h2><p data-i18n="nasConnectionsDetail">Add a NAS profile, then sign in to DSM.</p></div></div><div class="panel-body"><div class="notice"><strong data-i18n="noImplicitHost">Host NAS is not added automatically</strong><span data-i18n="noImplicitHostDetail">Add the hosting NAS by LAN IP or DNS name. Container localhost is not the host NAS.</span></div><div class="button-row"><button class="button" type="button" onclick="setView('nas')" data-i18n="manageNAS">Manage NAS</button><button class="button secondary" type="button" onclick="setView('access')" data-i18n="configureMCP">Configure MCP access</button></div></div></div>
